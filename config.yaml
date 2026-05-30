@@ -1,0 +1,163 @@
+database:
+  path: "bikeodon.db"
+
+map:
+  output_dir: "output"
+  width: 1200             # output image width in pixels
+  height: 675             # output image height in pixels (16:9 fills Mastodon feed without cropping)
+
+  # Fractional padding around the route bounding box, per side.
+  # Values are fractions of the bbox span (0.1 = 10% extra on that side).
+  # Bottom is larger to leave room for the stats bar.
+  padding:
+    top:    0.06
+    bottom: 0.28
+    left:   0.06
+    right:  0.06
+
+  # Maximum number of OSM tiles to fetch per render. Higher = finer detail
+  # but more network requests. 100 is a safe default.
+  max_tiles: 100
+
+  # Shift the auto-selected zoom level. Negative = zoom out (less detail, wider view).
+  # 0 = automatic, -1 = one level out, -2 = two levels out, etc.
+  zoom_offset: -1
+
+  tiles:
+    # Standard OSM — no API key needed, please keep a reasonable user_agent
+    url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+
+    # Alternatives (swap in as-is if you have an API key):
+    # Stadia smooth light:
+    #   url: "https://tiles.stadiamaps.com/tiles/alidade_smooth/{z}/{x}/{y}.png?api_key=YOUR_KEY"
+    # Stadia smooth dark:
+    #   url: "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}.png?api_key=YOUR_KEY"
+    # Stadia outdoors (good for cycling):
+    #   url: "https://tiles.stadiamaps.com/tiles/outdoors/{z}/{x}/{y}.png?api_key=YOUR_KEY"
+    # Stamen terrain:
+    #   url: "https://tiles.stadiamaps.com/tiles/stamen_terrain/{z}/{x}/{y}.jpg?api_key=YOUR_KEY"
+    # CartoDB Positron (clean minimal):
+    #   url: "https://cartodb-basemaps-a.global.ssl.fastly.net/light_all/{z}/{x}/{y}.png"
+    # CartoDB Dark Matter:
+    #   url: "https://cartodb-basemaps-a.global.ssl.fastly.net/dark_all/{z}/{x}/{y}.png"
+
+    size: 256
+    # OSM requires a descriptive User-Agent — put your email or project URL here
+    user_agent: "Bikeodon/0.1 (https://github.com/you/bikeodon)"
+    # Tiles are cached on disk to avoid re-fetching across renders
+    cache_dir: ".tile_cache"
+
+  route:
+    color: "#FC4C02"        # Line color. Strava orange by default.
+    width: 4                # Line width in pixels (at output resolution)
+    opacity: 0.9            # 0.0 (fully transparent) – 1.0 (fully opaque)
+    outline_color: "#000000"  # Color of the border drawn under the route line
+    outline_width: 1          # Extra pixels on each side for the outline (0 = disabled)
+    # Renders the route at Nx resolution then downscales for smooth edges.
+    # 1 = off, 2 = 2× (good default), 4 = very smooth but slower
+    antialias_scale: 2
+
+  start_marker:
+    enabled: true
+    color: "#22CC44"        # Green dot at ride start
+    radius: 8               # Dot radius in pixels
+    outline_color: "#ffffff"
+    outline_width: 2
+
+  end_marker:
+    enabled: true
+    color: "#CC2244"        # Red dot at ride end
+    radius: 8
+    outline_color: "#ffffff"
+    outline_width: 2
+
+charts:
+  style:
+    background_color: "#16161a"
+    text_color:       "#dddddd"
+    grid_color:       "#2e2e3a"
+    line_color:       "#FC4C02"   # HR line
+    power_line_color: "#4fc3f7"   # Power line
+
+  heart_rate:
+    enabled: true
+    max_hr: 185          # your maximum heart rate (used for zone boundaries)
+    zones:
+      - {name: "Z1 Recovery",  max_pct: 60,  color: "#5b9bd5"}
+      - {name: "Z2 Endurance", max_pct: 70,  color: "#70ad47"}
+      - {name: "Z3 Tempo",     max_pct: 80,  color: "#ffc000"}
+      - {name: "Z4 Threshold", max_pct: 90,  color: "#ff7043"}
+      - {name: "Z5 VO2 Max",   max_pct: 100, color: "#d32f2f"}
+
+  power:
+    enabled: true
+    ftp: null            # set your FTP in watts, e.g. 250 — required for power chart
+    zones:
+      - {name: "Z1 Recovery",      max_pct: 55,  color: "#5b9bd5"}
+      - {name: "Z2 Endurance",     max_pct: 75,  color: "#70ad47"}
+      - {name: "Z3 Tempo",         max_pct: 90,  color: "#ffc000"}
+      - {name: "Z4 Threshold",     max_pct: 105, color: "#ff7043"}
+      - {name: "Z5 VO2 Max",       max_pct: 120, color: "#d32f2f"}
+      - {name: "Z6 Anaerobic",     max_pct: 150, color: "#9c27b0"}
+      - {name: "Z7 Neuromuscular", max_pct: 999, color: "#424242"}
+
+mastodon:
+  instance: "https://mastodon.social"
+  # Token comes from: mastodon.social/settings/applications → New application
+  # Set via:  export MASTODON_TOKEN=<value>
+  visibility: "public"    # public, unlisted, private, direct
+
+  # Template variables available:
+  #   {name}            – activity name from Strava
+  #   {distance_km}     – distance in km (float)
+  #   {elevation_m}     – elevation gain in metres (float)
+  #   {moving_time}     – formatted duration, e.g. "1h 23m"
+  #   {average_speed}   – average speed in km/h (float)
+  #   {date}            – local date, e.g. "2026-05-28"
+  #   {sport_type}      – activity type, e.g. "cycling"
+  post_template: |
+    {name} 🚴
+    📍 {distance_km:.1f} km  🏔 {elevation_m:.0f} m  ⏱ {moving_time}
+
+    #cycling #strava
+
+    Connect Strava to the fediverse using Bikeodon [tim0s.github.io/Bikeodon]
+
+user:
+  mastodon_handle: "@you@mastodon.social"
+
+  stats:
+    # Fields to show in the stats bar (order matters).
+    # Available: distance, elevation_gain, moving_time, elapsed_time,
+    #            average_speed, max_speed, average_heartrate, max_heartrate,
+    #            average_watts, max_watts
+    fields:
+      - distance
+      - elevation_gain
+
+stats_overlay:
+  enabled: true
+  background_color: "#000000"
+  background_opacity: 0.55    # 0.0 (transparent) – 1.0 (opaque)
+  padding: 24                 # vertical padding inside the bar (pixels)
+  gap: 36                     # gap between icon and first stat (pixels)
+
+  font:
+    size: 48                  # at output resolution (scales down ~50% in Mastodon feed)
+    color: "#ffffff"
+    # path: null              # absolute path to override auto-detected font
+
+  icon:
+    size: 48
+    # Override per activity type — keys match Strava sport_type values
+    activity_icons:
+      Ride: "🚴"
+      VirtualRide: "🚴"
+      Run: "🏃"
+      VirtualRun: "🏃"
+      Walk: "🚶"
+      Hike: "🥾"
+      Swim: "🏊"
+      WeightTraining: "🏋️"
+      Yoga: "🧘"
+      default: "🏅"
