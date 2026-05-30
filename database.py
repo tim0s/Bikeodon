@@ -29,22 +29,43 @@ def init_db(db_path):
             start_lat            REAL,
             start_lon            REAL,
             points_json          TEXT,
-            fetched_at           TEXT
+            fetched_at           TEXT,
+            strava_url           TEXT,
+            posted_at            TEXT,
+            mastodon_post_url    TEXT
         )
     """)
+    # Migrate existing databases that predate these columns
+    for col, typedef in [
+        ("strava_url",        "TEXT"),
+        ("posted_at",         "TEXT"),
+        ("mastodon_post_url", "TEXT"),
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE activities ADD COLUMN {col} {typedef}")
+        except sqlite3.OperationalError:
+            pass  # column already exists
     conn.commit()
     conn.close()
 
 
 def upsert_activity(db_path, data: dict):
     conn = _conn(db_path)
+    # Preserve posted_at and mastodon_post_url if this row already exists
+    existing = conn.execute(
+        "SELECT posted_at, mastodon_post_url FROM activities WHERE id = ?", (data["id"],)
+    ).fetchone()
+    posted_at         = existing["posted_at"]         if existing else None
+    mastodon_post_url = existing["mastodon_post_url"] if existing else None
+
     conn.execute("""
         INSERT OR REPLACE INTO activities
         (id, name, sport_type, start_date,
          distance, moving_time, elapsed_time, total_elevation_gain, max_speed,
          average_heartrate, max_heartrate, average_watts, max_watts,
-         start_lat, start_lon, points_json, fetched_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         start_lat, start_lon, points_json, fetched_at,
+         strava_url, posted_at, mastodon_post_url)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """, (
         data["id"],
         data.get("name"),
@@ -63,9 +84,31 @@ def upsert_activity(db_path, data: dict):
         data.get("start_lon"),
         json.dumps(data.get("points") or []),
         datetime.now(timezone.utc).isoformat(),
+        f"https://www.strava.com/activities/{data['id']}",
+        posted_at,
+        mastodon_post_url,
     ))
     conn.commit()
     conn.close()
+
+
+def mark_posted(db_path, activity_id: int, mastodon_post_url: str):
+    conn = _conn(db_path)
+    conn.execute(
+        "UPDATE activities SET posted_at = ?, mastodon_post_url = ? WHERE id = ?",
+        (datetime.now(timezone.utc).isoformat(), mastodon_post_url, activity_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_unposted(db_path) -> list:
+    conn = _conn(db_path)
+    rows = conn.execute(
+        "SELECT * FROM activities WHERE posted_at IS NULL ORDER BY start_date ASC"
+    ).fetchall()
+    conn.close()
+    return rows
 
 
 def list_activities(db_path):

@@ -123,6 +123,9 @@ mastodon:
 
     Connect Strava to the fediverse using Bikeodon [tim0s.github.io/Bikeodon]
 
+daemon:
+  interval_minutes: 15    # how often to poll Strava for new activities
+
 user:
   mastodon_handle: "@you@mastodon.social"
 

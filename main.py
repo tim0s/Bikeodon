@@ -12,6 +12,7 @@ Usage:
 import argparse
 import os
 import sys
+import time
 
 import yaml
 from dotenv import load_dotenv
@@ -19,7 +20,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from charts import generate_charts
-from database import get_activity, get_points, get_stream, init_db, list_activities, upsert_activity
+from database import get_activity, get_points, get_stream, get_unposted, init_db, list_activities, mark_posted, upsert_activity
 from map_renderer import render_activity_map
 from mastodon_client import MastodonClient
 from strava import StravaClient
@@ -164,82 +165,135 @@ def _build_post_text(activity: dict, template: str) -> str:
 def cmd_post(args, cfg):
     db_path = cfg["database"]["path"]
     init_db(db_path)
+    out_dir = cfg["map"].get("output_dir", "output")
 
     row = get_activity(db_path, args.activity_id)
     if not row:
         print(f"Activity {args.activity_id} not found. Run 'sync' first.")
         sys.exit(1)
 
-    # Render image if it doesn't exist yet
-    out_dir  = cfg["map"].get("output_dir", "output")
-    img_path = os.path.join(out_dir, f"{args.activity_id}.png")
-    if not os.path.exists(img_path) or args.rerender:
-        points = get_points(row)
-        if not points:
-            print("No GPS data for this activity.")
-            sys.exit(1)
-        os.makedirs(out_dir, exist_ok=True)
-        print(f"Rendering map…")
-        img = render_activity_map(points, dict(row), cfg)
-        if img is None:
-            print("Render failed.")
-            sys.exit(1)
-        img.save(img_path)
-        print(f"  Saved → {img_path}")
-
-    # Build post text
+    # Preview
     masto_cfg = cfg.get("mastodon", {})
-    template  = masto_cfg.get("post_template", "{name}\n#cycling")
-    text      = _build_post_text(dict(row), template)
-
-    print(f"\nPost preview:\n{'─' * 40}")
+    text      = _build_post_text(dict(row), masto_cfg.get("post_template", "{name}\n#cycling"))
+    print(f"Post preview:\n{'─' * 40}")
     print(text)
     print('─' * 40)
-    print(f"Image: {img_path}")
 
-    # Generate charts
-    print("Generating charts…")
+    if args.dry_run:
+        print("(dry run — nothing posted)")
+        return
+
+    confirm = input("\nPost to Mastodon? [y/N] ").strip().lower()
+    if confirm != "y":
+        print("Aborted.")
+        return
+
+    try:
+        url = _do_post(row, cfg, db_path, out_dir, rerender=args.rerender)
+    except Exception as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+
+    if url:
+        print(f"\nPosted! {url}")
+
+
+# ---------------------------------------------------------------------------
+# Shared posting logic (used by cmd_post and cmd_daemon)
+# ---------------------------------------------------------------------------
+
+def _do_post(row, cfg, db_path: str, out_dir: str, rerender: bool = False) -> str | None:
+    """
+    Render, upload, and post a single activity. Returns the Mastodon post URL
+    on success, or None if posting was skipped (no GPS data, render failure).
+    Raises on network/API errors.
+    """
+    activity_id = row["id"]
+    img_path    = os.path.join(out_dir, f"{activity_id}.png")
+
+    if not os.path.exists(img_path) or rerender:
+        points = get_points(row)
+        if not points:
+            print(f"  [{activity_id}] No GPS data — skipping.")
+            return None
+        os.makedirs(out_dir, exist_ok=True)
+        img = render_activity_map(points, dict(row), cfg)
+        if img is None:
+            print(f"  [{activity_id}] Render failed — skipping.")
+            return None
+        img.save(img_path)
+
+    masto_cfg = cfg.get("mastodon", {})
+    text      = _build_post_text(dict(row), masto_cfg.get("post_template", "{name}\n#cycling"))
+
     stream      = get_stream(row)
-    chart_paths = generate_charts(args.activity_id, stream, cfg, out_dir, db_path=db_path)
-    all_images  = [img_path] + chart_paths  # map first, then charts
-    # Mastodon allows max 4 attachments
-    all_images  = all_images[:4]
+    chart_paths = generate_charts(activity_id, stream, cfg, out_dir, db_path=db_path)
+    all_images  = ([img_path] + chart_paths)[:4]
 
-    print(f"\nAttachments ({len(all_images)}):")
-    for p in all_images:
-        print(f"  {p}")
+    client    = MastodonClient.from_env(masto_cfg.get("instance", "https://mastodon.social"))
+    media_ids = [client.upload_image(p) for p in all_images]
 
-    if not args.dry_run:
-        confirm = input("\nPost to Mastodon? [y/N] ").strip().lower()
-        if confirm != "y":
-            print("Aborted.")
-            return
+    resp = client._session.post(
+        f"{client._base}/api/v1/statuses",
+        json={
+            "status":     text,
+            "media_ids":  media_ids,
+            "visibility": masto_cfg.get("visibility", "public"),
+        },
+    )
+    resp.raise_for_status()
+    post_url = resp.json().get("url", "")
+    mark_posted(db_path, activity_id, post_url)
+    return post_url
 
+
+# ---------------------------------------------------------------------------
+# Daemon
+# ---------------------------------------------------------------------------
+
+def cmd_daemon(args, cfg):
+    db_path  = cfg["database"]["path"]
+    out_dir  = cfg["map"].get("output_dir", "output")
+    interval = cfg.get("daemon", {}).get("interval_minutes", 15) * 60
+
+    try:
+        strava = StravaClient()
+    except ValueError as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+
+    init_db(db_path)
+    print(f"Daemon started — polling every {interval // 60} min. Ctrl-C to stop.")
+
+    while True:
         try:
-            client = MastodonClient.from_env(masto_cfg.get("instance", "https://mastodon.social"))
-        except ValueError as e:
-            print(f"Error: {e}")
-            sys.exit(1)
+            print(f"\n[{_now()}] Syncing…")
+            ids = strava.get_activity_ids(n=args.count)
+            for activity_id in ids:
+                data = strava.get_activity(activity_id)
+                upsert_activity(db_path, data)
 
-        # Upload all images, then post once with all media IDs
-        media_ids = []
-        for path in all_images:
-            print(f"  Uploading {os.path.basename(path)}…")
-            media_ids.append(client.upload_image(path))
+            unposted = get_unposted(db_path)
+            if unposted:
+                print(f"  {len(unposted)} unposted activit{'y' if len(unposted) == 1 else 'ies'}")
+            for row in unposted:
+                print(f"  Posting [{row['id']}] {row['name']}…")
+                try:
+                    url = _do_post(row, cfg, db_path, out_dir)
+                    if url:
+                        print(f"    → {url}")
+                except Exception as e:
+                    print(f"    Failed: {e}")
+        except Exception as e:
+            print(f"  Sync error: {e}")
 
-        from mastodon_client import MastodonClient as MC
-        resp = client._session.post(
-            f"{client._base}/api/v1/statuses",
-            json={
-                "status":     text,
-                "media_ids":  media_ids,
-                "visibility": masto_cfg.get("visibility", "public"),
-            },
-        )
-        resp.raise_for_status()
-        print(f"\nPosted! {resp.json().get('url', '')}")
-    else:
-        print("\n(dry run — nothing posted)")
+        print(f"  Sleeping {interval // 60} min…")
+        time.sleep(interval)
+
+
+def _now():
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
 
 # ---------------------------------------------------------------------------
@@ -276,6 +330,10 @@ def main():
     p_post.add_argument("--rerender", action="store_true",
                         help="Re-render the image even if it already exists")
 
+    p_daemon = sub.add_parser("daemon", help="Poll Strava and auto-post new activities")
+    p_daemon.add_argument("--count", type=int, default=20,
+                          help="Activities to check per poll cycle (default: 20)")
+
     args = parser.parse_args()
     if not args.command:
         parser.print_help()
@@ -283,7 +341,7 @@ def main():
 
     cfg = load_config(args.config)
     {"sync": cmd_sync, "list": cmd_list, "render": cmd_render,
-     "charts": cmd_charts, "post": cmd_post}[args.command](args, cfg)
+     "charts": cmd_charts, "post": cmd_post, "daemon": cmd_daemon}[args.command](args, cfg)
 
 
 if __name__ == "__main__":
