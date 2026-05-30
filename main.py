@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
 """
-Bikeodon – CLI prototype
+Bikeodon – CLI
 Usage:
   python main.py sync              # fetch 10 most recent Strava activities
   python main.py sync --count 20   # fetch more
   python main.py list              # list activities stored in the database
   python main.py render            # render map for the most recent activity
   python main.py render 12345678   # render map for a specific activity ID
+  python main.py charts 12345678   # generate HR/power charts
+  python main.py post 12345678     # render and post to Mastodon
+  python main.py daemon            # poll Strava and auto-post new activities
+  python main.py config list       # show all per-user settings
+  python main.py config get <area> <key>
+  python main.py config set <area> <key> <value>
 """
 
 import argparse
@@ -20,15 +26,24 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from charts import generate_charts
-from database import get_activity, get_points, get_stream, get_unposted, init_db, list_activities, mark_posted, upsert_activity
+from database import (
+    get_activity, get_points, get_setting, get_stream, get_unposted,
+    init_db, list_activities, list_settings, load_user_config,
+    mark_posted, set_setting, upsert_activity,
+)
 from map_renderer import render_activity_map
 from mastodon_client import MastodonClient
 from strava import StravaClient
 
+USER_ID = 1  # single-user prototype
 
-def load_config(path: str) -> dict:
-    with open(path) as f:
-        return yaml.safe_load(f)
+
+def _load_cfg(config_path: str) -> dict:
+    with open(config_path) as f:
+        base = yaml.safe_load(f)
+    db_path = base["database"]["path"]
+    init_db(db_path)
+    return load_user_config(db_path, USER_ID, base)
 
 
 # ---------------------------------------------------------------------------
@@ -36,15 +51,14 @@ def load_config(path: str) -> dict:
 # ---------------------------------------------------------------------------
 
 def cmd_sync(args, cfg):
+    session = cfg["strava"].get("session_cookie")
     try:
-        client = StravaClient()
+        client = StravaClient(session_cookie=session)
     except ValueError as e:
         print(f"Error: {e}")
         sys.exit(1)
 
     db_path = cfg["database"]["path"]
-    init_db(db_path)
-
     print(f"Fetching {args.count} most recent activity IDs…")
     try:
         ids = client.get_activity_ids(n=args.count)
@@ -60,7 +74,7 @@ def cmd_sync(args, cfg):
         print(f"  Downloading GPX for {activity_id}…")
         try:
             data = client.get_activity(activity_id)
-            upsert_activity(db_path, data)
+            upsert_activity(db_path, data, user_id=USER_ID)
             pts = len(data.get("points") or [])
             print(f"    {data['name']}  ({pts} GPS points)")
         except Exception as e:
@@ -71,36 +85,35 @@ def cmd_sync(args, cfg):
 
 def cmd_list(args, cfg):
     db_path = cfg["database"]["path"]
-    init_db(db_path)
-    rows = list_activities(db_path)
+    rows = list_activities(db_path, user_id=USER_ID)
 
     if not rows:
         print("No activities in database. Run 'sync' first.")
         return
 
-    header = f"{'ID':<14} {'Date':<12} {'Type':<18} {'Distance':>9} {'Elev':>8}  Name"
+    header = f"{'ID':<14} {'Date':<12} {'Type':<18} {'Distance':>9} {'Elev':>8}  {'Posted':<11}  Name"
     print(header)
     print("─" * len(header))
     for r in rows:
-        dist  = f"{(r['distance'] or 0) / 1000:.1f} km"
-        elev  = f"{r['total_elevation_gain'] or 0:.0f} m"
-        date  = (r["start_date"] or "")[:10]
-        stype = r["sport_type"] or ""
-        print(f"{r['id']:<14} {date:<12} {stype:<18} {dist:>9} {elev:>8}  {r['name']}")
+        dist   = f"{(r['distance'] or 0) / 1000:.1f} km"
+        elev   = f"{r['total_elevation_gain'] or 0:.0f} m"
+        date   = (r["start_date"] or "")[:10]
+        stype  = r["sport_type"] or ""
+        posted = "✓" if r["posted_at"] else "–"
+        print(f"{r['id']:<14} {date:<12} {stype:<18} {dist:>9} {elev:>8}  {posted:<11}  {r['name']}")
 
 
 def cmd_render(args, cfg):
     db_path = cfg["database"]["path"]
-    init_db(db_path)
 
     if args.activity_id:
-        row = get_activity(db_path, args.activity_id)
+        row = get_activity(db_path, args.activity_id, user_id=USER_ID)
         if not row:
             print(f"Activity {args.activity_id} not found. Run 'sync' first.")
             sys.exit(1)
         rows = [row]
     else:
-        all_rows = list_activities(db_path)
+        all_rows = list_activities(db_path, user_id=USER_ID)
         if not all_rows:
             print("No activities in database. Run 'sync' first.")
             sys.exit(1)
@@ -112,16 +125,13 @@ def cmd_render(args, cfg):
     for row in rows:
         points = get_points(row)
         print(f"Rendering [{row['id']}] {row['name']}…")
-
         if not points:
             print("  No GPS data for this activity, skipping.")
             continue
-
         img = render_activity_map(points, dict(row), cfg)
         if img is None:
             print("  Render returned no image.")
             continue
-
         out_path = os.path.join(out_dir, f"{row['id']}.png")
         img.save(out_path)
         print(f"  Saved → {out_path}")
@@ -129,8 +139,7 @@ def cmd_render(args, cfg):
 
 def cmd_charts(args, cfg):
     db_path = cfg["database"]["path"]
-    init_db(db_path)
-    row = get_activity(db_path, args.activity_id)
+    row = get_activity(db_path, args.activity_id, user_id=USER_ID)
     if not row:
         print(f"Activity {args.activity_id} not found.")
         sys.exit(1)
@@ -152,32 +161,29 @@ def _build_post_text(activity: dict, template: str) -> str:
         return f"{h}h {m:02d}m" if h else f"{m}m"
 
     return template.format(
-        name         = activity.get("name", "Activity"),
-        distance_km  = (activity.get("distance") or 0) / 1000,
-        elevation_m  = activity.get("total_elevation_gain") or 0,
-        moving_time  = fmt_time(activity.get("moving_time")),
-        average_speed= (activity.get("average_speed") or 0) * 3.6,
-        date         = (activity.get("start_date") or "")[:10],
-        sport_type   = activity.get("sport_type") or "",
+        name          = activity.get("name", "Activity"),
+        distance_km   = (activity.get("distance") or 0) / 1000,
+        elevation_m   = activity.get("total_elevation_gain") or 0,
+        moving_time   = fmt_time(activity.get("moving_time")),
+        average_speed = (activity.get("average_speed") or 0) * 3.6,
+        date          = (activity.get("start_date") or "")[:10],
+        sport_type    = activity.get("sport_type") or "",
     )
 
 
 def cmd_post(args, cfg):
     db_path = cfg["database"]["path"]
-    init_db(db_path)
     out_dir = cfg["map"].get("output_dir", "output")
 
-    row = get_activity(db_path, args.activity_id)
+    row = get_activity(db_path, args.activity_id, user_id=USER_ID)
     if not row:
         print(f"Activity {args.activity_id} not found. Run 'sync' first.")
         sys.exit(1)
 
-    # Preview
-    masto_cfg = cfg.get("mastodon", {})
-    text      = _build_post_text(dict(row), masto_cfg.get("post_template", "{name}\n#cycling"))
+    text = _build_post_text(dict(row), cfg["mastodon"].get("post_template", "{name}\n#cycling"))
     print(f"Post preview:\n{'─' * 40}")
     print(text)
-    print('─' * 40)
+    print("─" * 40)
 
     if args.dry_run:
         print("(dry run — nothing posted)")
@@ -223,14 +229,12 @@ def _do_post(row, cfg, db_path: str, out_dir: str, rerender: bool = False) -> st
             return None
         img.save(img_path)
 
-    masto_cfg = cfg.get("mastodon", {})
-    text      = _build_post_text(dict(row), masto_cfg.get("post_template", "{name}\n#cycling"))
-
+    text        = _build_post_text(dict(row), cfg["mastodon"].get("post_template", "{name}\n#cycling"))
     stream      = get_stream(row)
     chart_paths = generate_charts(activity_id, stream, cfg, out_dir, db_path=db_path)
     all_images  = ([img_path] + chart_paths)[:4]
 
-    client    = MastodonClient.from_env(masto_cfg.get("instance", "https://mastodon.social"))
+    client    = MastodonClient.from_cfg(cfg)
     media_ids = [client.upload_image(p) for p in all_images]
 
     resp = client._session.post(
@@ -238,12 +242,12 @@ def _do_post(row, cfg, db_path: str, out_dir: str, rerender: bool = False) -> st
         json={
             "status":     text,
             "media_ids":  media_ids,
-            "visibility": masto_cfg.get("visibility", "public"),
+            "visibility": cfg["mastodon"].get("visibility", "public"),
         },
     )
     resp.raise_for_status()
     post_url = resp.json().get("url", "")
-    mark_posted(db_path, activity_id, post_url)
+    mark_posted(db_path, activity_id, post_url, user_id=USER_ID)
     return post_url
 
 
@@ -255,14 +259,14 @@ def cmd_daemon(args, cfg):
     db_path  = cfg["database"]["path"]
     out_dir  = cfg["map"].get("output_dir", "output")
     interval = cfg.get("daemon", {}).get("interval_minutes", 15) * 60
+    session  = cfg["strava"].get("session_cookie")
 
     try:
-        strava = StravaClient()
+        strava = StravaClient(session_cookie=session)
     except ValueError as e:
         print(f"Error: {e}")
         sys.exit(1)
 
-    init_db(db_path)
     print(f"Daemon started — polling every {interval // 60} min. Ctrl-C to stop.")
 
     while True:
@@ -271,9 +275,9 @@ def cmd_daemon(args, cfg):
             ids = strava.get_activity_ids(n=args.count)
             for activity_id in ids:
                 data = strava.get_activity(activity_id)
-                upsert_activity(db_path, data)
+                upsert_activity(db_path, data, user_id=USER_ID)
 
-            unposted = get_unposted(db_path)
+            unposted = get_unposted(db_path, user_id=USER_ID)
             if unposted:
                 print(f"  {len(unposted)} unposted activit{'y' if len(unposted) == 1 else 'ies'}")
             for row in unposted:
@@ -297,12 +301,51 @@ def _now():
 
 
 # ---------------------------------------------------------------------------
+# Config management
+# ---------------------------------------------------------------------------
+
+def cmd_config(args, cfg):
+    db_path = cfg["database"]["path"]
+
+    if args.config_cmd == "list":
+        rows = list_settings(db_path, USER_ID)
+        if not rows:
+            print("No settings found.")
+            return
+        area_width = max(len(r["area"]) for r in rows)
+        key_width  = max(len(r["key"])  for r in rows)
+        for r in rows:
+            # Mask credential values
+            value = r["value"] or ""
+            if r["key"] in ("token", "session_cookie") and value:
+                value = value[:6] + "…"
+            print(f"  {r['area']:<{area_width}}  {r['key']:<{key_width}}  {value}")
+
+    elif args.config_cmd == "get":
+        value = get_setting(db_path, USER_ID, args.area, args.key)
+        if value is None:
+            print(f"No setting found for {args.area}/{args.key}")
+            sys.exit(1)
+        if args.key in ("token", "session_cookie") and value:
+            value = value[:6] + "…"
+        print(value)
+
+    elif args.config_cmd == "set":
+        set_setting(db_path, USER_ID, args.area, args.key, args.value)
+        print(f"Set {args.area}/{args.key}")
+
+    else:
+        print("Usage: config list | config get <area> <key> | config set <area> <key> <value>")
+        sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Bikeodon – Strava activity map renderer",
+        description="Bikeodon – Strava → Mastodon bridge",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--config", default="config.yaml", metavar="FILE",
@@ -323,25 +366,40 @@ def main():
     p_charts.add_argument("activity_id", type=int)
 
     p_post = sub.add_parser("post", help="Render and post an activity to Mastodon")
-    p_post.add_argument("activity_id", type=int,
-                        help="Strava activity ID to post")
-    p_post.add_argument("--dry-run", action="store_true",
-                        help="Preview the post without publishing")
-    p_post.add_argument("--rerender", action="store_true",
-                        help="Re-render the image even if it already exists")
+    p_post.add_argument("activity_id", type=int, help="Strava activity ID to post")
+    p_post.add_argument("--dry-run",  action="store_true", help="Preview without publishing")
+    p_post.add_argument("--rerender", action="store_true", help="Re-render even if image exists")
 
     p_daemon = sub.add_parser("daemon", help="Poll Strava and auto-post new activities")
     p_daemon.add_argument("--count", type=int, default=20,
                           help="Activities to check per poll cycle (default: 20)")
+
+    p_cfg = sub.add_parser("config", help="View or update per-user settings")
+    cfg_sub = p_cfg.add_subparsers(dest="config_cmd")
+    cfg_sub.add_parser("list")
+    p_cfg_get = cfg_sub.add_parser("get")
+    p_cfg_get.add_argument("area")
+    p_cfg_get.add_argument("key")
+    p_cfg_set = cfg_sub.add_parser("set")
+    p_cfg_set.add_argument("area")
+    p_cfg_set.add_argument("key")
+    p_cfg_set.add_argument("value")
 
     args = parser.parse_args()
     if not args.command:
         parser.print_help()
         sys.exit(1)
 
-    cfg = load_config(args.config)
-    {"sync": cmd_sync, "list": cmd_list, "render": cmd_render,
-     "charts": cmd_charts, "post": cmd_post, "daemon": cmd_daemon}[args.command](args, cfg)
+    cfg = _load_cfg(args.config)
+    {
+        "sync":    cmd_sync,
+        "list":    cmd_list,
+        "render":  cmd_render,
+        "charts":  cmd_charts,
+        "post":    cmd_post,
+        "daemon":  cmd_daemon,
+        "config":  cmd_config,
+    }[args.command](args, cfg)
 
 
 if __name__ == "__main__":

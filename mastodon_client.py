@@ -16,16 +16,22 @@ class MastodonClient:
         self._session.headers["Authorization"] = f"Bearer {access_token}"
 
     @classmethod
+    def from_cfg(cls, cfg: dict) -> "MastodonClient":
+        masto = cfg.get("mastodon", {})
+        token = (masto.get("token") or os.environ.get("MASTODON_TOKEN", "")).strip()
+        instance = masto.get("instance", "https://mastodon.social")
+        if not token:
+            raise ValueError(
+                "Mastodon token not set.\n"
+                "  Store it via: python main.py config set mastodon token <value>"
+            )
+        return cls(instance, token)
+
+    @classmethod
     def from_env(cls, instance: str = "https://mastodon.social") -> "MastodonClient":
         token = os.environ.get("MASTODON_TOKEN", "").strip()
         if not token:
-            raise ValueError(
-                "MASTODON_TOKEN environment variable is not set.\n"
-                "  1. Go to mastodon.social/settings/applications\n"
-                "  2. Create a new application\n"
-                "  3. Copy the access token\n"
-                "  4. export MASTODON_TOKEN=<value>"
-            )
+            raise ValueError("MASTODON_TOKEN environment variable is not set.")
         return cls(instance, token)
 
     def upload_image(self, image_path: str, description: str = "") -> str:

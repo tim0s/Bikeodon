@@ -8,16 +8,17 @@ _BASE = "https://www.strava.com"
 
 
 class StravaClient:
-    def __init__(self):
-        session_cookie = os.environ.get("STRAVA_SESSION", "").strip()
-        if not session_cookie:
+    def __init__(self, session_cookie: str | None = None):
+        cookie = (session_cookie or os.environ.get("STRAVA_SESSION", "")).strip()
+        if not cookie:
             raise ValueError(
-                "STRAVA_SESSION not set.\n"
+                "Strava session cookie not set.\n"
                 "  1. Log in to strava.com\n"
                 "  2. DevTools → Application → Cookies → strava.com\n"
                 "  3. Copy _strava4_session value\n"
-                "  4. export STRAVA_SESSION=<value>"
+                "  4. Store it via: python main.py config set strava session_cookie <value>"
             )
+        session_cookie = cookie
         self._s = requests.Session()
         self._s.cookies.set("_strava4_session", session_cookie, domain="www.strava.com")
         self._s.headers["User-Agent"] = (
