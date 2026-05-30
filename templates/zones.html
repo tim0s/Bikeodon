@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Zones – Bikeodon{% endblock %}
+{% block content %}
+<hgroup>
+  <h2>Training zones</h2>
+  <p><a href="{{ url_for('settings') }}">← Back to settings</a></p>
+</hgroup>
+
+<div role="tablist" class="tab-bar">
+  <a href="?type=hr"    role="tab" {% if active_type == 'hr'    %}aria-selected="true"{% endif %}>Heart rate</a>
+  <a href="?type=power" role="tab" {% if active_type == 'power' %}aria-selected="true"{% endif %}>Power</a>
+</div>
+
+{% set zones = hr_zones if active_type == 'hr' else power_zones %}
+
+<form method="post">
+  <input type="hidden" name="zone_type" value="{{ active_type }}">
+  <figure>
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Name</th>
+          <th>Upper limit (%)</th>
+          <th>Color</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for i, z in enumerate(zones) %}
+        <tr>
+          <td>{{ i + 1 }}</td>
+          <td><input type="text"   name="name_{{ i }}"    value="{{ z.name }}"    required></td>
+          <td><input type="number" name="max_pct_{{ i }}" value="{{ z.max_pct|int }}" min="1" max="999" required></td>
+          <td><input type="color"  name="color_{{ i }}"   value="{{ z.color }}"></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </figure>
+  <small>
+    {% if active_type == 'hr' %}
+      Percentages are of your max HR. Last zone should be 100.
+    {% else %}
+      Percentages are of your FTP. Last zone can be 999 for "unlimited".
+    {% endif %}
+  </small>
+  <button type="submit">Save {{ 'HR' if active_type == 'hr' else 'power' }} zones</button>
+</form>
+{% endblock %}

@@ -1,0 +1,208 @@
+{% extends "base.html" %}
+{% block title %}Settings – Bikeodon{% endblock %}
+{% block content %}
+<h2>Settings</h2>
+
+{# ── Strava ──────────────────────────────────────────────────────────────── #}
+<article id="strava">
+  <header><strong>Strava</strong></header>
+  {% if strava_connected %}
+    <p>✓ Connected. <a href="{{ url_for('strava_disconnect') }}" class="secondary">Disconnect</a></p>
+  {% else %}
+    <p>Not connected. <a href="{{ url_for('strava_connect') }}" role="button" class="outline contrast">Connect Strava</a></p>
+    <small>You need STRAVA_CLIENT_ID and STRAVA_CLIENT_SECRET set on the server.</small>
+  {% endif %}
+</article>
+
+{# ── Mastodon ─────────────────────────────────────────────────────────────── #}
+<article id="mastodon">
+  <header><strong>Mastodon</strong></header>
+  <form method="post" action="{{ url_for('save_mastodon') }}">
+    <div class="grid">
+      <label>Instance URL
+        <input type="url" name="instance" value="{{ cfg.mastodon.instance }}" placeholder="https://mastodon.social">
+      </label>
+      <label>Handle
+        <input type="text" name="handle" value="{{ cfg.mastodon.handle }}" placeholder="@you@mastodon.social">
+      </label>
+    </div>
+    <label>Access token
+      <input type="password" name="token" placeholder="Leave blank to keep current">
+    </label>
+    <label>Visibility
+      <select name="visibility">
+        {% for v in ["public", "unlisted", "private", "direct"] %}
+          <option value="{{ v }}" {% if cfg.mastodon.visibility == v %}selected{% endif %}>{{ v }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Post template
+      <textarea name="post_template" rows="6">{{ cfg.mastodon.post_template }}</textarea>
+      <small>Variables: {name}, {distance_km:.1f}, {elevation_m:.0f}, {moving_time}, {average_speed}, {date}, {sport_type}</small>
+    </label>
+    <button type="submit">Save Mastodon settings</button>
+  </form>
+</article>
+
+{# ── Stats bar ────────────────────────────────────────────────────────────── #}
+<article id="stats">
+  <header><strong>Stats bar</strong></header>
+  <form method="post" action="{{ url_for('save_stats') }}">
+    <fieldset>
+      <legend>Fields to display (order = display order)</legend>
+      <div class="grid-fields">
+        {% for f in stat_fields %}
+        <label>
+          <input type="checkbox" name="field_{{ f }}" {% if f in active_fields %}checked{% endif %}>
+          {{ f.replace("_", " ") }}
+        </label>
+        {% endfor %}
+      </div>
+    </fieldset>
+    <details>
+      <summary>Overlay appearance</summary>
+      <div class="grid">
+        <label>Background color
+          <input type="color" name="background_color" value="{{ cfg.stats_overlay.background_color }}">
+        </label>
+        <label>Background opacity (0–1)
+          <input type="number" name="background_opacity" value="{{ cfg.stats_overlay.background_opacity }}" min="0" max="1" step="0.05">
+        </label>
+        <label>Font size (px)
+          <input type="number" name="font_size" value="{{ cfg.stats_overlay.font.size }}" min="12" max="120">
+        </label>
+        <label>Font color
+          <input type="color" name="font_color" value="{{ cfg.stats_overlay.font.color }}">
+        </label>
+        <label>Icon size (px)
+          <input type="number" name="icon_size" value="{{ cfg.stats_overlay.icon.size }}" min="12" max="120">
+        </label>
+        <label>Vertical padding (px)
+          <input type="number" name="padding" value="{{ cfg.stats_overlay.padding }}" min="0" max="100">
+        </label>
+        <label>Icon–text gap (px)
+          <input type="number" name="gap" value="{{ cfg.stats_overlay.gap }}" min="0" max="100">
+        </label>
+      </div>
+      <label>
+        <input type="checkbox" name="overlay_enabled" {% if cfg.stats_overlay.enabled %}checked{% endif %}>
+        Show stats overlay on map
+      </label>
+    </details>
+    <button type="submit">Save stats settings</button>
+  </form>
+</article>
+
+{# ── Map ──────────────────────────────────────────────────────────────────── #}
+<article id="map">
+  <header><strong>Map</strong></header>
+  <form method="post" action="{{ url_for('save_map') }}">
+    <div class="grid">
+      <label>Width (px)
+        <input type="number" name="width" value="{{ cfg.map.width }}" min="400" max="4000">
+      </label>
+      <label>Height (px)
+        <input type="number" name="height" value="{{ cfg.map.height }}" min="300" max="4000">
+      </label>
+      <label>Zoom offset
+        <input type="number" name="zoom_offset" value="{{ cfg.map.zoom_offset }}" min="-5" max="3">
+        <small>0 = auto, negative = wider view</small>
+      </label>
+      <label>Max tiles
+        <input type="number" name="max_tiles" value="{{ cfg.map.max_tiles }}" min="10" max="500">
+      </label>
+    </div>
+    <label>Tile URL
+      <input type="url" name="tiles_url" value="{{ cfg.map.tiles.url }}">
+    </label>
+    <label>Tile user agent
+      <input type="text" name="tiles_user_agent" value="{{ cfg.map.tiles.user_agent }}">
+    </label>
+    <details>
+      <summary>Padding</summary>
+      <div class="grid">
+        {% for side in ["top", "bottom", "left", "right"] %}
+        <label>{{ side|capitalize }}
+          <input type="number" name="padding_{{ side }}" value="{{ cfg.map.padding[side] }}" min="0" max="1" step="0.01">
+        </label>
+        {% endfor %}
+      </div>
+    </details>
+    <details>
+      <summary>Route style</summary>
+      <div class="grid">
+        <label>Color <input type="color" name="route_color" value="{{ cfg.map.route.color }}"></label>
+        <label>Width (px) <input type="number" name="route_width" value="{{ cfg.map.route.width }}" min="1" max="20"></label>
+        <label>Opacity <input type="number" name="route_opacity" value="{{ cfg.map.route.opacity }}" min="0" max="1" step="0.05"></label>
+        <label>Outline color <input type="color" name="route_outline_color" value="{{ cfg.map.route.outline_color }}"></label>
+        <label>Outline width (px) <input type="number" name="route_outline_width" value="{{ cfg.map.route.outline_width }}" min="0" max="10"></label>
+        <label>Antialias scale <input type="number" name="route_antialias_scale" value="{{ cfg.map.route.antialias_scale }}" min="1" max="4"></label>
+      </div>
+    </details>
+    <details>
+      <summary>Start / end markers</summary>
+      <div class="grid">
+        <fieldset>
+          <legend>Start marker</legend>
+          <label><input type="checkbox" name="start_marker_enabled" {% if cfg.map.start_marker.enabled %}checked{% endif %}> Enabled</label>
+          <div class="grid">
+            <label>Color <input type="color" name="start_marker_color" value="{{ cfg.map.start_marker.color }}"></label>
+            <label>Radius (px) <input type="number" name="start_marker_radius" value="{{ cfg.map.start_marker.radius }}" min="1" max="30"></label>
+            <label>Outline color <input type="color" name="start_marker_outline_color" value="{{ cfg.map.start_marker.outline_color }}"></label>
+            <label>Outline width <input type="number" name="start_marker_outline_width" value="{{ cfg.map.start_marker.outline_width }}" min="0" max="10"></label>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>End marker</legend>
+          <label><input type="checkbox" name="end_marker_enabled" {% if cfg.map.end_marker.enabled %}checked{% endif %}> Enabled</label>
+          <div class="grid">
+            <label>Color <input type="color" name="end_marker_color" value="{{ cfg.map.end_marker.color }}"></label>
+            <label>Radius (px) <input type="number" name="end_marker_radius" value="{{ cfg.map.end_marker.radius }}" min="1" max="30"></label>
+            <label>Outline color <input type="color" name="end_marker_outline_color" value="{{ cfg.map.end_marker.outline_color }}"></label>
+            <label>Outline width <input type="number" name="end_marker_outline_width" value="{{ cfg.map.end_marker.outline_width }}" min="0" max="10"></label>
+          </div>
+        </fieldset>
+      </div>
+    </details>
+    <button type="submit">Save map settings</button>
+  </form>
+</article>
+
+{# ── Charts ───────────────────────────────────────────────────────────────── #}
+<article id="charts">
+  <header><strong>Charts</strong></header>
+  <form method="post" action="{{ url_for('save_charts') }}">
+    <div class="grid">
+      <fieldset>
+        <legend>Heart rate</legend>
+        <label><input type="checkbox" name="hr_enabled" {% if cfg.charts.heart_rate.enabled %}checked{% endif %}> Enabled</label>
+        <label>Max HR (bpm) — leave blank to infer from data
+          <input type="number" name="max_hr" value="{{ cfg.charts.heart_rate.max_hr or '' }}" min="100" max="250" placeholder="auto">
+        </label>
+      </fieldset>
+      <fieldset>
+        <legend>Power</legend>
+        <label><input type="checkbox" name="power_enabled" {% if cfg.charts.power.enabled %}checked{% endif %}> Enabled</label>
+        <label>FTP (watts) — leave blank to infer from data
+          <input type="number" name="ftp" value="{{ cfg.charts.power.ftp or '' }}" min="50" max="600" placeholder="auto">
+        </label>
+      </fieldset>
+    </div>
+    <details>
+      <summary>Chart colors</summary>
+      <div class="grid">
+        <label>Background <input type="color" name="style_background_color" value="{{ cfg.charts.style.background_color }}"></label>
+        <label>Text <input type="color" name="style_text_color" value="{{ cfg.charts.style.text_color }}"></label>
+        <label>Grid <input type="color" name="style_grid_color" value="{{ cfg.charts.style.grid_color }}"></label>
+        <label>HR line <input type="color" name="style_line_color" value="{{ cfg.charts.style.line_color }}"></label>
+        <label>Power line <input type="color" name="style_power_line_color" value="{{ cfg.charts.style.power_line_color }}"></label>
+      </div>
+    </details>
+    <button type="submit">Save chart settings</button>
+  </form>
+  <footer>
+    <a href="{{ url_for('zones') }}">Edit HR &amp; power zones →</a>
+  </footer>
+</article>
+
+{% endblock %}

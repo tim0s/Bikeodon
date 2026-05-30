@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Activities – Bikeodon{% endblock %}
+{% block content %}
+<hgroup>
+  <h2>Activities</h2>
+  {% if not strava_connected %}
+  <p><a href="{{ url_for('strava_connect') }}" role="button" class="outline">Connect Strava to start syncing</a></p>
+  {% endif %}
+</hgroup>
+
+{% if activities %}
+<figure>
+  <table>
+    <thead>
+      <tr>
+        <th>Date</th>
+        <th>Type</th>
+        <th>Name</th>
+        <th>Distance</th>
+        <th>Elevation</th>
+        <th>Posted</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for a in activities %}
+      <tr>
+        <td>{{ a.date }}</td>
+        <td><small>{{ a.sport_type }}</small></td>
+        <td>
+          {% if a.strava_url %}
+            <a href="{{ a.strava_url }}" target="_blank" rel="noopener">{{ a.name }}</a>
+          {% else %}
+            {{ a.name }}
+          {% endif %}
+        </td>
+        <td>{{ a.distance }}</td>
+        <td>{{ a.elevation }}</td>
+        <td>
+          {% if a.posted %}
+            {% if a.post_url %}
+              <a href="{{ a.post_url }}" target="_blank" rel="noopener">✓</a>
+            {% else %}
+              ✓
+            {% endif %}
+          {% else %}
+            <span class="muted">–</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</figure>
+{% else %}
+<p>No activities yet. Run <code>python main.py sync</code> to fetch from Strava.</p>
+{% endif %}
+{% endblock %}

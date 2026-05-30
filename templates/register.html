@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Register – Bikeodon{% endblock %}
+{% block content %}
+<article class="auth-card">
+  <hgroup>
+    <h2>Create account</h2>
+    <p>Connect Strava to Mastodon</p>
+  </hgroup>
+  <form method="post">
+    <label>Username
+      <input type="text" name="username" autocomplete="username" required autofocus>
+    </label>
+    <label>Password
+      <input type="password" name="password" autocomplete="new-password" required>
+    </label>
+    <button type="submit" class="contrast">Create account</button>
+  </form>
+  <p class="center">Already have an account? <a href="{{ url_for('login') }}">Log in</a></p>
+</article>
+{% endblock %}

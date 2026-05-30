@@ -3,3 +3,6 @@ Pillow>=10.0.0
 gpxpy>=1.6.0
 PyYAML>=6.0
 python-dotenv>=1.0.0
+matplotlib
+flask>=3.0
+flask-login>=0.6

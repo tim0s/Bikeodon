@@ -31,11 +31,15 @@ from database import (
     init_db, list_activities, list_settings, load_user_config,
     mark_posted, set_setting, upsert_activity,
 )
+from strava import StravaClient
 from map_renderer import render_activity_map
 from mastodon_client import MastodonClient
 from strava import StravaClient
 
 USER_ID = 1  # single-user prototype
+
+STRAVA_CLIENT_ID     = os.environ.get("STRAVA_CLIENT_ID", "")
+STRAVA_CLIENT_SECRET = os.environ.get("STRAVA_CLIENT_SECRET", "")
 
 
 def _load_cfg(config_path: str) -> dict:
@@ -46,14 +50,39 @@ def _load_cfg(config_path: str) -> dict:
     return load_user_config(db_path, USER_ID, base)
 
 
+def _strava_client(cfg) -> "StravaClient":
+    db_path = cfg["database"]["path"]
+    access_token = get_setting(db_path, USER_ID, "strava", "access_token") or ""
+    refresh_tok  = get_setting(db_path, USER_ID, "strava", "refresh_token") or ""
+    expires_at   = float(get_setting(db_path, USER_ID, "strava", "token_expires_at") or 0)
+
+    if not access_token:
+        raise ValueError(
+            "Strava not connected. Visit the web UI and click 'Connect Strava'."
+        )
+
+    def _on_refresh(new_access, new_refresh, new_expires):
+        set_setting(db_path, USER_ID, "strava", "access_token",    new_access)
+        set_setting(db_path, USER_ID, "strava", "refresh_token",   new_refresh)
+        set_setting(db_path, USER_ID, "strava", "token_expires_at", str(new_expires))
+
+    return StravaClient(
+        access_token=access_token,
+        client_id=STRAVA_CLIENT_ID,
+        client_secret=STRAVA_CLIENT_SECRET,
+        refresh_tok=refresh_tok,
+        expires_at=expires_at,
+        on_refresh=_on_refresh,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Commands
 # ---------------------------------------------------------------------------
 
 def cmd_sync(args, cfg):
-    session = cfg["strava"].get("session_cookie")
     try:
-        client = StravaClient(session_cookie=session)
+        client = _strava_client(cfg)
     except ValueError as e:
         print(f"Error: {e}")
         sys.exit(1)
@@ -259,10 +288,9 @@ def cmd_daemon(args, cfg):
     db_path  = cfg["database"]["path"]
     out_dir  = cfg["map"].get("output_dir", "output")
     interval = cfg.get("daemon", {}).get("interval_minutes", 15) * 60
-    session  = cfg["strava"].get("session_cookie")
 
     try:
-        strava = StravaClient(session_cookie=session)
+        strava = _strava_client(cfg)
     except ValueError as e:
         print(f"Error: {e}")
         sys.exit(1)

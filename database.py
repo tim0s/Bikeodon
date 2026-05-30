@@ -99,10 +99,17 @@ def init_db(db_path):
 
     conn.execute("""
         CREATE TABLE IF NOT EXISTS users (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
-            created_at TEXT NOT NULL
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            username      TEXT UNIQUE,
+            password_hash TEXT,
+            created_at    TEXT NOT NULL
         )
     """)
+    for col, typedef in [("username", "TEXT"), ("password_hash", "TEXT")]:
+        try:
+            conn.execute(f"ALTER TABLE users ADD COLUMN {col} {typedef}")
+        except sqlite3.OperationalError:
+            pass
 
     conn.execute("""
         CREATE TABLE IF NOT EXISTS settings (
@@ -178,6 +185,10 @@ def init_db(db_path):
         conn.commit()
 
     conn.close()
+
+
+def seed_user_defaults(conn, user_id: int):
+    _seed_defaults(conn, user_id)
 
 
 def _seed_defaults(conn, user_id: int):
@@ -487,6 +498,50 @@ def get_points(row) -> list[tuple[float, float]]:
     if not raw:
         return []
     return [(p[0], p[1]) for p in json.loads(raw)]
+
+
+def get_user_by_username(db_path, username: str):
+    conn = _conn(db_path)
+    row = conn.execute(
+        "SELECT id, username, password_hash FROM users WHERE username=?", (username,)
+    ).fetchone()
+    conn.close()
+    return row
+
+
+def get_user_by_id(db_path, user_id: int):
+    conn = _conn(db_path)
+    row = conn.execute(
+        "SELECT id, username FROM users WHERE id=?", (user_id,)
+    ).fetchone()
+    conn.close()
+    return row
+
+
+def create_user(db_path, username: str, password_hash: str) -> int:
+    """
+    Create a new user account. If user_id=1 has no username yet (first run),
+    claim it so existing activities/settings are preserved. Otherwise insert new.
+    Returns the user_id.
+    """
+    conn = _conn(db_path)
+    first = conn.execute("SELECT id, username FROM users WHERE id=1").fetchone()
+    if first and not first["username"]:
+        conn.execute(
+            "UPDATE users SET username=?, password_hash=? WHERE id=1",
+            (username, password_hash),
+        )
+        user_id = 1
+    else:
+        cur = conn.execute(
+            "INSERT INTO users (username, password_hash, created_at) VALUES (?,?,?)",
+            (username, password_hash, datetime.now(timezone.utc).isoformat()),
+        )
+        user_id = cur.lastrowid
+        _seed_defaults(conn, user_id)
+    conn.commit()
+    conn.close()
+    return user_id
 
 
 def get_stream(row) -> list[dict]:
