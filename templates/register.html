@@ -2,6 +2,9 @@
 {% block title %}Register – Bikeodon{% endblock %}
 {% block content %}
 <article class="auth-card">
+  <div class="auth-logo">
+    <img src="{{ url_for('static', filename='logo.png') }}" alt="Bikeodon">
+  </div>
   <hgroup>
     <h2>Create account</h2>
     <p>Connect Strava to Mastodon</p>

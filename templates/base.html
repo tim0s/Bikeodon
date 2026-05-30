@@ -6,12 +6,17 @@
   <title>{% block title %}Bikeodon{% endblock %}</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
 </head>
 <body>
   <header class="container">
     <nav>
       <ul>
-        <li><strong><a href="{{ url_for('index') }}" class="no-underline">🚴 Bikeodon</a></strong></li>
+        <li>
+        <a href="{{ url_for('index') }}" class="no-underline nav-logo">
+          <img src="{{ url_for('static', filename='logo.png') }}" alt="Bikeodon" height="36">
+        </a>
+      </li>
       </ul>
       {% if current_user.is_authenticated %}
       <ul>

@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="static/logo.png" alt="Bikeodon" width="400">
+</p>
+
 # Bikeodon
 
 Automatically post your Strava activities to Mastodon — with a rendered route map, stats overlay, and heart rate / power zone charts.
