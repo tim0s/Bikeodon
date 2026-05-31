@@ -33,19 +33,31 @@ def _deg2tile(lat: float, lon: float, zoom: int) -> tuple[int, int]:
     return int(gx // TILE_SIZE), int(gy // TILE_SIZE)
 
 
-def _select_zoom(min_lat, min_lon, max_lat, max_lon, max_tiles: int) -> int:
+def _select_zoom(min_lat, min_lon, max_lat, max_lon,
+                 route_area_w: float, route_area_h: float,
+                 max_tiles: int, zoom_offset: int = 0) -> int:
     """
-    Pick the highest zoom level where the bounding box fits within max_tiles
-    tiles total, capped at zoom 17.
+    Pick the highest zoom where the route bbox fits inside the route area
+    (output minus padding) and tile count stays under max_tiles.
+    zoom_offset nudges the result up or down.
     """
+    best = 1
     for zoom in range(17, 1, -1):
+        gx0, gy0 = _latlon_to_global_px(max_lat, min_lon, zoom)
+        gx1, gy1 = _latlon_to_global_px(min_lat, max_lon, zoom)
+        route_px_w = abs(gx1 - gx0)
+        route_px_h = abs(gy1 - gy0)
+
         tx0, ty0 = _deg2tile(max_lat, min_lon, zoom)
         tx1, ty1 = _deg2tile(min_lat, max_lon, zoom)
-        nx = abs(tx1 - tx0) + 3   # +2 for one-tile buffer each side
-        ny = abs(ty1 - ty0) + 3
-        if nx * ny <= max_tiles:
-            return zoom
-    return 5
+        nx = abs(tx1 - tx0) + 5
+        ny = abs(ty1 - ty0) + 5
+
+        if route_px_w < route_area_w and route_px_h < route_area_h and nx * ny <= max_tiles:
+            best = zoom
+            break
+
+    return max(1, best + zoom_offset)
 
 
 # ---------------------------------------------------------------------------
@@ -84,9 +96,9 @@ def _stitch_tiles(min_lat, min_lon, max_lat, max_lon, zoom, cfg) -> tuple[Image.
     tx0, ty0 = _deg2tile(max_lat, min_lon, zoom)
     tx1, ty1 = _deg2tile(min_lat, max_lon, zoom)
 
-    # normalise + buffer
-    tx0, tx1 = min(tx0, tx1) - 1, max(tx0, tx1) + 1
-    ty0, ty1 = min(ty0, ty1) - 1, max(ty0, ty1) + 1
+    # normalise + buffer (generous so padding crop never exceeds canvas)
+    tx0, tx1 = min(tx0, tx1) - 3, max(tx0, tx1) + 3
+    ty0, ty1 = min(ty0, ty1) - 3, max(ty0, ty1) + 3
 
     nx = tx1 - tx0 + 1
     ny = ty1 - ty0 + 1
@@ -202,47 +214,46 @@ def _draw_markers(img: Image.Image, origin: tuple[int, int],
 # Crop / scale
 # ---------------------------------------------------------------------------
 
-def _crop_and_scale(img: Image.Image, origin: tuple[int, int],
-                    min_lat, min_lon, max_lat, max_lon,
-                    zoom: int, out_w: int, out_h: int) -> Image.Image:
+def _crop_to_output(img: Image.Image, origin: tuple[int, int],
+                    min_lat, min_lon, max_lat, max_lon, zoom: int,
+                    out_w: int, out_h: int,
+                    pad_left_px: float, pad_right_px: float,
+                    pad_top_px: float, pad_bottom_px: float) -> Image.Image:
     """
-    Crop the stitched canvas so the padded bounding box fills the frame,
-    then scale to (out_w, out_h) preserving the output aspect ratio.
+    Crop the tile canvas to exactly (out_w × out_h).
+    The route is centered within the area left after subtracting fixed padding.
+    No rescaling — tile pixels are never stretched.
     """
-    # Pixel coordinates of the padded bbox corners within the canvas
-    gx0, gy0 = _latlon_to_global_px(max_lat, min_lon, zoom)  # top-left
+    gx0, gy0 = _latlon_to_global_px(max_lat, min_lon, zoom)  # top-left of route bbox
     gx1, gy1 = _latlon_to_global_px(min_lat, max_lon, zoom)  # bottom-right
 
-    ix0 = gx0 - origin[0]
-    iy0 = gy0 - origin[1]
-    ix1 = gx1 - origin[0]
-    iy1 = gy1 - origin[1]
+    cx0 = gx0 - origin[0]
+    cy0 = gy0 - origin[1]
+    route_px_w = gx1 - gx0
+    route_px_h = gy1 - gy0
 
-    bbox_w = abs(ix1 - ix0)
-    bbox_h = abs(iy1 - iy0)
-    cx = (ix0 + ix1) / 2
-    cy = (iy0 + iy1) / 2
+    route_area_w = out_w - pad_left_px - pad_right_px
+    route_area_h = out_h - pad_top_px  - pad_bottom_px
 
-    # Expand the crop window to match output aspect ratio
-    target_ratio = out_w / out_h
-    if bbox_h == 0:
-        bbox_h = 1
-    current_ratio = bbox_w / bbox_h
+    # Center the route within the route area, then add the left/top padding
+    center_offset_x = (route_area_w - route_px_w) / 2
+    center_offset_y = (route_area_h - route_px_h) / 2
 
-    if current_ratio > target_ratio:
-        crop_w = bbox_w
-        crop_h = bbox_w / target_ratio
-    else:
-        crop_h = bbox_h
-        crop_w = bbox_h * target_ratio
+    left   = int(round(cx0 - pad_left_px - center_offset_x))
+    top    = int(round(cy0 - pad_top_px  - center_offset_y))
+    right  = left + out_w
+    bottom = top  + out_h
 
-    left   = max(0, cx - crop_w / 2)
-    top    = max(0, cy - crop_h / 2)
-    right  = min(img.width,  cx + crop_w / 2)
-    bottom = min(img.height, cy + crop_h / 2)
+    if left < 0 or top < 0 or right > img.width or bottom > img.height:
+        bg = Image.new("RGBA", (out_w, out_h), (200, 200, 200, 255))
+        src_l = max(0, left);  src_t = max(0, top)
+        src_r = min(img.width, right); src_b = min(img.height, bottom)
+        if src_r > src_l and src_b > src_t:
+            bg.paste(img.crop((src_l, src_t, src_r, src_b)),
+                     (src_l - left, src_t - top))
+        return bg
 
-    cropped = img.crop((int(left), int(top), int(right), int(bottom)))
-    return cropped.resize((out_w, out_h), Image.LANCZOS)
+    return img.crop((left, top, right, bottom))
 
 
 # ---------------------------------------------------------------------------
@@ -443,30 +454,42 @@ def render_activity_map(points: list[tuple[float, float]], activity: dict,
     min_lat, max_lat = min(lats), max(lats)
     min_lon, max_lon = min(lons), max(lons)
 
+    # Tiny epsilon so single-point activities don't produce zero-size bbox
     lat_span = max(max_lat - min_lat, 0.001)
     lon_span = max(max_lon - min_lon, 0.001)
-
-    # Per-side padding — accepts a scalar (uniform) or a dict with top/bottom/left/right
-    raw = cfg["map"].get("padding", 0.15)
-    if isinstance(raw, dict):
-        pad_top    = raw.get("top",    0.08)
-        pad_bottom = raw.get("bottom", 0.25)
-        pad_left   = raw.get("left",   0.08)
-        pad_right  = raw.get("right",  0.08)
-    else:
-        pad_top = pad_bottom = pad_left = pad_right = float(raw)
-
-    max_lat += lat_span * pad_top
-    min_lat -= lat_span * pad_bottom
-    min_lon -= lon_span * pad_left
-    max_lon += lon_span * pad_right
+    min_lat -= lat_span * 0.005
+    max_lat += lat_span * 0.005
+    min_lon -= lon_span * 0.005
+    max_lon += lon_span * 0.005
 
     out_w     = cfg["map"]["width"]
     out_h     = cfg["map"]["height"]
     max_tiles = cfg["map"].get("max_tiles", 100)
-
     zoom_offset = int(cfg["map"].get("zoom_offset", 0))
-    zoom = max(1, _select_zoom(min_lat, min_lon, max_lat, max_lon, max_tiles) + zoom_offset)
+
+    # Padding as fractions of output dimensions (e.g. 0.05 = 5% of width/height).
+    # pad_left=0.05, pad_right=0.05 reserves 10% total horizontally; zoom is chosen
+    # so the route fills the remaining 90%.
+    raw = cfg["map"].get("padding", 0.05)
+    if isinstance(raw, dict):
+        pad_top    = float(raw.get("top",    0.05))
+        pad_bottom = float(raw.get("bottom", 0.12))
+        pad_left   = float(raw.get("left",   0.05))
+        pad_right  = float(raw.get("right",  0.05))
+    else:
+        f = float(raw)
+        pad_top = pad_bottom = pad_left = pad_right = f
+
+    pad_left_px   = pad_left   * out_w
+    pad_right_px  = pad_right  * out_w
+    pad_top_px    = pad_top    * out_h
+    pad_bottom_px = pad_bottom * out_h
+
+    route_area_w = out_w - pad_left_px  - pad_right_px
+    route_area_h = out_h - pad_top_px   - pad_bottom_px
+
+    zoom = _select_zoom(min_lat, min_lon, max_lat, max_lon,
+                        route_area_w, route_area_h, max_tiles, zoom_offset)
     print(f"    zoom={zoom}")
 
     print(f"    Fetching tiles…")
@@ -477,8 +500,9 @@ def render_activity_map(points: list[tuple[float, float]], activity: dict,
     canvas = _draw_markers(canvas, origin, points, zoom, cfg)
 
     print(f"    Cropping to {out_w}×{out_h}…")
-    canvas = _crop_and_scale(canvas, origin, min_lat, min_lon, max_lat, max_lon,
-                             zoom, out_w, out_h)
+    canvas = _crop_to_output(canvas, origin, min_lat, min_lon, max_lat, max_lon,
+                             zoom, out_w, out_h,
+                             pad_left_px, pad_right_px, pad_top_px, pad_bottom_px)
 
     print(f"    Drawing stats overlay…")
     canvas = draw_stats_overlay(canvas, activity, cfg)

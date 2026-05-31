@@ -21,24 +21,41 @@
 /* ── Nav ──────────────────────────────────────────────────────────────────── */
 
 body > header {
-  background: var(--charcoal);
+  background: #ffffff;
   border-bottom: 3px solid var(--orange);
-  padding-top: .6rem;
-  padding-bottom: .6rem;
+  padding-block: 0;
+  --pico-nav-element-spacing-vertical: .15rem;
+  --pico-nav-link-spacing-vertical: .1rem;
 }
 
 body > header nav a {
-  color: #e0e0e0;
+  color: var(--charcoal);
   text-decoration: none;
+  font-size: .9rem;
 }
 
 body > header nav a:hover {
   color: var(--orange);
 }
 
+.nav-icon-link {
+  display: flex;
+  align-items: center;
+  color: var(--charcoal);
+  opacity: 0.6;
+  transition: opacity .15s, color .15s;
+  padding: 0 .4rem;
+}
+.nav-icon-link:hover { opacity: 1; color: var(--orange); }
+.nav-icon-link svg { width: 28px; height: 28px; }
+
+body > header nav ul:last-of-type { margin-right: .75rem; }
+
 .nav-logo img {
   display: block;
-  border-radius: 4px;
+  height: 88px;
+  width: auto;
+  max-width: none;
 }
 
 /* ── Page background ──────────────────────────────────────────────────────── */
