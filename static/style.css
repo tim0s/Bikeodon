@@ -1,4 +1,80 @@
-/* Minimal overrides on top of Pico CSS */
+/* ── Color scheme ─────────────────────────────────────────────────────────
+   Orange (#FC4C02) primary, charcoal nav, clean white content area.
+   ──────────────────────────────────────────────────────────────────────── */
+
+:root {
+  --orange:        #FC4C02;
+  --orange-dark:   #d93f00;
+  --orange-light:  #fff1eb;
+  --charcoal:      #1a1a1a;
+  --charcoal-soft: #2e2e2e;
+  --text:          #1a1a1a;
+
+  /* Override Pico primary */
+  --pico-primary:             var(--orange);
+  --pico-primary-hover:       var(--orange-dark);
+  --pico-primary-focus:       rgba(252, 76, 2, 0.25);
+  --pico-primary-background:  var(--orange);
+  --pico-primary-underline:   var(--orange);
+}
+
+/* ── Nav ──────────────────────────────────────────────────────────────────── */
+
+body > header {
+  background: var(--charcoal);
+  border-bottom: 3px solid var(--orange);
+  padding-top: .6rem;
+  padding-bottom: .6rem;
+}
+
+body > header nav a {
+  color: #e0e0e0;
+  text-decoration: none;
+}
+
+body > header nav a:hover {
+  color: var(--orange);
+}
+
+.nav-logo img {
+  display: block;
+  /* Logo has white background — invert for dark nav */
+  filter: invert(1) brightness(0.9);
+}
+
+/* ── Page background ──────────────────────────────────────────────────────── */
+
+body {
+  background: #f4f4f4;
+}
+
+main.container {
+  padding-top: 2rem;
+}
+
+/* ── Cards / articles ─────────────────────────────────────────────────────── */
+
+article {
+  background: #ffffff;
+  border: 1px solid #e8e8e8;
+  border-top: 3px solid var(--orange);
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+}
+
+article header {
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin-bottom: 1rem;
+  color: var(--charcoal);
+}
+
+article footer {
+  margin-top: 1rem;
+  font-size: .9rem;
+}
+
+/* ── Auth pages ───────────────────────────────────────────────────────────── */
 
 .auth-card {
   max-width: 420px;
@@ -9,33 +85,29 @@
   text-align: center;
   margin-bottom: 1.5rem;
 }
+
 .auth-logo img {
-  width: 220px;
-  filter: invert(1) brightness(0.85);
+  width: 240px;
 }
 
-.center { text-align: center; }
-
-.muted { opacity: 0.45; }
-
-.no-underline { text-decoration: none; }
-
-.nav-logo img {
-  display: block;
-  /* The logo has a white background — invert it on the dark theme */
-  filter: invert(1) brightness(0.85);
-}
+/* ── Flash messages ───────────────────────────────────────────────────────── */
 
 .flash {
   padding: .75rem 1rem;
-  border-radius: var(--pico-border-radius);
+  border-radius: 4px;
   margin-bottom: 1rem;
+  font-weight: 500;
 }
-.flash-success { background: #1a3a1a; border-left: 4px solid #4caf50; }
-.flash-error   { background: #3a1a1a; border-left: 4px solid #f44336; }
+.flash-success { background: #edfaed; border-left: 4px solid #4caf50; color: #1a4d1a; }
+.flash-error   { background: #fdecea; border-left: 4px solid #f44336; color: #4d1a1a; }
 
-article header { font-size: 1.1rem; margin-bottom: 1rem; }
-article footer  { margin-top: 1rem; font-size: .9rem; }
+/* ── Tables ───────────────────────────────────────────────────────────────── */
+
+table input { margin-bottom: 0; padding: .25rem .5rem; min-width: 0; }
+table input[type="color"] { width: 48px; height: 36px; padding: 2px; }
+table input[type="number"] { width: 80px; }
+
+/* ── Settings checkboxes grid ─────────────────────────────────────────────── */
 
 .grid-fields {
   display: grid;
@@ -46,16 +118,30 @@ article footer  { margin-top: 1rem; font-size: .9rem; }
 
 details summary { cursor: pointer; margin-bottom: .75rem; }
 
+/* ── Zone tabs ────────────────────────────────────────────────────────────── */
+
 .tab-bar {
   display: flex;
   gap: 1rem;
   margin-bottom: 1.5rem;
-  border-bottom: 1px solid var(--pico-muted-border-color);
+  border-bottom: 2px solid #e8e8e8;
   padding-bottom: .5rem;
 }
-.tab-bar a { text-decoration: none; opacity: 0.6; }
-.tab-bar a[aria-selected="true"] { opacity: 1; font-weight: bold; border-bottom: 2px solid var(--pico-primary); }
+.tab-bar a { text-decoration: none; opacity: 0.5; color: var(--text); }
+.tab-bar a:hover { opacity: 0.8; }
+.tab-bar a[aria-selected="true"] {
+  opacity: 1;
+  font-weight: 700;
+  color: var(--orange);
+  border-bottom: 3px solid var(--orange);
+  margin-bottom: -3px;
+}
 
-table input { margin-bottom: 0; padding: .25rem .5rem; min-width: 0; }
-table input[type="color"] { width: 48px; height: 36px; padding: 2px; }
-table input[type="number"] { width: 80px; }
+/* ── Misc ─────────────────────────────────────────────────────────────────── */
+
+.center  { text-align: center; }
+.muted   { opacity: 0.45; }
+.no-underline { text-decoration: none; }
+
+/* Posted checkmark in activity list */
+td a[href*="mastodon"], td a[href*="social"] { color: var(--orange); }
