@@ -8,19 +8,19 @@ Automatically post your Strava activities to Mastodon — with a rendered route 
 
 ## What it does
 
-For each activity you choose to share, Bikeodon:
+For each new activity, Bikeodon:
 
-1. Downloads the GPS track and sensor data from Strava
+1. Fetches the GPS track and sensor data from Strava via OAuth
 2. Renders a map image by stitching OpenStreetMap tiles with the route drawn on top
-3. Overlays a stats bar (distance, elevation gain, or any fields you configure)
+3. Overlays a stats bar (distance, elevation gain, or any fields you choose)
 4. Generates heart rate and power zone charts when the data is available
 5. Posts the map and charts as a single Mastodon status with a configurable text template
 
-Training parameters (max HR, FTP) are inferred automatically from your recorded history if you haven't set them explicitly.
+Training parameters (max HR, FTP) are inferred automatically from recorded history when not set explicitly.
 
 ## Example output
 
-The post includes up to four images: the route map plus HR and power charts.
+Up to four images are attached: the route map plus HR and power charts.
 
 ```
 A nice loop through the hills 🚴
@@ -34,7 +34,7 @@ Connect Strava to the fediverse using Bikeodon [tim0s.github.io/Bikeodon]
 ## Requirements
 
 - Python 3.11+
-- A Strava account (authentication via browser session cookie — no API key needed)
+- A Strava API app (free, registered at strava.com/settings/api)
 - A Mastodon account and API token
 
 ## Installation
@@ -47,137 +47,121 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## Configuration
+## Server configuration
 
-### Credentials
-
-Create a `.env` file in the project root (never commit this):
-
-```
-STRAVA_SESSION=<your _strava4_session cookie value>
-MASTODON_TOKEN=<your Mastodon API token>
-```
-
-**Getting your Strava session cookie:**
-1. Log in to strava.com in your browser
-2. Open DevTools → Application → Cookies → `https://www.strava.com`
-3. Copy the value of `_strava4_session`
-
-**Getting a Mastodon API token:**
-1. Go to your instance's settings → Development → New Application
-2. Grant `write:media` and `write:statuses` scopes
-3. Copy the access token
-
-### config.yaml
-
-All visual and behavioural options live in `config.yaml`. Key sections:
+`config.yaml` holds only server-level paths. Everything else is configured per-user via the web UI.
 
 ```yaml
 database:
-  path: "bikeodon.db"       # local SQLite database
+  path: "bikeodon.db"
 
 map:
   output_dir: "output"
-  width: 1200               # pixels (1200×675 = 16:9, fills Mastodon feed)
-  height: 675
-  zoom_offset: -1           # negative = zoom out for a wider view
   tiles:
-    url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
-    # Stadia, CartoDB, and Stamen alternatives are listed in the file
+    cache_dir: ".tile_cache"
 
-user:
-  stats:
-    fields:                 # choose any subset, order matters
-      - distance
-      - elevation_gain
-      - moving_time
-      - average_speed
-      - average_heartrate
-      - average_watts
-
-charts:
-  heart_rate:
-    enabled: true
-    max_hr: null            # set explicitly, or leave null to infer from data
-  power:
-    enabled: true
-    ftp: null               # set explicitly, or leave null to infer from data
-
-mastodon:
-  instance: "https://mastodon.social"
-  visibility: "public"
-  post_template: |
-    {name} 🚴
-    📍 {distance_km:.1f} km  🏔 {elevation_m:.0f} m  ⏱ {moving_time}
-
-    #cycling #strava
+daemon:
+  interval_minutes: 15
 ```
 
-Available template variables: `{name}`, `{distance_km}`, `{elevation_m}`, `{moving_time}`, `{average_speed}`, `{date}`, `{sport_type}`.
+Create a `.env` file for secrets (never commit this):
 
-## Usage
+```
+STRAVA_CLIENT_ID=<your Strava app client ID>
+STRAVA_CLIENT_SECRET=<your Strava app client secret>
+FLASK_SECRET_KEY=<any long random string>
+```
+
+**Registering a Strava API app:**
+1. Go to [strava.com/settings/api](https://www.strava.com/settings/api)
+2. Create an application — set the Authorization Callback Domain to your server's hostname (`localhost` for local dev)
+3. Copy the Client ID and Client Secret into `.env`
+
+By default Strava limits new apps to the app owner's account only. To allow other athletes to connect, apply for extended API access on the same page.
+
+## Running the web UI
 
 ```bash
-# Sync the 10 most recent activities from Strava
-python main.py sync
-
-# Sync more
-python main.py sync --count 50
-
-# List what's in the local database
-python main.py list
-
-# Render the map for the most recent activity
-python main.py render
-
-# Render a specific activity
-python main.py render 12345678901
-
-# Generate HR/power charts only
-python main.py charts 12345678901
-
-# Preview a post (no upload)
-python main.py post 12345678901 --dry-run
-
-# Render and post to Mastodon
-python main.py post 12345678901
+flask --app app run
 ```
 
-## How training parameters are inferred
+Open [http://localhost:5000](http://localhost:5000). Register an account, then go to **Settings → Connect Strava** to authorise. New activities are picked up automatically by the daemon.
 
-When `max_hr` or `ftp` is `null` in the config, Bikeodon estimates them from your synced history:
+## Running the daemon
 
-- **Max HR** — 99th percentile of all recorded heart rate samples (avoids inflating the estimate from sensor spikes)
-- **FTP** — 95% of the best 20-minute average power found across all activities with power data (standard 20-min FTP test protocol)
+The daemon polls Strava for every connected user on a configurable interval and posts any new activities to Mastodon automatically:
 
-The inferred values are printed when charts are generated so you can review them.
+```bash
+python main.py daemon
+```
+
+Run this as a background service (systemd, tmux, screen) on your server.
+
+## Per-user settings
+
+All visual and behavioural options are configured in the web UI under **Settings**:
+
+| Section | What you can configure |
+|---|---|
+| **Strava** | OAuth connect / disconnect |
+| **Mastodon** | Instance URL, token, handle, visibility, post template |
+| **Stats bar** | Which fields to show (distance, elevation, HR, power, …) and overlay appearance |
+| **Map** | Image size, zoom, tile provider URL, route colour/width, start/end markers, padding |
+| **Charts** | HR and power chart enable/disable, explicit max HR and FTP (or leave blank to infer) |
+| **Zones** | HR and power zone names, thresholds, and colours |
+
+**Post template variables:** `{name}`, `{distance_km}`, `{elevation_m}`, `{moving_time}`, `{average_speed}`, `{date}`, `{sport_type}`
+
+## Training parameter inference
+
+When max HR or FTP is left blank, Bikeodon estimates them from the user's synced history:
+
+- **Max HR** — 99th percentile of all recorded heart rate samples (avoids inflating from sensor spikes)
+- **FTP** — 95% of the best 20-minute average power across all activities (standard 20-min test protocol)
 
 ## Tile providers
 
-The default is OpenStreetMap, which requires no API key. Alternatives are listed as comments in `config.yaml`:
+The default is OpenStreetMap (no API key needed). The tile URL is a per-user setting, so you can point different users at different providers:
 
-| Provider | Style |
+| Provider | Example URL |
 |---|---|
-| OpenStreetMap | Standard |
-| Stadia Alidade Smooth | Clean light / dark |
-| Stadia Outdoors | Good for cycling routes |
-| Stamen Terrain | Topographic |
-| CartoDB Positron | Minimal light |
-| CartoDB Dark Matter | Minimal dark |
+| OpenStreetMap | `https://tile.openstreetmap.org/{z}/{x}/{y}.png` |
+| Stadia Smooth Light | `https://tiles.stadiamaps.com/tiles/alidade_smooth/{z}/{x}/{y}.png?api_key=KEY` |
+| Stadia Smooth Dark | `https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}.png?api_key=KEY` |
+| Stadia Outdoors | `https://tiles.stadiamaps.com/tiles/outdoors/{z}/{x}/{y}.png?api_key=KEY` |
+| CartoDB Positron | `https://cartodb-basemaps-a.global.ssl.fastly.net/light_all/{z}/{x}/{y}.png` |
+| CartoDB Dark Matter | `https://cartodb-basemaps-a.global.ssl.fastly.net/dark_all/{z}/{x}/{y}.png` |
 
-Please follow each provider's usage policy and rate limits.
+## CLI reference
+
+The CLI is primarily for operators. End users interact through the web UI.
+
+```bash
+python main.py sync              # fetch new activities for all connected users
+python main.py list              # list activities in the database
+python main.py render 12345678   # render a map image for a specific activity
+python main.py charts 12345678   # generate HR/power charts
+python main.py post 12345678     # render and post an activity manually
+python main.py post 12345678 --dry-run   # preview without posting
+python main.py daemon            # start the polling daemon
+python main.py config list       # show all settings for user 1
+python main.py config set <area> <key> <value>
+```
 
 ## Project structure
 
 ```
-main.py            CLI entry point (sync, list, render, charts, post)
-strava.py          Strava session cookie auth + GPX download/parse
-database.py        SQLite schema and query helpers
+app.py             Flask web frontend (auth, settings UI, Strava OAuth)
+main.py            CLI (sync, daemon, render, post, config)
+strava.py          Strava OAuth2 client + activity/stream fetching
+database.py        SQLite schema, per-user settings and zones, auth helpers
 map_renderer.py    OSM tile fetch, route render, stats overlay
 charts.py          Matplotlib HR and power zone charts
 inference.py       Infer max HR and FTP from recorded data
 mastodon_client.py Mastodon media upload and status post
-config.yaml        All user-facing settings
+config.yaml        Server-level paths only
+templates/         Jinja2 HTML templates
+static/            CSS and logo assets
 ```
 
 ## License
