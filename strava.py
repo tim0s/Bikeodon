@@ -95,9 +95,12 @@ class StravaClient:
 
     # ── Public API ──────────────────────────────────────────────────────────
 
-    def get_activity_ids(self, n: int = 10) -> list[int]:
+    def get_activity_ids(self, n: int = 10, after: float | None = None) -> list[int]:
         self._ensure_fresh()
-        resp = self._s.get(f"{_API}/athlete/activities", params={"per_page": n})
+        params = {"per_page": n}
+        if after is not None:
+            params["after"] = int(after)
+        resp = self._s.get(f"{_API}/athlete/activities", params=params)
         resp.raise_for_status()
         return [a["id"] for a in resp.json()]
 

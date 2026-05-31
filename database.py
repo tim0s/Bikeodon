@@ -500,6 +500,31 @@ def get_points(row) -> list[tuple[float, float]]:
     return [(p[0], p[1]) for p in json.loads(raw)]
 
 
+def get_all_users(db_path) -> list:
+    """Return all users that have a Strava access token (i.e. are connected)."""
+    conn = _conn(db_path)
+    rows = conn.execute("""
+        SELECT u.id, u.username
+        FROM users u
+        JOIN settings s ON s.user_id = u.id
+          AND s.area = 'strava' AND s.key = 'access_token'
+          AND s.value IS NOT NULL AND s.value != ''
+    """).fetchall()
+    conn.close()
+    return rows
+
+
+def get_latest_activity_date(db_path, user_id: int) -> str | None:
+    """Return the start_date of the most recent activity for this user, or None."""
+    conn = _conn(db_path)
+    row = conn.execute(
+        "SELECT start_date FROM activities WHERE user_id=? ORDER BY start_date DESC LIMIT 1",
+        (user_id,),
+    ).fetchone()
+    conn.close()
+    return row["start_date"] if row else None
+
+
 def get_user_by_username(db_path, username: str):
     conn = _conn(db_path)
     row = conn.execute(

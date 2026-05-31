@@ -27,7 +27,8 @@ load_dotenv()
 
 from charts import generate_charts
 from database import (
-    get_activity, get_points, get_setting, get_stream, get_unposted,
+    get_activity, get_all_users, get_latest_activity_date,
+    get_points, get_setting, get_stream, get_unposted,
     init_db, list_activities, list_settings, load_user_config,
     mark_posted, set_setting, upsert_activity,
 )
@@ -50,21 +51,20 @@ def _load_cfg(config_path: str) -> dict:
     return load_user_config(db_path, USER_ID, base)
 
 
-def _strava_client(cfg) -> "StravaClient":
-    db_path = cfg["database"]["path"]
-    access_token = get_setting(db_path, USER_ID, "strava", "access_token") or ""
-    refresh_tok  = get_setting(db_path, USER_ID, "strava", "refresh_token") or ""
-    expires_at   = float(get_setting(db_path, USER_ID, "strava", "token_expires_at") or 0)
+def _strava_client_for(db_path: str, user_id: int) -> "StravaClient":
+    access_token = get_setting(db_path, user_id, "strava", "access_token") or ""
+    refresh_tok  = get_setting(db_path, user_id, "strava", "refresh_token") or ""
+    expires_at   = float(get_setting(db_path, user_id, "strava", "token_expires_at") or 0)
 
     if not access_token:
         raise ValueError(
-            "Strava not connected. Visit the web UI and click 'Connect Strava'."
+            f"User {user_id} has no Strava token. Connect via the web UI first."
         )
 
     def _on_refresh(new_access, new_refresh, new_expires):
-        set_setting(db_path, USER_ID, "strava", "access_token",    new_access)
-        set_setting(db_path, USER_ID, "strava", "refresh_token",   new_refresh)
-        set_setting(db_path, USER_ID, "strava", "token_expires_at", str(new_expires))
+        set_setting(db_path, user_id, "strava", "access_token",     new_access)
+        set_setting(db_path, user_id, "strava", "refresh_token",    new_refresh)
+        set_setting(db_path, user_id, "strava", "token_expires_at", str(new_expires))
 
     return StravaClient(
         access_token=access_token,
@@ -76,40 +76,64 @@ def _strava_client(cfg) -> "StravaClient":
     )
 
 
+def _sync_user(db_path: str, user_id: int, username: str) -> int:
+    """
+    Fetch new activities for one user from Strava and store them.
+    Uses the most recent stored activity as the 'after' boundary so only
+    genuinely new activities are downloaded.
+    Returns the number of activities fetched.
+    """
+    try:
+        client = _strava_client_for(db_path, user_id)
+    except ValueError as e:
+        print(f"  [{username}] Skipping — {e}")
+        return 0
+
+    latest = get_latest_activity_date(db_path, user_id)
+    after_ts = None
+    if latest:
+        from datetime import datetime, timezone
+        dt = datetime.fromisoformat(latest.replace("Z", "+00:00"))
+        after_ts = dt.timestamp()
+        print(f"  [{username}] Fetching activities after {latest[:10]}…")
+    else:
+        print(f"  [{username}] No existing activities — fetching up to 20 most recent…")
+
+    ids = client.get_activity_ids(n=20, after=after_ts)
+    if not ids:
+        print(f"  [{username}] No new activities.")
+        return 0
+
+    count = 0
+    for activity_id in ids:
+        try:
+            data = client.get_activity(activity_id)
+            upsert_activity(db_path, data, user_id=user_id)
+            print(f"    + {data['name']}  ({(data.get('distance') or 0) / 1000:.1f} km)")
+            count += 1
+        except Exception as e:
+            print(f"    Failed to fetch {activity_id}: {e}")
+
+    return count
+
+
 # ---------------------------------------------------------------------------
 # Commands
 # ---------------------------------------------------------------------------
 
 def cmd_sync(args, cfg):
-    try:
-        client = _strava_client(cfg)
-    except ValueError as e:
-        print(f"Error: {e}")
-        sys.exit(1)
-
     db_path = cfg["database"]["path"]
-    print(f"Fetching {args.count} most recent activity IDs…")
-    try:
-        ids = client.get_activity_ids(n=args.count)
-    except Exception as e:
-        print(f"Error: {e}")
-        sys.exit(1)
+    users   = get_all_users(db_path)
 
-    if not ids:
-        print("No activities found.")
+    if not users:
+        print("No connected users. Connect Strava via the web UI first.")
         return
 
-    for activity_id in ids:
-        print(f"  Downloading GPX for {activity_id}…")
-        try:
-            data = client.get_activity(activity_id)
-            upsert_activity(db_path, data, user_id=USER_ID)
-            pts = len(data.get("points") or [])
-            print(f"    {data['name']}  ({pts} GPS points)")
-        except Exception as e:
-            print(f"    Failed: {e}")
+    total = 0
+    for user in users:
+        total += _sync_user(db_path, user["id"], user["username"] or f"user:{user['id']}")
 
-    print(f"\nStored {len(ids)} activities in {db_path}")
+    print(f"\nDone — {total} new activit{'y' if total == 1 else 'ies'} imported.")
 
 
 def cmd_list(args, cfg):
@@ -237,7 +261,7 @@ def cmd_post(args, cfg):
 # Shared posting logic (used by cmd_post and cmd_daemon)
 # ---------------------------------------------------------------------------
 
-def _do_post(row, cfg, db_path: str, out_dir: str, rerender: bool = False) -> str | None:
+def _do_post(row, cfg, db_path: str, out_dir: str, rerender: bool = False, user_id: int = USER_ID) -> str | None:
     """
     Render, upload, and post a single activity. Returns the Mastodon post URL
     on success, or None if posting was skipped (no GPS data, render failure).
@@ -276,7 +300,7 @@ def _do_post(row, cfg, db_path: str, out_dir: str, rerender: bool = False) -> st
     )
     resp.raise_for_status()
     post_url = resp.json().get("url", "")
-    mark_posted(db_path, activity_id, post_url, user_id=USER_ID)
+    mark_posted(db_path, activity_id, post_url, user_id=user_id)
     return post_url
 
 
@@ -285,39 +309,44 @@ def _do_post(row, cfg, db_path: str, out_dir: str, rerender: bool = False) -> st
 # ---------------------------------------------------------------------------
 
 def cmd_daemon(args, cfg):
+    import yaml as _yaml
     db_path  = cfg["database"]["path"]
-    out_dir  = cfg["map"].get("output_dir", "output")
     interval = cfg.get("daemon", {}).get("interval_minutes", 15) * 60
 
-    try:
-        strava = _strava_client(cfg)
-    except ValueError as e:
-        print(f"Error: {e}")
-        sys.exit(1)
+    with open(args.config) as f:
+        base_cfg = _yaml.safe_load(f)
 
     print(f"Daemon started — polling every {interval // 60} min. Ctrl-C to stop.")
 
     while True:
         try:
-            print(f"\n[{_now()}] Syncing…")
-            ids = strava.get_activity_ids(n=args.count)
-            for activity_id in ids:
-                data = strava.get_activity(activity_id)
-                upsert_activity(db_path, data, user_id=USER_ID)
+            print(f"\n[{_now()}] Syncing all users…")
+            users = get_all_users(db_path)
 
-            unposted = get_unposted(db_path, user_id=USER_ID)
-            if unposted:
-                print(f"  {len(unposted)} unposted activit{'y' if len(unposted) == 1 else 'ies'}")
-            for row in unposted:
-                print(f"  Posting [{row['id']}] {row['name']}…")
-                try:
-                    url = _do_post(row, cfg, db_path, out_dir)
-                    if url:
-                        print(f"    → {url}")
-                except Exception as e:
-                    print(f"    Failed: {e}")
+            if not users:
+                print("  No connected users.")
+            else:
+                for user in users:
+                    user_id  = user["id"]
+                    username = user["username"] or f"user:{user_id}"
+                    _sync_user(db_path, user_id, username)
+
+                    user_cfg = load_user_config(db_path, user_id, base_cfg)
+                    out_dir  = base_cfg["map"].get("output_dir", "output")
+                    unposted = get_unposted(db_path, user_id=user_id)
+
+                    if unposted:
+                        print(f"  [{username}] {len(unposted)} unposted activit{'y' if len(unposted) == 1 else 'ies'}")
+                    for row in unposted:
+                        print(f"  [{username}] Posting [{row['id']}] {row['name']}…")
+                        try:
+                            url = _do_post(row, user_cfg, db_path, out_dir, user_id=user_id)
+                            if url:
+                                print(f"    → {url}")
+                        except Exception as e:
+                            print(f"    Failed: {e}")
         except Exception as e:
-            print(f"  Sync error: {e}")
+            print(f"  Error: {e}")
 
         print(f"  Sleeping {interval // 60} min…")
         time.sleep(interval)
