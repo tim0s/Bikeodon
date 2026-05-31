@@ -8,9 +8,14 @@
   <header><strong>Strava</strong></header>
   {% if strava_connected %}
     <p>✓ Connected. <a href="{{ url_for('strava_disconnect') }}" class="secondary">Disconnect</a></p>
+  {% elif not strava_configured %}
+    <div class="config-warning">
+      <strong>Server not configured.</strong>
+      Add <code>STRAVA_CLIENT_ID</code> and <code>STRAVA_CLIENT_SECRET</code> to your
+      <code>.env</code> file and restart the server, then come back here to connect.
+    </div>
   {% else %}
-    <p>Not connected. <a href="{{ url_for('strava_connect') }}" role="button" class="outline contrast">Connect Strava</a></p>
-    <small>You need STRAVA_CLIENT_ID and STRAVA_CLIENT_SECRET set on the server.</small>
+    <a href="{{ url_for('strava_connect') }}" role="button">Connect Strava</a>
   {% endif %}
 </article>
 

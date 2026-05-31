@@ -157,7 +157,8 @@ def settings():
     cfg = load_user_config(DB_PATH, uid, _base_cfg)
     hr_zones    = get_zones(DB_PATH, uid, "hr")
     power_zones = get_zones(DB_PATH, uid, "power")
-    strava_connected = bool(get_setting(DB_PATH, uid, "strava", "access_token"))
+    strava_connected   = bool(get_setting(DB_PATH, uid, "strava", "access_token"))
+    strava_configured  = bool(STRAVA_CLIENT_ID and STRAVA_CLIENT_SECRET)
     active_fields = [
         f.strip()
         for f in (get_setting(DB_PATH, uid, "stats", "fields") or "").split(",")
@@ -171,6 +172,7 @@ def settings():
         stat_fields=_STAT_FIELDS,
         active_fields=active_fields,
         strava_connected=strava_connected,
+        strava_configured=strava_configured,
     )
 
 
@@ -292,8 +294,8 @@ def zones():
 @app.route("/strava/connect")
 @login_required
 def strava_connect():
-    if not STRAVA_CLIENT_ID:
-        flash("STRAVA_CLIENT_ID is not configured on this server.", "error")
+    if not STRAVA_CLIENT_ID or not STRAVA_CLIENT_SECRET:
+        flash("Add STRAVA_CLIENT_ID and STRAVA_CLIENT_SECRET to .env and restart the server.", "error")
         return redirect(url_for("settings"))
     redirect_uri = url_for("strava_callback", _external=True)
     return redirect(strava_auth_url(STRAVA_CLIENT_ID, redirect_uri))
