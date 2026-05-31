@@ -10,38 +10,45 @@
 
 {% if activities %}
 <figure>
-  <table>
+  <table id="activities-table">
     <thead>
       <tr>
-        <th>Date</th>
-        <th>Type</th>
-        <th>Name</th>
-        <th>Distance</th>
-        <th>Elevation</th>
-        <th>Posted</th>
+        <th data-col="date"      class="sort-desc">Date      <span class="sort-arrow">▼</span></th>
+        <th data-col="type"                        >Type      <span class="sort-arrow">↕</span></th>
+        <th data-col="name"                        >Name      <span class="sort-arrow">↕</span></th>
+        <th data-col="distance"                    >Distance  <span class="sort-arrow">↕</span></th>
+        <th data-col="elevation"                   >Elevation <span class="sort-arrow">↕</span></th>
+        <th                                        >Posted</th>
       </tr>
     </thead>
     <tbody>
       {% for a in activities %}
-      <tr>
+      <tr
+        data-date="{{ a.date }}"
+        data-type="{{ a.sport_type | lower }}"
+        data-name="{{ a.name | lower }}"
+        data-distance="{{ a.distance_raw }}"
+        data-elevation="{{ a.elevation_raw }}"
+      >
         <td>{{ a.date }}</td>
         <td><small>{{ a.sport_type }}</small></td>
         <td>
+          <a href="{{ url_for('activity', activity_id=a.id) }}">{{ a.name }}</a>
           {% if a.strava_url %}
-            <a href="{{ a.strava_url }}" target="_blank" rel="noopener">{{ a.name }}</a>
-          {% else %}
-            {{ a.name }}
+          <a href="{{ a.strava_url }}" class="brand-icon-link" target="_blank" rel="noopener" title="View on Strava">
+            <img src="{{ url_for('static', filename='icon-strava.svg') }}" class="brand-icon strava-icon" alt="Strava">
+          </a>
           {% endif %}
         </td>
         <td>{{ a.distance }}</td>
         <td>{{ a.elevation }}</td>
         <td>
-          {% if a.posted %}
-            {% if a.post_url %}
-              <a href="{{ a.post_url }}" target="_blank" rel="noopener">✓</a>
-            {% else %}
-              ✓
-            {% endif %}
+          {% if a.posted and a.post_url %}
+            <a href="{{ a.post_url }}" class="brand-icon-link" target="_blank" rel="noopener" title="View on Mastodon">
+              <img src="{{ url_for('static', filename='icon-mastodon.svg') }}" class="brand-icon mastodon-icon" alt="Mastodon">
+            </a>
+          {% elif a.posted %}
+            <span title="Posted">✓</span>
           {% else %}
             <span class="muted">–</span>
           {% endif %}
@@ -54,4 +61,49 @@
 {% else %}
 <p>No activities yet. It can take up to 15 minutes for your activities to appear.</p>
 {% endif %}
+
+<script>
+(function () {
+  const table = document.getElementById('activities-table');
+  if (!table) return;
+
+  const tbody = table.querySelector('tbody');
+  const headers = table.querySelectorAll('th[data-col]');
+
+  headers.forEach(th => {
+    th.addEventListener('click', () => {
+      const col = th.dataset.col;
+      const wasDesc = th.classList.contains('sort-desc');
+      const asc = wasDesc;  // toggle: if was desc, now go asc
+
+      // Reset all headers
+      headers.forEach(h => {
+        h.classList.remove('sort-asc', 'sort-desc');
+        h.querySelector('.sort-arrow').textContent = '↕';
+      });
+
+      // Apply new sort state
+      th.classList.add(asc ? 'sort-asc' : 'sort-desc');
+      th.querySelector('.sort-arrow').textContent = asc ? '▲' : '▼';
+
+      // Sort rows
+      const rows = Array.from(tbody.querySelectorAll('tr'));
+      rows.sort((a, b) => {
+        let av = a.dataset[col] ?? '';
+        let bv = b.dataset[col] ?? '';
+        // Numeric columns
+        if (col === 'distance' || col === 'elevation') {
+          av = parseFloat(av) || 0;
+          bv = parseFloat(bv) || 0;
+          return asc ? av - bv : bv - av;
+        }
+        // String columns
+        return asc ? av.localeCompare(bv) : bv.localeCompare(av);
+      });
+
+      rows.forEach(r => tbody.appendChild(r));
+    });
+  });
+})();
+</script>
 {% endblock %}

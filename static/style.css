@@ -38,8 +38,7 @@ body > header nav a:hover {
 
 .nav-logo img {
   display: block;
-  /* Logo has white background — invert for dark nav */
-  filter: invert(1) brightness(0.9);
+  border-radius: 4px;
 }
 
 /* ── Page background ──────────────────────────────────────────────────────── */
@@ -145,11 +144,109 @@ details summary { cursor: pointer; margin-bottom: .75rem; }
   margin-bottom: -3px;
 }
 
+/* ── Sortable table headers ───────────────────────────────────────────────── */
+
+th[data-col] {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+th[data-col]:hover { color: var(--orange); }
+
+.sort-arrow {
+  display: inline-block;
+  margin-left: .3em;
+  font-size: .75em;
+  opacity: 0.35;
+  vertical-align: middle;
+}
+th[data-col].sort-asc  .sort-arrow,
+th[data-col].sort-desc .sort-arrow {
+  opacity: 1;
+  color: var(--orange);
+}
+
+/* ── Brand icons ──────────────────────────────────────────────────────────── */
+
+.brand-icon-link {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+  margin-left: .3rem;
+  opacity: 0.55;
+  transition: opacity .15s;
+  text-decoration: none;
+}
+.brand-icon-link:hover { opacity: 1; }
+
+.brand-icon {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
+.strava-icon  { filter: invert(40%) sepia(90%) saturate(1500%) hue-rotate(10deg) brightness(95%); }
+.mastodon-icon { filter: invert(40%) sepia(60%) saturate(800%) hue-rotate(210deg) brightness(90%); }
+
+/* ── Activity detail ──────────────────────────────────────────────────────── */
+
+.activity-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .6rem;
+  margin-bottom: 1.5rem;
+}
+
+.stat-chip {
+  background: #ffffff;
+  border: 1px solid #e0e0e0;
+  border-top: 3px solid var(--orange);
+  border-radius: 6px;
+  padding: .5rem .9rem;
+  display: flex;
+  flex-direction: column;
+  min-width: 90px;
+}
+
+.stat-label {
+  font-size: .72rem;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: #888;
+  margin-bottom: .1rem;
+}
+
+.stat-value {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--charcoal);
+}
+
+.activity-figure {
+  margin: 0 0 1.2rem 0;
+}
+
+.activity-map {
+  width: 100%;
+  border-radius: 8px;
+  display: block;
+}
+
+.activity-charts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.activity-chart {
+  width: 100%;
+  border-radius: 8px;
+  display: block;
+}
+
 /* ── Misc ─────────────────────────────────────────────────────────────────── */
 
 .center  { text-align: center; }
 .muted   { opacity: 0.45; }
 .no-underline { text-decoration: none; }
-
-/* Posted checkmark in activity list */
-td a[href*="mastodon"], td a[href*="social"] { color: var(--orange); }

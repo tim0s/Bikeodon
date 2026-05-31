@@ -29,26 +29,38 @@ from charts import generate_charts
 from database import (
     get_activity, get_all_users, get_latest_activity_date,
     get_points, get_setting, get_stream, get_unposted,
-    init_db, list_activities, list_settings, load_user_config,
-    mark_posted, set_setting, upsert_activity,
+    get_user_by_username, init_db, list_activities, list_settings,
+    load_user_config, mark_posted, set_setting, upsert_activity,
 )
 from strava import StravaClient
 from map_renderer import render_activity_map
 from mastodon_client import MastodonClient
-from strava import StravaClient
-
-USER_ID = 1  # single-user prototype
 
 STRAVA_CLIENT_ID     = os.environ.get("STRAVA_CLIENT_ID", "")
 STRAVA_CLIENT_SECRET = os.environ.get("STRAVA_CLIENT_SECRET", "")
 
 
-def _load_cfg(config_path: str) -> dict:
+def _resolve_user_id(db_path: str, username: str | None) -> int:
+    """Return the user_id to use for CLI operations."""
+    if username:
+        user = get_user_by_username(db_path, username)
+        if not user:
+            print(f"User '{username}' not found.")
+            sys.exit(1)
+        return user["id"]
+    users = get_all_users(db_path)
+    if not users:
+        print("No connected users found. Connect Strava via the web UI first.")
+        sys.exit(1)
+    return users[0]["id"]
+
+
+def _load_cfg(config_path: str, user_id: int) -> dict:
     with open(config_path) as f:
         base = yaml.safe_load(f)
     db_path = base["database"]["path"]
     init_db(db_path)
-    return load_user_config(db_path, USER_ID, base)
+    return load_user_config(db_path, user_id, base)
 
 
 def _strava_client_for(db_path: str, user_id: int) -> "StravaClient":
@@ -138,7 +150,7 @@ def cmd_sync(args, cfg):
 
 def cmd_list(args, cfg):
     db_path = cfg["database"]["path"]
-    rows = list_activities(db_path, user_id=USER_ID)
+    rows = list_activities(db_path, user_id=args.user_id)
 
     if not rows:
         print("No activities in database. Run 'sync' first.")
@@ -160,13 +172,13 @@ def cmd_render(args, cfg):
     db_path = cfg["database"]["path"]
 
     if args.activity_id:
-        row = get_activity(db_path, args.activity_id, user_id=USER_ID)
+        row = get_activity(db_path, args.activity_id, user_id=args.user_id)
         if not row:
             print(f"Activity {args.activity_id} not found. Run 'sync' first.")
             sys.exit(1)
         rows = [row]
     else:
-        all_rows = list_activities(db_path, user_id=USER_ID)
+        all_rows = list_activities(db_path, user_id=args.user_id)
         if not all_rows:
             print("No activities in database. Run 'sync' first.")
             sys.exit(1)
@@ -192,7 +204,7 @@ def cmd_render(args, cfg):
 
 def cmd_charts(args, cfg):
     db_path = cfg["database"]["path"]
-    row = get_activity(db_path, args.activity_id, user_id=USER_ID)
+    row = get_activity(db_path, args.activity_id, user_id=args.user_id)
     if not row:
         print(f"Activity {args.activity_id} not found.")
         sys.exit(1)
@@ -228,7 +240,7 @@ def cmd_post(args, cfg):
     db_path = cfg["database"]["path"]
     out_dir = cfg["map"].get("output_dir", "output")
 
-    row = get_activity(db_path, args.activity_id, user_id=USER_ID)
+    row = get_activity(db_path, args.activity_id, user_id=args.user_id)
     if not row:
         print(f"Activity {args.activity_id} not found. Run 'sync' first.")
         sys.exit(1)
@@ -248,7 +260,7 @@ def cmd_post(args, cfg):
         return
 
     try:
-        url = _do_post(row, cfg, db_path, out_dir, rerender=args.rerender)
+        url = _do_post(row, cfg, db_path, out_dir, rerender=args.rerender, user_id=args.user_id)
     except Exception as e:
         print(f"Error: {e}")
         sys.exit(1)
@@ -261,7 +273,7 @@ def cmd_post(args, cfg):
 # Shared posting logic (used by cmd_post and cmd_daemon)
 # ---------------------------------------------------------------------------
 
-def _do_post(row, cfg, db_path: str, out_dir: str, rerender: bool = False, user_id: int = USER_ID) -> str | None:
+def _do_post(row, cfg, db_path: str, out_dir: str, rerender: bool = False, user_id: int = 1) -> str | None:
     """
     Render, upload, and post a single activity. Returns the Mastodon post URL
     on success, or None if posting was skipped (no GPS data, render failure).
@@ -365,21 +377,20 @@ def cmd_config(args, cfg):
     db_path = cfg["database"]["path"]
 
     if args.config_cmd == "list":
-        rows = list_settings(db_path, USER_ID)
+        rows = list_settings(db_path, args.user_id)
         if not rows:
             print("No settings found.")
             return
         area_width = max(len(r["area"]) for r in rows)
         key_width  = max(len(r["key"])  for r in rows)
         for r in rows:
-            # Mask credential values
             value = r["value"] or ""
             if r["key"] in ("token", "session_cookie") and value:
                 value = value[:6] + "…"
             print(f"  {r['area']:<{area_width}}  {r['key']:<{key_width}}  {value}")
 
     elif args.config_cmd == "get":
-        value = get_setting(db_path, USER_ID, args.area, args.key)
+        value = get_setting(db_path, args.user_id, args.area, args.key)
         if value is None:
             print(f"No setting found for {args.area}/{args.key}")
             sys.exit(1)
@@ -388,7 +399,7 @@ def cmd_config(args, cfg):
         print(value)
 
     elif args.config_cmd == "set":
-        set_setting(db_path, USER_ID, args.area, args.key, args.value)
+        set_setting(db_path, args.user_id, args.area, args.key, args.value)
         print(f"Set {args.area}/{args.key}")
 
     else:
@@ -442,12 +453,26 @@ def main():
     p_cfg_set.add_argument("key")
     p_cfg_set.add_argument("value")
 
+    parser.add_argument("--user", metavar="USERNAME",
+                        help="Username for CLI operations (default: first connected user)")
+
     args = parser.parse_args()
     if not args.command:
         parser.print_help()
         sys.exit(1)
 
-    cfg = _load_cfg(args.config)
+    with open(args.config) as _f:
+        _base = yaml.safe_load(_f)
+    _db_path = _base["database"]["path"]
+    init_db(_db_path)
+
+    if args.command in ("sync", "daemon"):
+        args.user_id = None
+        cfg = load_user_config(_db_path, 1, _base)
+    else:
+        args.user_id = _resolve_user_id(_db_path, getattr(args, "user", None))
+        cfg = load_user_config(_db_path, args.user_id, _base)
+
     {
         "sync":    cmd_sync,
         "list":    cmd_list,

@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}{{ activity.name }} – Bikeodon{% endblock %}
+{% block content %}
+
+<hgroup>
+  <h2>{{ activity.name }}</h2>
+  <p>
+    <small>{{ activity.sport_type }}</small>
+    &nbsp;·&nbsp;
+    <small>{{ activity.date }}</small>
+    &nbsp;
+    {% if activity.strava_url %}
+    <a href="{{ activity.strava_url }}" class="brand-icon-link" target="_blank" rel="noopener" title="View on Strava">
+      <img src="{{ url_for('static', filename='icon-strava.svg') }}" class="brand-icon strava-icon" alt="Strava">
+    </a>
+    {% endif %}
+    {% if activity.post_url %}
+    <a href="{{ activity.post_url }}" class="brand-icon-link" target="_blank" rel="noopener" title="View on Mastodon">
+      <img src="{{ url_for('static', filename='icon-mastodon.svg') }}" class="brand-icon mastodon-icon" alt="Mastodon">
+    </a>
+    {% endif %}
+  </p>
+</hgroup>
+
+<div class="activity-stats">
+  {% if activity.distance %}
+  <div class="stat-chip">
+    <span class="stat-label">Distance</span>
+    <span class="stat-value">{{ activity.distance }}</span>
+  </div>
+  {% endif %}
+  {% if activity.elevation %}
+  <div class="stat-chip">
+    <span class="stat-label">Elevation</span>
+    <span class="stat-value">{{ activity.elevation }}</span>
+  </div>
+  {% endif %}
+  {% if activity.moving_time %}
+  <div class="stat-chip">
+    <span class="stat-label">Moving time</span>
+    <span class="stat-value">{{ activity.moving_time }}</span>
+  </div>
+  {% endif %}
+  {% if activity.avg_speed %}
+  <div class="stat-chip">
+    <span class="stat-label">Avg speed</span>
+    <span class="stat-value">{{ activity.avg_speed }}</span>
+  </div>
+  {% endif %}
+  {% if activity.avg_hr %}
+  <div class="stat-chip">
+    <span class="stat-label">Avg HR</span>
+    <span class="stat-value">{{ activity.avg_hr }} bpm</span>
+  </div>
+  {% endif %}
+  {% if activity.avg_watts %}
+  <div class="stat-chip">
+    <span class="stat-label">Avg power</span>
+    <span class="stat-value">{{ activity.avg_watts }} W</span>
+  </div>
+  {% endif %}
+</div>
+
+{% if map_url %}
+<figure class="activity-figure">
+  <img src="{{ map_url }}" alt="Route map" class="activity-map">
+</figure>
+{% else %}
+<p class="muted"><small>Map not yet rendered. Run <code>python main.py render {{ activity.id }}</code> to generate it.</small></p>
+{% endif %}
+
+{% if chart_urls %}
+<div class="activity-charts">
+  {% for url in chart_urls %}
+  <figure class="activity-figure">
+    <img src="{{ url }}" alt="Chart" class="activity-chart">
+  </figure>
+  {% endfor %}
+</div>
+{% endif %}
+
+<p><a href="{{ url_for('index') }}">&larr; Back to activities</a></p>
+
+{% endblock %}

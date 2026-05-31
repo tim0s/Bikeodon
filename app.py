@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from flask import Flask, flash, redirect, render_template, request, url_for
+from flask import Flask, flash, redirect, render_template, request, send_from_directory, url_for
 from flask_login import (
     LoginManager, UserMixin, current_user,
     login_required, login_user, logout_user,
@@ -20,7 +20,7 @@ from flask_login import (
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from database import (
-    _conn, create_user, get_setting, get_user_by_id, get_user_by_username,
+    _conn, create_user, get_activity, get_setting, get_user_by_id, get_user_by_username,
     get_zones, init_db, list_activities, list_settings, load_user_config,
     set_setting,
 )
@@ -125,18 +125,78 @@ def index():
     activities = []
     for r in rows:
         activities.append({
-            "id":         r["id"],
-            "name":       r["name"] or "—",
-            "sport_type": r["sport_type"] or "",
-            "date":       (r["start_date"] or "")[:10],
-            "distance":   f"{(r['distance'] or 0) / 1000:.1f} km",
-            "elevation":  f"{r['total_elevation_gain'] or 0:.0f} m",
-            "posted":     bool(r["posted_at"]),
-            "post_url":   r["mastodon_post_url"] or "",
-            "strava_url": r["strava_url"] or "",
+            "id":            r["id"],
+            "name":          r["name"] or "—",
+            "sport_type":    r["sport_type"] or "",
+            "date":          (r["start_date"] or "")[:10],
+            "distance":      f"{(r['distance'] or 0) / 1000:.1f} km",
+            "elevation":     f"{r['total_elevation_gain'] or 0:.0f} m",
+            "distance_raw":  (r["distance"] or 0) / 1000,
+            "elevation_raw": r["total_elevation_gain"] or 0,
+            "posted":        bool(r["posted_at"]),
+            "post_url":      r["mastodon_post_url"] or "",
+            "strava_url":    r["strava_url"] or "",
         })
     strava_connected = bool(get_setting(DB_PATH, int(current_user.id), "strava", "access_token"))
     return render_template("index.html", activities=activities, strava_connected=strava_connected)
+
+
+# ---------------------------------------------------------------------------
+# Activity detail
+# ---------------------------------------------------------------------------
+
+def _fmt_time(secs):
+    if not secs:
+        return None
+    h, m = divmod(int(secs) // 60, 60)
+    return f"{h}h {m:02d}m" if h else f"{m}m"
+
+
+@app.route("/activity/<int:activity_id>")
+@login_required
+def activity(activity_id):
+    uid = int(current_user.id)
+    row = get_activity(DB_PATH, activity_id, user_id=uid)
+    if not row:
+        flash("Activity not found.", "error")
+        return redirect(url_for("index"))
+
+    out_dir = _base_cfg["map"].get("output_dir", "output")
+
+    map_url = None
+    map_path = os.path.join(out_dir, f"{activity_id}.png")
+    if os.path.exists(map_path):
+        map_url = url_for("output_file", filename=f"{activity_id}.png")
+
+    chart_urls = []
+    for suffix in ("_hr", "_power"):
+        chart_path = os.path.join(out_dir, f"{activity_id}{suffix}.png")
+        if os.path.exists(chart_path):
+            chart_urls.append(url_for("output_file", filename=f"{activity_id}{suffix}.png"))
+
+    act = {
+        "id":         row["id"],
+        "name":       row["name"] or "—",
+        "sport_type": row["sport_type"] or "",
+        "date":       (row["start_date"] or "")[:10],
+        "distance":   f"{(row['distance'] or 0) / 1000:.1f} km" if row["distance"] else None,
+        "elevation":  f"{row['total_elevation_gain'] or 0:.0f} m" if row["total_elevation_gain"] is not None else None,
+        "moving_time": _fmt_time(row["moving_time"]),
+        "avg_speed":  f"{(row['max_speed'] or 0) * 3.6:.1f} km/h" if row["max_speed"] else None,
+        "avg_hr":     f"{row['average_heartrate']:.0f}" if row["average_heartrate"] else None,
+        "avg_watts":  f"{row['average_watts']:.0f}" if row["average_watts"] else None,
+        "strava_url": row["strava_url"] or "",
+        "post_url":   row["mastodon_post_url"] or "",
+    }
+
+    return render_template("activity.html", activity=act, map_url=map_url, chart_urls=chart_urls)
+
+
+@app.route("/output/<path:filename>")
+@login_required
+def output_file(filename):
+    out_dir = os.path.abspath(_base_cfg["map"].get("output_dir", "output"))
+    return send_from_directory(out_dir, filename)
 
 
 # ---------------------------------------------------------------------------
