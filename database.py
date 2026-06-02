@@ -605,6 +605,42 @@ def create_user(db_path, username: str, password_hash: str) -> int:
     return user_id
 
 
+def get_user_stats(db_path, user_id: int) -> dict:
+    conn = _conn(db_path)
+    from datetime import datetime, timezone
+    year = datetime.now(timezone.utc).year
+
+    total = conn.execute(
+        "SELECT COUNT(*) AS n, SUM(distance) AS dist, SUM(total_elevation_gain) AS elev"
+        " FROM activities WHERE user_id=?", (user_id,)
+    ).fetchone()
+
+    this_year = conn.execute(
+        "SELECT COUNT(*) AS n, SUM(distance) AS dist, SUM(total_elevation_gain) AS elev"
+        " FROM activities WHERE user_id=? AND start_date >= ?",
+        (user_id, f"{year}-01-01"),
+    ).fetchone()
+
+    by_sport = conn.execute(
+        "SELECT sport_type, COUNT(*) AS n FROM activities"
+        " WHERE user_id=? AND sport_type IS NOT NULL"
+        " GROUP BY sport_type ORDER BY n DESC",
+        (user_id,),
+    ).fetchall()
+
+    conn.close()
+    return {
+        "total_count":      total["n"] or 0,
+        "total_distance":   (total["dist"] or 0) / 1000,
+        "total_elevation":  total["elev"] or 0,
+        "year":             year,
+        "year_count":       this_year["n"] or 0,
+        "year_distance":    (this_year["dist"] or 0) / 1000,
+        "year_elevation":   this_year["elev"] or 0,
+        "by_sport":         [{"sport": r["sport_type"], "count": r["n"]} for r in by_sport],
+    }
+
+
 def get_stream(row) -> list[dict]:
     raw = row["points_json"]
     if not raw:

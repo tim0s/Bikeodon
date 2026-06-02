@@ -22,8 +22,8 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 from database import (
     _conn, create_user, get_activity, get_setting, get_site_setting, get_user_by_id,
-    get_user_by_username, get_zones, init_db, list_activities, list_settings,
-    load_user_config, set_scheduled, set_setting,
+    get_user_by_username, get_user_stats, get_zones, init_db, list_activities,
+    list_settings, load_user_config, set_scheduled, set_setting,
 )
 from strava import StravaClient, exchange_code, strava_auth_url
 
@@ -221,6 +221,18 @@ def schedule_activity(activity_id):
 def output_file(filename):
     out_dir = os.path.abspath(_base_cfg["map"].get("output_dir", "output"))
     return send_from_directory(out_dir, filename)
+
+
+# ---------------------------------------------------------------------------
+# You / user dashboard
+# ---------------------------------------------------------------------------
+
+@app.route("/me")
+@login_required
+def me():
+    uid   = int(current_user.id)
+    stats = get_user_stats(DB_PATH, uid)
+    return render_template("me.html", stats=stats, username=current_user.username)
 
 
 # ---------------------------------------------------------------------------

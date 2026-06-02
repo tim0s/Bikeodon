@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}You – Bikeodon{% endblock %}
+{% block content %}
+
+<hgroup>
+  <h2>{{ username }}</h2>
+  <p>Your activity summary</p>
+</hgroup>
+
+<h3>All time</h3>
+<div class="activity-stats">
+  <div class="stat-chip">
+    <span class="stat-label">Activities</span>
+    <span class="stat-value">{{ stats.total_count }}</span>
+  </div>
+  <div class="stat-chip">
+    <span class="stat-label">Distance</span>
+    <span class="stat-value">{{ "%.0f"|format(stats.total_distance) }} km</span>
+  </div>
+  <div class="stat-chip">
+    <span class="stat-label">Elevation</span>
+    <span class="stat-value">{{ "%.0f"|format(stats.total_elevation) }} m</span>
+  </div>
+</div>
+
+<h3>{{ stats.year }}</h3>
+<div class="activity-stats">
+  <div class="stat-chip">
+    <span class="stat-label">Activities</span>
+    <span class="stat-value">{{ stats.year_count }}</span>
+  </div>
+  <div class="stat-chip">
+    <span class="stat-label">Distance</span>
+    <span class="stat-value">{{ "%.0f"|format(stats.year_distance) }} km</span>
+  </div>
+  <div class="stat-chip">
+    <span class="stat-label">Elevation</span>
+    <span class="stat-value">{{ "%.0f"|format(stats.year_elevation) }} m</span>
+  </div>
+</div>
+
+{% if stats.by_sport %}
+<h3>By activity type</h3>
+<div class="activity-stats">
+  {% for s in stats.by_sport %}
+  <div class="stat-chip">
+    <span class="stat-label">{{ s.sport }}</span>
+    <span class="stat-value">{{ s.count }}</span>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% endblock %}
