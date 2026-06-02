@@ -450,7 +450,7 @@ def load_user_config(db_path: str, user_id: int, base_cfg: dict) -> dict:
 # Activities CRUD
 # ---------------------------------------------------------------------------
 
-def upsert_activity(db_path, data: dict, user_id: int = 1):
+def upsert_activity(db_path, data: dict, user_id: int):
     conn = _conn(db_path)
     existing = conn.execute(
         "SELECT posted_at, mastodon_post_url, scheduled_for_post FROM activities WHERE id=? AND user_id=?",
@@ -495,7 +495,7 @@ def upsert_activity(db_path, data: dict, user_id: int = 1):
     conn.close()
 
 
-def mark_posted(db_path, activity_id: int, mastodon_post_url: str, user_id: int = 1):
+def mark_posted(db_path, activity_id: int, mastodon_post_url: str, user_id: int):
     conn = _conn(db_path)
     conn.execute(
         "UPDATE activities SET posted_at=?, mastodon_post_url=? WHERE id=? AND user_id=?",
@@ -505,7 +505,7 @@ def mark_posted(db_path, activity_id: int, mastodon_post_url: str, user_id: int 
     conn.close()
 
 
-def list_activities(db_path, user_id: int = 1):
+def list_activities(db_path, user_id: int):
     conn = _conn(db_path)
     rows = conn.execute(
         "SELECT * FROM activities WHERE user_id=? ORDER BY start_date DESC", (user_id,)
@@ -514,7 +514,7 @@ def list_activities(db_path, user_id: int = 1):
     return rows
 
 
-def get_activity(db_path, activity_id, user_id: int = 1):
+def get_activity(db_path, activity_id, user_id: int):
     conn = _conn(db_path)
     row = conn.execute(
         "SELECT * FROM activities WHERE id=? AND user_id=?", (activity_id, user_id)
@@ -523,7 +523,7 @@ def get_activity(db_path, activity_id, user_id: int = 1):
     return row
 
 
-def get_unposted(db_path, user_id: int = 1) -> list:
+def get_unposted(db_path, user_id: int) -> list:
     conn = _conn(db_path)
     rows = conn.execute(
         "SELECT * FROM activities WHERE user_id=? AND posted_at IS NULL"

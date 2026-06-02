@@ -3,6 +3,7 @@ Mastodon posting client.
 Uses the standard Mastodon API — no third-party library needed.
 """
 
+import os
 import time
 
 import requests
