@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from flask import Flask, flash, redirect, render_template, request, send_from_directory, url_for
+from werkzeug.middleware.proxy_fix import ProxyFix
 from flask_login import (
     LoginManager, UserMixin, current_user,
     login_required, login_user, logout_user,
@@ -38,6 +39,7 @@ STRAVA_CLIENT_ID     = os.environ.get("STRAVA_CLIENT_ID", "")
 STRAVA_CLIENT_SECRET = os.environ.get("STRAVA_CLIENT_SECRET", "")
 
 app = Flask(__name__)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-key-change-me-in-production")
 
 init_db(DB_PATH)
