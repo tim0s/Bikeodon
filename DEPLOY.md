@@ -93,7 +93,7 @@ After=network.target bikeodon-web.service
 User=opc
 WorkingDirectory=/opt/Bikeodon
 EnvironmentFile=/opt/Bikeodon/.env
-ExecStart=/opt/Bikeodon/.venv/bin/python main.py daemon
+ExecStart=/opt/Bikeodon/.venv/bin/python -u main.py daemon
 Restart=always
 RestartSec=30
 
@@ -165,7 +165,32 @@ Verify renewal works:
 sudo certbot renew --dry-run
 ```
 
-## 9. Update Strava callback URL
+## 9. Add webhook verify token to .env
+
+Add a secret string to `/opt/Bikeodon/.env`:
+
+```bash
+echo "STRAVA_WEBHOOK_VERIFY_TOKEN=$(python3 -c "import secrets; print(secrets.token_hex(16))")" >> /opt/Bikeodon/.env
+```
+
+Then register the webhook with Strava (the web service must be running and reachable):
+
+```bash
+cd /opt/Bikeodon
+source .venv/bin/activate
+python main.py webhook subscribe https://bikeodon.org/strava/webhook
+
+# Verify
+python main.py webhook status
+```
+
+Strava allows only one subscription per app. To change the callback URL, unsubscribe first:
+
+```bash
+python main.py webhook unsubscribe
+```
+
+## 10. Update Strava callback URL
 
 In your Strava API app settings at strava.com/settings/api, update the **Authorization Callback Domain** from `localhost` to `bikeodon.org`.
 

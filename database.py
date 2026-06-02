@@ -632,6 +632,17 @@ def get_latest_activity_date(db_path, user_id: int) -> str | None:
     return row["start_date"] if row else None
 
 
+def get_user_by_athlete_id(db_path, athlete_id: str):
+    conn = _conn(db_path)
+    row = conn.execute("""
+        SELECT u.id, u.username FROM users u
+        JOIN settings s ON s.user_id = u.id
+          AND s.area = 'strava' AND s.key = 'athlete_id' AND s.value = ?
+    """, (str(athlete_id),)).fetchone()
+    conn.close()
+    return row
+
+
 def get_user_by_username(db_path, username: str):
     conn = _conn(db_path)
     row = conn.execute(

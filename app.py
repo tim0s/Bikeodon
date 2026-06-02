@@ -22,10 +22,13 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 from database import (
     _conn, clear_rendered, create_user, get_activity, get_admin_stats, get_setting,
-    get_site_setting, get_user_by_id, get_user_by_username, get_user_stats, get_zones,
-    init_db, list_activities, list_settings, load_user_config, mark_rendered,
-    set_scheduled, set_setting,
+    get_site_setting, get_stream, get_user_by_athlete_id, get_user_by_id,
+    get_user_by_username, get_user_stats, get_zones, init_db, list_activities,
+    list_settings, load_user_config, mark_rendered, set_scheduled, set_setting,
+    upsert_activity,
 )
+import threading
+
 from charts import generate_charts
 from map_renderer import render_activity_map
 from strava import StravaClient, exchange_code, strava_auth_url
@@ -498,6 +501,104 @@ def strava_callback():
 
     flash("Strava connected successfully!", "success")
     return redirect(url_for("settings"))
+
+
+@app.route("/strava/webhook", methods=["GET"])
+def strava_webhook_verify():
+    verify_token = os.environ.get("STRAVA_WEBHOOK_VERIFY_TOKEN", "")
+    if request.args.get("hub.verify_token") != verify_token:
+        return "Forbidden", 403
+    return {"hub.challenge": request.args.get("hub.challenge")}, 200
+
+
+@app.route("/strava/webhook", methods=["POST"])
+def strava_webhook_event():
+    event = request.json or {}
+    threading.Thread(target=_handle_webhook_event, args=(event,), daemon=True).start()
+    return "", 200
+
+
+def _handle_webhook_event(event: dict):
+    obj_type   = event.get("object_type")
+    aspect     = event.get("aspect_type")
+    obj_id     = event.get("object_id")
+    owner_id   = event.get("owner_id")
+
+    user = get_user_by_athlete_id(DB_PATH, owner_id)
+    if not user:
+        return
+
+    uid = user["id"]
+
+    if obj_type == "athlete" and aspect == "deauthorize":
+        for key in ("access_token", "refresh_token", "token_expires_at", "athlete_id"):
+            set_setting(DB_PATH, uid, "strava", key, "")
+        return
+
+    if obj_type != "activity":
+        return
+
+    if aspect == "delete":
+        conn = _conn(DB_PATH)
+        conn.execute("DELETE FROM activities WHERE id=? AND user_id=?", (obj_id, uid))
+        conn.commit()
+        conn.close()
+        return
+
+    if aspect in ("create", "update"):
+        access_token  = get_setting(DB_PATH, uid, "strava", "access_token") or ""
+        refresh_tok   = get_setting(DB_PATH, uid, "strava", "refresh_token") or ""
+        expires_at    = float(get_setting(DB_PATH, uid, "strava", "token_expires_at") or 0)
+        if not access_token:
+            return
+
+        def _on_refresh(new_access, new_refresh, new_expires):
+            set_setting(DB_PATH, uid, "strava", "access_token",      new_access)
+            set_setting(DB_PATH, uid, "strava", "refresh_token",     new_refresh)
+            set_setting(DB_PATH, uid, "strava", "token_expires_at",  str(new_expires))
+
+        client = StravaClient(
+            access_token=access_token,
+            client_id=STRAVA_CLIENT_ID,
+            client_secret=STRAVA_CLIENT_SECRET,
+            refresh_tok=refresh_tok,
+            expires_at=expires_at,
+            on_refresh=_on_refresh,
+        )
+        try:
+            data = client.get_activity(obj_id)
+        except Exception:
+            return
+
+        upsert_activity(DB_PATH, data, user_id=uid)
+
+        cfg     = load_user_config(DB_PATH, uid, _base_cfg)
+        out_dir = _base_cfg["map"].get("output_dir", "output")
+        os.makedirs(out_dir, exist_ok=True)
+
+        from database import get_points as _get_points
+        row = get_activity(DB_PATH, obj_id, user_id=uid)
+        if not row:
+            return
+
+        points = _get_points(row)
+        if points:
+            try:
+                img = render_activity_map(points, dict(row), cfg)
+                if img:
+                    img.save(os.path.join(out_dir, f"{obj_id}.png"))
+                    mark_rendered(DB_PATH, obj_id, uid, map=True)
+            except Exception:
+                pass
+        else:
+            mark_rendered(DB_PATH, obj_id, uid, map=True)
+
+        stream = get_stream(row)
+        try:
+            generate_charts(obj_id, stream, cfg, out_dir, db_path=DB_PATH)
+            mark_rendered(DB_PATH, obj_id, uid, charts=True)
+        except Exception:
+            pass
 
 
 @app.route("/strava/disconnect")

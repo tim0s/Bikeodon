@@ -36,7 +36,7 @@ from database import (
     load_user_config, log_daemon_run, mark_posted, mark_rendered, set_admin,
     set_setting, set_site_setting, upsert_activity,
 )
-from strava import StravaClient
+from strava import StravaClient, delete_webhook, list_webhooks, register_webhook
 from map_renderer import render_activity_map
 from mastodon_client import MastodonClient
 
@@ -440,6 +440,36 @@ def _now():
 # Config management
 # ---------------------------------------------------------------------------
 
+def cmd_webhook(args, cfg):
+    verify_token = os.environ.get("STRAVA_WEBHOOK_VERIFY_TOKEN", "")
+
+    if args.webhook_cmd == "status":
+        subs = list_webhooks(STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET)
+        if not subs:
+            print("No webhook subscription registered.")
+        for s in subs:
+            print(f"  ID {s['id']}  callback: {s['callback_url']}")
+
+    elif args.webhook_cmd == "subscribe":
+        if not verify_token:
+            print("STRAVA_WEBHOOK_VERIFY_TOKEN not set in .env")
+            sys.exit(1)
+        result = register_webhook(
+            STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET,
+            args.callback_url, verify_token,
+        )
+        print(f"Subscribed. ID: {result.get('id')}")
+
+    elif args.webhook_cmd == "unsubscribe":
+        subs = list_webhooks(STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET)
+        if not subs:
+            print("No subscription to remove.")
+            return
+        for s in subs:
+            delete_webhook(STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET, s["id"])
+            print(f"Deleted subscription {s['id']}.")
+
+
 def cmd_admin(args, cfg):
     db_path = cfg["database"]["path"]
     user = get_user_by_username(db_path, args.username)
@@ -532,6 +562,13 @@ def main():
     p_daemon.add_argument("--count", type=int, default=20,
                           help="Activities to check per poll cycle (default: 20)")
 
+    p_webhook = sub.add_parser("webhook", help="Manage Strava webhook subscription")
+    wh_sub = p_webhook.add_subparsers(dest="webhook_cmd")
+    wh_sub.add_parser("status", help="Show current subscription")
+    p_wh_sub = wh_sub.add_parser("subscribe", help="Register webhook with Strava")
+    p_wh_sub.add_argument("callback_url", help="Public URL e.g. https://bikeodon.org/strava/webhook")
+    wh_sub.add_parser("unsubscribe", help="Remove webhook subscription")
+
     p_admin = sub.add_parser("admin", help="Grant admin privileges to a user")
     p_admin.add_argument("username", help="Username to promote")
 
@@ -564,7 +601,7 @@ def main():
 
     args.base_cfg = _base
 
-    if args.command in ("sync", "daemon", "invite-code", "admin"):
+    if args.command in ("sync", "daemon", "invite-code", "admin", "webhook"):
         args.user_id = None
         cfg = load_user_config(_db_path, 1, _base)
     else:
@@ -578,6 +615,7 @@ def main():
         "charts":      cmd_charts,
         "post":        cmd_post,
         "daemon":      cmd_daemon,
+        "webhook":     cmd_webhook,
         "admin":       cmd_admin,
         "invite-code": cmd_invite_code,
         "config":      cmd_config,

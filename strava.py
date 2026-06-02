@@ -129,6 +129,35 @@ class StravaClient:
         return resp.json()
 
 
+_PUSH = "https://www.strava.com/api/v3/push_subscriptions"
+
+
+def list_webhooks(client_id: str, client_secret: str) -> list:
+    resp = requests.get(_PUSH, params={"client_id": client_id, "client_secret": client_secret})
+    resp.raise_for_status()
+    return resp.json()
+
+
+def register_webhook(client_id: str, client_secret: str,
+                     callback_url: str, verify_token: str) -> dict:
+    resp = requests.post(_PUSH, data={
+        "client_id":     client_id,
+        "client_secret": client_secret,
+        "callback_url":  callback_url,
+        "verify_token":  verify_token,
+    })
+    resp.raise_for_status()
+    return resp.json()
+
+
+def delete_webhook(client_id: str, client_secret: str, subscription_id: int):
+    resp = requests.delete(
+        f"{_PUSH}/{subscription_id}",
+        data={"client_id": client_id, "client_secret": client_secret},
+    )
+    resp.raise_for_status()
+
+
 def _build_activity(detail: dict, streams: dict) -> dict:
     """Map Strava API response to Bikeodon's internal activity dict."""
     latlng   = streams.get("latlng",    {}).get("data", [])
