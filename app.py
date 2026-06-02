@@ -371,6 +371,81 @@ def admin():
     return render_template("admin.html", stats=stats, interval_minutes=interval)
 
 
+@app.route("/admin/full-sync", methods=["POST"])
+@login_required
+@admin_required
+def admin_full_sync():
+    uid = int(current_user.id)
+
+    def _run():
+        from strava import StravaClient as _SC
+        access_token  = get_setting(DB_PATH, uid, "strava", "access_token") or ""
+        refresh_tok   = get_setting(DB_PATH, uid, "strava", "refresh_token") or ""
+        expires_at    = float(get_setting(DB_PATH, uid, "strava", "token_expires_at") or 0)
+        if not access_token:
+            return
+
+        def _on_refresh(a, r, e):
+            set_setting(DB_PATH, uid, "strava", "access_token",     a)
+            set_setting(DB_PATH, uid, "strava", "refresh_token",    r)
+            set_setting(DB_PATH, uid, "strava", "token_expires_at", str(e))
+
+        client = _SC(access_token=access_token, client_id=STRAVA_CLIENT_ID,
+                     client_secret=STRAVA_CLIENT_SECRET, refresh_tok=refresh_tok,
+                     expires_at=expires_at, on_refresh=_on_refresh)
+
+        print(f"[full-sync] Fetching all activity IDs for user {uid}…")
+        all_ids = client.get_all_activity_ids()
+        print(f"[full-sync] {len(all_ids)} total activities found.")
+
+        new_ids = []
+        for activity_id in all_ids:
+            if get_activity(DB_PATH, activity_id, user_id=uid):
+                continue
+            try:
+                data = client.get_activity(activity_id)
+                upsert_activity(DB_PATH, data, user_id=uid)
+                new_ids.append(activity_id)
+                print(f"[full-sync] + {data['name']}")
+            except Exception as e:
+                print(f"[full-sync] Failed {activity_id}: {e}")
+
+        if new_ids:
+            cfg = load_user_config(DB_PATH, uid, _base_cfg)
+            _render_new(new_ids, uid, cfg)
+        print(f"[full-sync] Done — {len(new_ids)} new activities imported.")
+
+    def _render_new(new_ids, uid, cfg):
+        out_dir = _base_cfg["map"].get("output_dir", "output")
+        os.makedirs(out_dir, exist_ok=True)
+        for activity_id in new_ids:
+            row = get_activity(DB_PATH, activity_id, user_id=uid)
+            if not row:
+                continue
+            from database import get_points as _gp
+            pts = _gp(row)
+            if pts:
+                try:
+                    img = render_activity_map(pts, dict(row), cfg)
+                    if img:
+                        img.save(os.path.join(out_dir, f"{activity_id}.png"))
+                        mark_rendered(DB_PATH, activity_id, uid, map=True)
+                except Exception:
+                    pass
+            else:
+                mark_rendered(DB_PATH, activity_id, uid, map=True)
+            stream = get_stream(row)
+            try:
+                generate_charts(activity_id, stream, cfg, out_dir, db_path=DB_PATH)
+                mark_rendered(DB_PATH, activity_id, uid, charts=True)
+            except Exception:
+                pass
+
+    threading.Thread(target=_run, daemon=True).start()
+    flash("Full sync started in the background — check logs for progress.", "success")
+    return redirect(url_for("admin"))
+
+
 # ---------------------------------------------------------------------------
 # You / user dashboard
 # ---------------------------------------------------------------------------

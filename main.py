@@ -92,7 +92,8 @@ def _strava_client_for(db_path: str, user_id: int) -> "StravaClient":
     )
 
 
-def _sync_user(db_path: str, user_id: int, username: str, count: int = 20) -> list[int]:
+def _sync_user(db_path: str, user_id: int, username: str,
+               count: int = 20, full: bool = False) -> list[int]:
     """
     Fetch new activities for one user from Strava and store them.
     Returns the list of newly stored activity IDs.
@@ -105,15 +106,20 @@ def _sync_user(db_path: str, user_id: int, username: str, count: int = 20) -> li
 
     latest = get_latest_activity_date(db_path, user_id)
     after_ts = None
-    if latest:
+    if latest and not full:
         from datetime import datetime, timezone
         dt = datetime.fromisoformat(latest.replace("Z", "+00:00"))
         after_ts = dt.timestamp()
         print(f"  [{username}] Fetching activities after {latest[:10]}…")
+    elif full:
+        print(f"  [{username}] Full sync — fetching all activities from Strava…")
     else:
         print(f"  [{username}] No existing activities — fetching up to {count} most recent…")
 
-    ids = client.get_activity_ids(n=count, after=after_ts)
+    if full:
+        ids = client.get_all_activity_ids(after=after_ts)
+    else:
+        ids = client.get_activity_ids(n=count, after=after_ts)
     if not ids:
         print(f"  [{username}] No new activities.")
         return []
@@ -192,7 +198,8 @@ def cmd_sync(args, cfg):
 
     total = 0
     for user in users:
-        new_ids = _sync_user(db_path, user["id"], user["username"] or f"user:{user['id']}", count=args.count)
+        new_ids = _sync_user(db_path, user["id"], user["username"] or f"user:{user['id']}",
+                             count=args.count, full=getattr(args, "full", False))
         total += len(new_ids)
         if new_ids:
             user_cfg = load_user_config(db_path, user["id"], args.base_cfg)
@@ -541,8 +548,10 @@ def main():
     sub = parser.add_subparsers(dest="command")
 
     p_sync = sub.add_parser("sync", help="Fetch recent activities from Strava")
-    p_sync.add_argument("--count", type=int, default=10,
-                        help="Number of activities to fetch (default: 10)")
+    p_sync.add_argument("--count", type=int, default=20,
+                        help="Number of activities to fetch (default: 20)")
+    p_sync.add_argument("--full", action="store_true",
+                        help="Fetch entire activity history (all pages)")
 
     sub.add_parser("list", help="List activities stored in the database")
 
