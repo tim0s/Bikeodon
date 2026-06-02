@@ -131,36 +131,56 @@ def _sync_user(db_path: str, user_id: int, username: str, count: int = 20) -> li
 
 
 def _render_missing(db_path: str, user_id: int, cfg: dict):
-    """Render maps for any stored activities that don't have an image yet."""
+    """Render maps and charts for any stored activities missing output files."""
     out_dir = cfg["map"].get("output_dir", "output")
     rows = list_activities(db_path, user_id=user_id)
-    missing = [r for r in rows if not os.path.exists(os.path.join(out_dir, f"{r['id']}.png"))]
+    missing = [
+        r for r in rows
+        if not os.path.exists(os.path.join(out_dir, f"{r['id']}.png"))
+        or not _charts_rendered(r["id"], out_dir)
+    ]
     if missing:
-        ids = [r["id"] for r in missing]
-        _render_activities(ids, db_path, user_id, cfg)
+        _render_activities([r["id"] for r in missing], db_path, user_id, cfg)
+
+
+def _charts_rendered(activity_id: int, out_dir: str) -> bool:
+    """Return True if charts have already been attempted (sentinel file exists)."""
+    return os.path.exists(os.path.join(out_dir, f"{activity_id}.charts_done"))
 
 
 def _render_activities(new_ids: list[int], db_path: str, user_id: int, cfg: dict):
-    """Render maps for a list of activity IDs, skipping those without GPS data."""
+    """Render maps and charts for a list of activity IDs."""
     out_dir = cfg["map"].get("output_dir", "output")
     os.makedirs(out_dir, exist_ok=True)
     for activity_id in new_ids:
-        out_path = os.path.join(out_dir, f"{activity_id}.png")
-        if os.path.exists(out_path):
-            continue
         row = get_activity(db_path, activity_id, user_id=user_id)
         if not row:
             continue
-        points = get_points(row)
-        if not points:
-            continue
-        try:
-            img = render_activity_map(points, dict(row), cfg)
-            if img:
-                img.save(out_path)
-                print(f"    Rendered map → {out_path}")
-        except Exception as e:
-            print(f"    Render failed for {activity_id}: {e}")
+
+        # Map
+        map_path = os.path.join(out_dir, f"{activity_id}.png")
+        if not os.path.exists(map_path):
+            points = get_points(row)
+            if points:
+                try:
+                    img = render_activity_map(points, dict(row), cfg)
+                    if img:
+                        img.save(map_path)
+                        print(f"    Rendered map → {map_path}")
+                except Exception as e:
+                    print(f"    Map render failed for {activity_id}: {e}")
+
+        # Charts
+        if not _charts_rendered(activity_id, out_dir):
+            stream = get_stream(row)
+            try:
+                paths = generate_charts(activity_id, stream, cfg, out_dir, db_path=db_path)
+                for p in paths:
+                    print(f"    Rendered chart → {p}")
+            except Exception as e:
+                print(f"    Chart render failed for {activity_id}: {e}")
+            # Write sentinel so we don't retry on every cycle for activities with no data
+            open(os.path.join(out_dir, f"{activity_id}.charts_done"), "w").close()
 
 
 # ---------------------------------------------------------------------------
