@@ -130,6 +130,16 @@ def _sync_user(db_path: str, user_id: int, username: str, count: int = 20) -> li
     return new_ids
 
 
+def _render_missing(db_path: str, user_id: int, cfg: dict):
+    """Render maps for any stored activities that don't have an image yet."""
+    out_dir = cfg["map"].get("output_dir", "output")
+    rows = list_activities(db_path, user_id=user_id)
+    missing = [r for r in rows if not os.path.exists(os.path.join(out_dir, f"{r['id']}.png"))]
+    if missing:
+        ids = [r["id"] for r in missing]
+        _render_activities(ids, db_path, user_id, cfg)
+
+
 def _render_activities(new_ids: list[int], db_path: str, user_id: int, cfg: dict):
     """Render maps for a list of activity IDs, skipping those without GPS data."""
     out_dir = cfg["map"].get("output_dir", "output")
@@ -374,6 +384,7 @@ def cmd_daemon(args, cfg):
                     user_cfg = load_user_config(db_path, user_id, base_cfg)
                     if new_ids:
                         _render_activities(new_ids, db_path, user_id, user_cfg)
+                    _render_missing(db_path, user_id, user_cfg)
                     out_dir  = base_cfg["map"].get("output_dir", "output")
                     unposted = get_unposted(db_path, user_id=user_id)
 
