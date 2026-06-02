@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Upload activities – Bikeodon{% endblock %}
+{% block content %}
+
+<hgroup>
+  <h2>Upload activities</h2>
+  <p>Supported formats: GPX, TCX, FIT</p>
+</hgroup>
+
+<article>
+  <form method="post" enctype="multipart/form-data">
+    <label>
+      Select files
+      <input type="file" name="files" multiple accept=".gpx,.tcx,.fit">
+    </label>
+    <small>You can select multiple files at once. Duplicates are detected automatically and skipped.</small>
+    <br><br>
+    <button type="submit">Upload</button>
+  </form>
+</article>
+
+<article>
+  <header><strong>Strava data export</strong></header>
+  <p>To import all your Strava activities:</p>
+  <ol>
+    <li>Go to <strong>Strava → Settings → My Account → Download or Delete your data</strong></li>
+    <li>Request your archive and wait for the email</li>
+    <li>Unzip the archive — activity files are in the <code>activities/</code> folder (GPX and FIT files)</li>
+    <li>Select all files in that folder and upload them here</li>
+  </ol>
+</article>
+
+{% endblock %}

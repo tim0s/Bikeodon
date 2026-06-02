@@ -29,6 +29,7 @@ from database import (
 )
 import threading
 
+from activity_parser import parse_file
 from charts import generate_charts
 from map_renderer import render_activity_map
 from strava import StravaClient, exchange_code, strava_auth_url
@@ -283,6 +284,78 @@ def schedule_activity(activity_id):
 def output_file(filename):
     out_dir = os.path.abspath(_base_cfg["map"].get("output_dir", "output"))
     return send_from_directory(out_dir, filename)
+
+
+# ---------------------------------------------------------------------------
+# Upload
+# ---------------------------------------------------------------------------
+
+@app.route("/upload", methods=["GET", "POST"])
+@login_required
+def upload():
+    if request.method == "GET":
+        return render_template("upload.html")
+
+    uid     = int(current_user.id)
+    files   = request.files.getlist("files")
+    cfg     = load_user_config(DB_PATH, uid, _base_cfg)
+    out_dir = _base_cfg["map"].get("output_dir", "output")
+    os.makedirs(out_dir, exist_ok=True)
+
+    imported = 0
+    skipped  = 0
+    errors   = []
+
+    for f in files:
+        if not f.filename:
+            continue
+        content = f.read()
+        try:
+            activities = parse_file(f.filename, content)
+        except Exception as e:
+            errors.append(f"{f.filename}: {e}")
+            continue
+
+        for act in activities:
+            existing = get_activity(DB_PATH, act["id"], user_id=uid)
+            if existing:
+                skipped += 1
+                continue
+
+            upsert_activity(DB_PATH, act, user_id=uid, source="upload")
+
+            row = get_activity(DB_PATH, act["id"], user_id=uid)
+            if row:
+                from database import get_points as _gp
+                pts = _gp(row)
+                if pts:
+                    try:
+                        img = render_activity_map(pts, dict(row), cfg)
+                        if img:
+                            img.save(os.path.join(out_dir, f"{act['id']}.png"))
+                            mark_rendered(DB_PATH, act["id"], uid, map=True)
+                    except Exception:
+                        pass
+                else:
+                    mark_rendered(DB_PATH, act["id"], uid, map=True)
+
+                stream = get_stream(row)
+                try:
+                    generate_charts(act["id"], stream, cfg, out_dir, db_path=DB_PATH)
+                    mark_rendered(DB_PATH, act["id"], uid, charts=True)
+                except Exception:
+                    pass
+
+            imported += 1
+
+    if imported:
+        flash(f"Imported {imported} activit{'y' if imported == 1 else 'ies'}.", "success")
+    if skipped:
+        flash(f"{skipped} already in your library — skipped.", "success")
+    for e in errors:
+        flash(e, "error")
+
+    return redirect(url_for("index"))
 
 
 # ---------------------------------------------------------------------------

@@ -183,6 +183,7 @@ def init_db(db_path):
         ("scheduled_for_post",   "INTEGER NOT NULL DEFAULT 0"),
         ("map_rendered_at",      "TEXT"),
         ("charts_rendered_at",   "TEXT"),
+        ("source",               "TEXT NOT NULL DEFAULT 'strava'"),
     ]:
         try:
             conn.execute(f"ALTER TABLE activities ADD COLUMN {col} {typedef}")
@@ -499,7 +500,7 @@ def get_unrendered(db_path, user_id: int) -> list:
     return rows
 
 
-def upsert_activity(db_path, data: dict, user_id: int):
+def upsert_activity(db_path, data: dict, user_id: int, source: str = "strava"):
     conn = _conn(db_path)
     existing = conn.execute(
         "SELECT posted_at, mastodon_post_url, scheduled_for_post,"
@@ -520,8 +521,8 @@ def upsert_activity(db_path, data: dict, user_id: int):
          average_heartrate, max_heartrate, average_watts, max_watts,
          start_lat, start_lon, points_json, fetched_at,
          strava_url, posted_at, mastodon_post_url, scheduled_for_post,
-         map_rendered_at, charts_rendered_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         map_rendered_at, charts_rendered_at, source)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """, (
         data["id"], user_id,
         data.get("name"),
@@ -540,12 +541,13 @@ def upsert_activity(db_path, data: dict, user_id: int):
         data.get("start_lon"),
         json.dumps(data.get("points") or []),
         datetime.now(timezone.utc).isoformat(),
-        f"https://www.strava.com/activities/{data['id']}",
+        data.get("source_url"),
         posted_at,
         mastodon_post_url,
         scheduled_for_post,
         map_rendered_at,
         charts_rendered_at,
+        source,
     ))
     conn.commit()
     conn.close()
