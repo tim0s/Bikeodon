@@ -1,6 +1,11 @@
 {% extends "base.html" %}
 {% block title %}Activities – Bikeodon{% endblock %}
 {% block content %}
+
+{# ── helpers ── #}
+{% macro sort_url(col) %}{{ url_for('index', page=page, sort=col, dir='asc' if (sort == col and dir == 'desc') else 'desc') }}{% endmacro %}
+{% macro page_url(p) %}{{ url_for('index', page=p, sort=sort, dir=dir) }}{% endmacro %}
+
 <hgroup>
   <h2>Activities</h2>
   {% if not strava_connected %}
@@ -10,26 +15,27 @@
 
 {% if activities %}
 <figure>
-  <table id="activities-table">
+  <table>
     <thead>
       <tr>
-        <th data-col="date"      class="sort-desc">Date      <span class="sort-arrow">▼</span></th>
-        <th data-col="type"                        >Type      <span class="sort-arrow">↕</span></th>
-        <th data-col="name"                        >Name      <span class="sort-arrow">↕</span></th>
-        <th data-col="distance"                    >Distance  <span class="sort-arrow">↕</span></th>
-        <th data-col="elevation"                   >Elevation <span class="sort-arrow">↕</span></th>
-        <th                                        >Posted</th>
+        {% for col, label in [('date','Date'),('type','Type'),('name','Name'),('distance','Distance'),('elevation','Elevation')] %}
+        <th>
+          <a href="{{ sort_url(col) }}" class="sort-link {% if sort == col %}sort-active{% endif %}">
+            {{ label }}
+            {% if sort == col %}
+              {{ '▲' if dir == 'asc' else '▼' }}
+            {% else %}
+              <span class="sort-arrow">↕</span>
+            {% endif %}
+          </a>
+        </th>
+        {% endfor %}
+        <th>Posted</th>
       </tr>
     </thead>
     <tbody>
       {% for a in activities %}
-      <tr
-        data-date="{{ a.date }}"
-        data-type="{{ a.sport_type | lower }}"
-        data-name="{{ a.name | lower }}"
-        data-distance="{{ a.distance_raw }}"
-        data-elevation="{{ a.elevation_raw }}"
-      >
+      <tr>
         <td>{{ a.date }}</td>
         <td><small>{{ a.sport_type }}</small></td>
         <td>
@@ -60,52 +66,29 @@
     </tbody>
   </table>
 </figure>
+
+<div class="pagination">
+  {% if page > 1 %}
+    <a href="{{ page_url(1) }}" class="page-btn" title="First page">&#x21E4;</a>
+    <a href="{{ page_url(page - 1) }}" class="page-btn" title="Previous page">&#x2039;</a>
+  {% else %}
+    <span class="page-btn page-btn-disabled">&#x21E4;</span>
+    <span class="page-btn page-btn-disabled">&#x2039;</span>
+  {% endif %}
+
+  <span class="page-info">Page {{ page }} of {{ n_pages }} &nbsp;·&nbsp; {{ total }} activities</span>
+
+  {% if page < n_pages %}
+    <a href="{{ page_url(page + 1) }}" class="page-btn" title="Next page">&#x203A;</a>
+    <a href="{{ page_url(n_pages) }}" class="page-btn" title="Last page">&#x21E5;</a>
+  {% else %}
+    <span class="page-btn page-btn-disabled">&#x203A;</span>
+    <span class="page-btn page-btn-disabled">&#x21E5;</span>
+  {% endif %}
+</div>
+
 {% else %}
 <p>No activities yet. It can take up to 15 minutes for your activities to appear.</p>
 {% endif %}
 
-<script>
-(function () {
-  const table = document.getElementById('activities-table');
-  if (!table) return;
-
-  const tbody = table.querySelector('tbody');
-  const headers = table.querySelectorAll('th[data-col]');
-
-  headers.forEach(th => {
-    th.addEventListener('click', () => {
-      const col = th.dataset.col;
-      const wasDesc = th.classList.contains('sort-desc');
-      const asc = wasDesc;  // toggle: if was desc, now go asc
-
-      // Reset all headers
-      headers.forEach(h => {
-        h.classList.remove('sort-asc', 'sort-desc');
-        h.querySelector('.sort-arrow').textContent = '↕';
-      });
-
-      // Apply new sort state
-      th.classList.add(asc ? 'sort-asc' : 'sort-desc');
-      th.querySelector('.sort-arrow').textContent = asc ? '▲' : '▼';
-
-      // Sort rows
-      const rows = Array.from(tbody.querySelectorAll('tr'));
-      rows.sort((a, b) => {
-        let av = a.dataset[col] ?? '';
-        let bv = b.dataset[col] ?? '';
-        // Numeric columns
-        if (col === 'distance' || col === 'elevation') {
-          av = parseFloat(av) || 0;
-          bv = parseFloat(bv) || 0;
-          return asc ? av - bv : bv - av;
-        }
-        // String columns
-        return asc ? av.localeCompare(bv) : bv.localeCompare(av);
-      });
-
-      rows.forEach(r => tbody.appendChild(r));
-    });
-  });
-})();
-</script>
 {% endblock %}

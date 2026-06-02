@@ -563,13 +563,34 @@ def mark_posted(db_path, activity_id: int, mastodon_post_url: str, user_id: int)
     conn.close()
 
 
-def list_activities(db_path, user_id: int):
+_SORT_COLS = {
+    "date":      "start_date",
+    "type":      "sport_type",
+    "name":      "name",
+    "distance":  "distance",
+    "elevation": "total_elevation_gain",
+}
+
+def list_activities(db_path, user_id: int, limit: int = 20, offset: int = 0,
+                    sort: str = "date", direction: str = "desc"):
+    col = _SORT_COLS.get(sort, "start_date")
+    dir_ = "ASC" if direction == "asc" else "DESC"
     conn = _conn(db_path)
     rows = conn.execute(
-        "SELECT * FROM activities WHERE user_id=? ORDER BY start_date DESC", (user_id,)
+        f"SELECT * FROM activities WHERE user_id=? ORDER BY {col} {dir_} LIMIT ? OFFSET ?",
+        (user_id, limit, offset),
     ).fetchall()
     conn.close()
     return rows
+
+
+def count_activities(db_path, user_id: int) -> int:
+    conn = _conn(db_path)
+    n = conn.execute(
+        "SELECT COUNT(*) FROM activities WHERE user_id=?", (user_id,)
+    ).fetchone()[0]
+    conn.close()
+    return n
 
 
 def get_activity(db_path, activity_id, user_id: int):

@@ -21,8 +21,8 @@ from flask_login import (
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from database import (
-    _conn, clear_rendered, create_user, get_activity, get_admin_stats, get_setting,
-    get_site_setting, get_stream, get_user_by_athlete_id, get_user_by_id,
+    _conn, clear_rendered, count_activities, create_user, get_activity, get_admin_stats,
+    get_setting, get_site_setting, get_stream, get_user_by_athlete_id, get_user_by_id,
     get_user_by_username, get_user_stats, get_zones, init_db, list_activities,
     list_settings, load_user_config, mark_rendered, set_scheduled, set_setting,
     upsert_activity,
@@ -144,10 +144,23 @@ def logout():
 # Dashboard
 # ---------------------------------------------------------------------------
 
+PER_PAGE = 20
+
 @app.route("/")
 @login_required
 def index():
-    rows = list_activities(DB_PATH, user_id=int(current_user.id))
+    uid  = int(current_user.id)
+    sort = request.args.get("sort", "date")
+    dir_ = request.args.get("dir", "desc")
+    page = max(1, request.args.get("page", 1, type=int))
+
+    total    = count_activities(DB_PATH, uid)
+    n_pages  = max(1, (total + PER_PAGE - 1) // PER_PAGE)
+    page     = min(page, n_pages)
+    offset   = (page - 1) * PER_PAGE
+
+    rows = list_activities(DB_PATH, user_id=uid, limit=PER_PAGE, offset=offset,
+                           sort=sort, direction=dir_)
     activities = []
     for r in rows:
         activities.append({
@@ -164,8 +177,11 @@ def index():
             "post_url":      r["mastodon_post_url"] or "",
             "strava_url":    r["strava_url"] or "",
         })
-    strava_connected = bool(get_setting(DB_PATH, int(current_user.id), "strava", "access_token"))
-    return render_template("index.html", activities=activities, strava_connected=strava_connected)
+    strava_connected = bool(get_setting(DB_PATH, uid, "strava", "access_token"))
+    return render_template("index.html", activities=activities,
+                           strava_connected=strava_connected,
+                           page=page, n_pages=n_pages, total=total,
+                           sort=sort, dir=dir_)
 
 
 # ---------------------------------------------------------------------------
