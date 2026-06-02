@@ -88,18 +88,16 @@ def _strava_client_for(db_path: str, user_id: int) -> "StravaClient":
     )
 
 
-def _sync_user(db_path: str, user_id: int, username: str) -> int:
+def _sync_user(db_path: str, user_id: int, username: str, count: int = 20) -> list[int]:
     """
     Fetch new activities for one user from Strava and store them.
-    Uses the most recent stored activity as the 'after' boundary so only
-    genuinely new activities are downloaded.
-    Returns the number of activities fetched.
+    Returns the list of newly stored activity IDs.
     """
     try:
         client = _strava_client_for(db_path, user_id)
     except ValueError as e:
         print(f"  [{username}] Skipping — {e}")
-        return 0
+        return []
 
     latest = get_latest_activity_date(db_path, user_id)
     after_ts = None
@@ -109,24 +107,47 @@ def _sync_user(db_path: str, user_id: int, username: str) -> int:
         after_ts = dt.timestamp()
         print(f"  [{username}] Fetching activities after {latest[:10]}…")
     else:
-        print(f"  [{username}] No existing activities — fetching up to 20 most recent…")
+        print(f"  [{username}] No existing activities — fetching up to {count} most recent…")
 
-    ids = client.get_activity_ids(n=20, after=after_ts)
+    ids = client.get_activity_ids(n=count, after=after_ts)
     if not ids:
         print(f"  [{username}] No new activities.")
-        return 0
+        return []
 
-    count = 0
+    new_ids = []
     for activity_id in ids:
         try:
             data = client.get_activity(activity_id)
             upsert_activity(db_path, data, user_id=user_id)
             print(f"    + {data['name']}  ({(data.get('distance') or 0) / 1000:.1f} km)")
-            count += 1
+            new_ids.append(activity_id)
         except Exception as e:
             print(f"    Failed to fetch {activity_id}: {e}")
 
-    return count
+    return new_ids
+
+
+def _render_activities(new_ids: list[int], db_path: str, user_id: int, cfg: dict):
+    """Render maps for a list of activity IDs, skipping those without GPS data."""
+    out_dir = cfg["map"].get("output_dir", "output")
+    os.makedirs(out_dir, exist_ok=True)
+    for activity_id in new_ids:
+        out_path = os.path.join(out_dir, f"{activity_id}.png")
+        if os.path.exists(out_path):
+            continue
+        row = get_activity(db_path, activity_id, user_id=user_id)
+        if not row:
+            continue
+        points = get_points(row)
+        if not points:
+            continue
+        try:
+            img = render_activity_map(points, dict(row), cfg)
+            if img:
+                img.save(out_path)
+                print(f"    Rendered map → {out_path}")
+        except Exception as e:
+            print(f"    Render failed for {activity_id}: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -143,7 +164,11 @@ def cmd_sync(args, cfg):
 
     total = 0
     for user in users:
-        total += _sync_user(db_path, user["id"], user["username"] or f"user:{user['id']}")
+        new_ids = _sync_user(db_path, user["id"], user["username"] or f"user:{user['id']}", count=args.count)
+        total += len(new_ids)
+        if new_ids:
+            user_cfg = load_user_config(db_path, user["id"], args.base_cfg)
+            _render_activities(new_ids, db_path, user["id"], user_cfg)
 
     print(f"\nDone — {total} new activit{'y' if total == 1 else 'ies'} imported.")
 
@@ -341,9 +366,11 @@ def cmd_daemon(args, cfg):
                 for user in users:
                     user_id  = user["id"]
                     username = user["username"] or f"user:{user_id}"
-                    _sync_user(db_path, user_id, username)
+                    new_ids  = _sync_user(db_path, user_id, username, count=args.count)
 
                     user_cfg = load_user_config(db_path, user_id, base_cfg)
+                    if new_ids:
+                        _render_activities(new_ids, db_path, user_id, user_cfg)
                     out_dir  = base_cfg["map"].get("output_dir", "output")
                     unposted = get_unposted(db_path, user_id=user_id)
 
@@ -481,6 +508,8 @@ def main():
         _base = yaml.safe_load(_f)
     _db_path = _base["database"]["path"]
     init_db(_db_path)
+
+    args.base_cfg = _base
 
     if args.command in ("sync", "daemon", "invite-code"):
         args.user_id = None

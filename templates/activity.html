@@ -65,8 +65,6 @@
 <figure class="activity-figure">
   <img src="{{ map_url }}" alt="Route map" class="activity-map">
 </figure>
-{% else %}
-<p class="muted"><small>Map not yet rendered. Run <code>python main.py render {{ activity.id }}</code> to generate it.</small></p>
 {% endif %}
 
 {% if chart_urls %}
@@ -80,15 +78,19 @@
 {% endif %}
 
 {% if not activity.post_url %}
-<form method="post" action="{{ url_for('schedule_activity', activity_id=activity.id) }}" style="margin-bottom:1rem">
-  <button type="submit" class="{% if activity.scheduled %}btn-scheduled{% else %}btn-schedule{% endif %}">
-    {% if activity.scheduled %}
-      ✓ Scheduled for Mastodon — click to cancel
-    {% else %}
-      Post to Mastodon
-    {% endif %}
-  </button>
-</form>
+  {% if mastodon_configured %}
+  <form method="post" action="{{ url_for('schedule_activity', activity_id=activity.id) }}" style="margin-bottom:1rem">
+    <button type="submit" class="{% if activity.scheduled %}btn-scheduled{% else %}btn-schedule{% endif %}">
+      {% if activity.scheduled %}
+        ✓ Scheduled for Mastodon — click to cancel
+      {% else %}
+        Post to Mastodon
+      {% endif %}
+    </button>
+  </form>
+  {% else %}
+  <p class="muted"><small><a href="{{ url_for('settings') }}#mastodon">Configure your Mastodon account in Settings</a> to post this activity.</small></p>
+  {% endif %}
 {% endif %}
 
 <p><a href="{{ url_for('index') }}">&larr; Back to activities</a></p>

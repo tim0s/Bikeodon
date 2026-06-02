@@ -198,7 +198,9 @@ def activity(activity_id):
         "scheduled":  bool(row["scheduled_for_post"]),
     }
 
-    return render_template("activity.html", activity=act, map_url=map_url, chart_urls=chart_urls)
+    mastodon_configured = bool(get_setting(DB_PATH, uid, "mastodon", "token"))
+    return render_template("activity.html", activity=act, map_url=map_url,
+                           chart_urls=chart_urls, mastodon_configured=mastodon_configured)
 
 
 @app.route("/activity/<int:activity_id>/schedule", methods=["POST"])
