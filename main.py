@@ -20,6 +20,9 @@ import os
 import sys
 import time
 
+# Force line-buffered output so systemd journald sees prints immediately.
+sys.stdout.reconfigure(line_buffering=True)
+
 import yaml
 from dotenv import load_dotenv
 
