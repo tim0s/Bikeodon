@@ -20,9 +20,9 @@ from flask_login import (
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from database import (
-    _conn, create_user, get_activity, get_setting, get_user_by_id, get_user_by_username,
-    get_zones, init_db, list_activities, list_settings, load_user_config,
-    set_scheduled, set_setting,
+    _conn, create_user, get_activity, get_setting, get_site_setting, get_user_by_id,
+    get_user_by_username, get_zones, init_db, list_activities, list_settings,
+    load_user_config, set_scheduled, set_setting,
 )
 from strava import StravaClient, exchange_code, strava_auth_url
 
@@ -75,10 +75,15 @@ def register():
     if current_user.is_authenticated:
         return redirect(url_for("index"))
     if request.method == "POST":
-        username = request.form["username"].strip()
-        password = request.form["password"].strip()
+        username    = request.form["username"].strip()
+        password    = request.form["password"].strip()
+        invite_code = request.form.get("invite_code", "").strip()
         if not username or not password:
             flash("Username and password are required.", "error")
+            return render_template("register.html")
+        required_code = get_site_setting(DB_PATH, "invite_code")
+        if required_code and invite_code != required_code:
+            flash("Invalid invite code.", "error")
             return render_template("register.html")
         if get_user_by_username(DB_PATH, username):
             flash("Username already taken.", "error")

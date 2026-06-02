@@ -172,6 +172,13 @@ def init_db(db_path):
         except sqlite3.OperationalError:
             pass
 
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS site_settings (
+            key   TEXT PRIMARY KEY,
+            value TEXT
+        )
+    """)
+
     conn.commit()
 
     # Seed default user if none exists
@@ -244,6 +251,24 @@ def list_settings(db_path, user_id: int) -> list[sqlite3.Row]:
     ).fetchall()
     conn.close()
     return rows
+
+
+def get_site_setting(db_path, key: str) -> str | None:
+    conn = _conn(db_path)
+    row = conn.execute("SELECT value FROM site_settings WHERE key=?", (key,)).fetchone()
+    conn.close()
+    return row["value"] if row else None
+
+
+def set_site_setting(db_path, key: str, value: str):
+    conn = _conn(db_path)
+    conn.execute(
+        "INSERT INTO site_settings (key, value) VALUES (?,?)"
+        " ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        (key, value),
+    )
+    conn.commit()
+    conn.close()
 
 
 def get_zones(db_path, user_id: int, zone_type: str) -> list[dict]:

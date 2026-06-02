@@ -28,9 +28,9 @@ load_dotenv()
 from charts import generate_charts
 from database import (
     get_activity, get_all_users, get_latest_activity_date,
-    get_points, get_setting, get_stream, get_unposted,
+    get_points, get_setting, get_site_setting, get_stream, get_unposted,
     get_user_by_username, init_db, list_activities, list_settings,
-    load_user_config, mark_posted, set_setting, upsert_activity,
+    load_user_config, mark_posted, set_setting, set_site_setting, upsert_activity,
 )
 from strava import StravaClient
 from map_renderer import render_activity_map
@@ -373,6 +373,19 @@ def _now():
 # Config management
 # ---------------------------------------------------------------------------
 
+def cmd_invite_code(args, cfg):
+    db_path = cfg["database"]["path"]
+    if args.code:
+        set_site_setting(db_path, "invite_code", args.code)
+        print(f"Invite code set.")
+    else:
+        code = get_site_setting(db_path, "invite_code")
+        if code:
+            print(f"Current invite code: {code}")
+        else:
+            print("No invite code set — registration is open to anyone.")
+
+
 def cmd_config(args, cfg):
     db_path = cfg["database"]["path"]
 
@@ -442,6 +455,9 @@ def main():
     p_daemon.add_argument("--count", type=int, default=20,
                           help="Activities to check per poll cycle (default: 20)")
 
+    p_invite = sub.add_parser("invite-code", help="Set or show the registration invite code")
+    p_invite.add_argument("code", nargs="?", help="New invite code (omit to show current)")
+
     p_cfg = sub.add_parser("config", help="View or update per-user settings")
     cfg_sub = p_cfg.add_subparsers(dest="config_cmd")
     cfg_sub.add_parser("list")
@@ -466,7 +482,7 @@ def main():
     _db_path = _base["database"]["path"]
     init_db(_db_path)
 
-    if args.command in ("sync", "daemon"):
+    if args.command in ("sync", "daemon", "invite-code"):
         args.user_id = None
         cfg = load_user_config(_db_path, 1, _base)
     else:
@@ -474,13 +490,14 @@ def main():
         cfg = load_user_config(_db_path, args.user_id, _base)
 
     {
-        "sync":    cmd_sync,
-        "list":    cmd_list,
-        "render":  cmd_render,
-        "charts":  cmd_charts,
-        "post":    cmd_post,
-        "daemon":  cmd_daemon,
-        "config":  cmd_config,
+        "sync":        cmd_sync,
+        "list":        cmd_list,
+        "render":      cmd_render,
+        "charts":      cmd_charts,
+        "post":        cmd_post,
+        "daemon":      cmd_daemon,
+        "invite-code": cmd_invite_code,
+        "config":      cmd_config,
     }[args.command](args, cfg)
 
 
