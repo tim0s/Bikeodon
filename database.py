@@ -14,8 +14,8 @@ _DEFAULT_SETTINGS = [
     ("mastodon",       "handle",                  ""),
     ("mastodon",       "post_template",
         "{name} 🚴\n📍 {distance_km:.1f} km  🏔 {elevation_m:.0f} m  ⏱ {moving_time}"
-        "\n\n#cycling #strava\n\nConnect Strava to the fediverse using Bikeodon"
-        " [tim0s.github.io/Bikeodon]"),
+        "\n\n#cycling #strava\n\nPosted via Bikeodon → https://bikeodon.org"
+        " (https://github.com/tim0s/Bikeodon)"),
     ("map",            "width",                   "1200"),
     ("map",            "height",                  "675"),
     ("map",            "zoom_offset",             "0"),
