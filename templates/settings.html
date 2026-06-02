@@ -31,6 +31,16 @@
         <input type="text" name="handle" value="{{ cfg.mastodon.handle }}" placeholder="@you@mastodon.social">
       </label>
     </div>
+    <details style="margin-bottom:0.75rem">
+      <summary>How to get an access token</summary>
+      <ol style="margin-top:0.5rem">
+        <li>Log in to your Mastodon instance and go to <strong>Preferences → Development → Your applications</strong>.</li>
+        <li>Click <strong>New application</strong>. Give it any name (e.g. "Bikeodon").</li>
+        <li>Under <strong>Scopes</strong>, make sure <code>write:statuses</code> and <code>write:media</code> are checked (or just enable <code>write</code>).</li>
+        <li>Click <strong>Submit</strong>, then click the application name.</li>
+        <li>Copy the value from <strong>Your access token</strong> at the bottom of the page and paste it below.</li>
+      </ol>
+    </details>
     <label>Access token
       <input type="password" name="token" placeholder="Leave blank to keep current">
     </label>
