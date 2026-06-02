@@ -262,6 +262,44 @@ th[data-col].sort-desc .sort-arrow {
   display: block;
 }
 
+/* ── Schedule toggle ──────────────────────────────────────────────────────── */
+
+.btn-schedule {
+  background: var(--orange);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: .5rem 1.2rem;
+  font-size: .95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .15s;
+}
+.btn-schedule:hover { background: var(--orange-dark); }
+
+.btn-scheduled {
+  background: #edfaed;
+  color: #1a4d1a;
+  border: 2px solid #4caf50;
+  border-radius: 6px;
+  padding: .5rem 1.2rem;
+  font-size: .95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .15s;
+}
+.btn-scheduled:hover { background: #d4f5d4; }
+
+.scheduled-badge {
+  font-size: .75rem;
+  font-weight: 600;
+  color: #1a4d1a;
+  background: #edfaed;
+  border: 1px solid #4caf50;
+  border-radius: 4px;
+  padding: .1rem .4rem;
+}
+
 /* ── Misc ─────────────────────────────────────────────────────────────────── */
 
 .center  { text-align: center; }

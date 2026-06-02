@@ -79,6 +79,18 @@
 </div>
 {% endif %}
 
+{% if not activity.post_url %}
+<form method="post" action="{{ url_for('schedule_activity', activity_id=activity.id) }}" style="margin-bottom:1rem">
+  <button type="submit" class="{% if activity.scheduled %}btn-scheduled{% else %}btn-schedule{% endif %}">
+    {% if activity.scheduled %}
+      ✓ Scheduled for Mastodon — click to cancel
+    {% else %}
+      Post to Mastodon
+    {% endif %}
+  </button>
+</form>
+{% endif %}
+
 <p><a href="{{ url_for('index') }}">&larr; Back to activities</a></p>
 
 {% endblock %}

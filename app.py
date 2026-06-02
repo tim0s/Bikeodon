@@ -22,7 +22,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from database import (
     _conn, create_user, get_activity, get_setting, get_user_by_id, get_user_by_username,
     get_zones, init_db, list_activities, list_settings, load_user_config,
-    set_setting,
+    set_scheduled, set_setting,
 )
 from strava import StravaClient, exchange_code, strava_auth_url
 
@@ -134,6 +134,7 @@ def index():
             "distance_raw":  (r["distance"] or 0) / 1000,
             "elevation_raw": r["total_elevation_gain"] or 0,
             "posted":        bool(r["posted_at"]),
+            "scheduled":     bool(r["scheduled_for_post"]),
             "post_url":      r["mastodon_post_url"] or "",
             "strava_url":    r["strava_url"] or "",
         })
@@ -187,9 +188,23 @@ def activity(activity_id):
         "avg_watts":  f"{row['average_watts']:.0f}" if row["average_watts"] else None,
         "strava_url": row["strava_url"] or "",
         "post_url":   row["mastodon_post_url"] or "",
+        "scheduled":  bool(row["scheduled_for_post"]),
     }
 
     return render_template("activity.html", activity=act, map_url=map_url, chart_urls=chart_urls)
+
+
+@app.route("/activity/<int:activity_id>/schedule", methods=["POST"])
+@login_required
+def schedule_activity(activity_id):
+    uid = int(current_user.id)
+    row = get_activity(DB_PATH, activity_id, user_id=uid)
+    if not row:
+        flash("Activity not found.", "error")
+        return redirect(url_for("index"))
+    new_state = not bool(row["scheduled_for_post"])
+    set_scheduled(DB_PATH, activity_id, uid, new_state)
+    return redirect(request.referrer or url_for("activity", activity_id=activity_id))
 
 
 @app.route("/output/<path:filename>")

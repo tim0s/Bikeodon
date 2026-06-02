@@ -3,7 +3,6 @@ Mastodon posting client.
 Uses the standard Mastodon API — no third-party library needed.
 """
 
-import os
 import time
 
 import requests
@@ -18,20 +17,12 @@ class MastodonClient:
     @classmethod
     def from_cfg(cls, cfg: dict) -> "MastodonClient":
         masto = cfg.get("mastodon", {})
-        token = (masto.get("token") or os.environ.get("MASTODON_TOKEN", "")).strip()
+        token = masto.get("token", "").strip()
         instance = masto.get("instance", "https://mastodon.social")
         if not token:
             raise ValueError(
-                "Mastodon token not set.\n"
-                "  Store it via: python main.py config set mastodon token <value>"
+                "Mastodon token not configured. Set it in Settings → Mastodon."
             )
-        return cls(instance, token)
-
-    @classmethod
-    def from_env(cls, instance: str = "https://mastodon.social") -> "MastodonClient":
-        token = os.environ.get("MASTODON_TOKEN", "").strip()
-        if not token:
-            raise ValueError("MASTODON_TOKEN environment variable is not set.")
         return cls(instance, token)
 
     def upload_image(self, image_path: str, description: str = "") -> str:

@@ -49,6 +49,8 @@
             </a>
           {% elif a.posted %}
             <span title="Posted">✓</span>
+          {% elif a.scheduled %}
+            <span class="scheduled-badge" title="Scheduled for posting">queued</span>
           {% else %}
             <span class="muted">–</span>
           {% endif %}

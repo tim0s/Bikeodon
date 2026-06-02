@@ -385,7 +385,7 @@ def cmd_config(args, cfg):
         key_width  = max(len(r["key"])  for r in rows)
         for r in rows:
             value = r["value"] or ""
-            if r["key"] in ("token", "session_cookie") and value:
+            if r["key"] in ("token",) and value:
                 value = value[:6] + "…"
             print(f"  {r['area']:<{area_width}}  {r['key']:<{key_width}}  {value}")
 
@@ -394,7 +394,7 @@ def cmd_config(args, cfg):
         if value is None:
             print(f"No setting found for {args.area}/{args.key}")
             sys.exit(1)
-        if args.key in ("token", "session_cookie") and value:
+        if args.key in ("token",) and value:
             value = value[:6] + "…"
         print(value)
 

@@ -8,7 +8,6 @@ from datetime import datetime, timezone
 # ---------------------------------------------------------------------------
 
 _DEFAULT_SETTINGS = [
-    ("strava",         "session_cookie",          ""),
     ("mastodon",       "instance",                "https://mastodon.social"),
     ("mastodon",       "token",                   ""),
     ("mastodon",       "visibility",              "public"),
@@ -162,10 +161,11 @@ def init_db(db_path):
 
     # Migrate activities table for databases created before current schema
     for col, typedef in [
-        ("user_id",           "INTEGER NOT NULL DEFAULT 1"),
-        ("strava_url",        "TEXT"),
-        ("posted_at",         "TEXT"),
-        ("mastodon_post_url", "TEXT"),
+        ("user_id",              "INTEGER NOT NULL DEFAULT 1"),
+        ("strava_url",           "TEXT"),
+        ("posted_at",            "TEXT"),
+        ("mastodon_post_url",    "TEXT"),
+        ("scheduled_for_post",   "INTEGER NOT NULL DEFAULT 0"),
     ]:
         try:
             conn.execute(f"ALTER TABLE activities ADD COLUMN {col} {typedef}")
@@ -307,9 +307,7 @@ def load_user_config(db_path: str, user_id: int, base_cfg: dict) -> dict:
     cfg = {
         "database": base_cfg.get("database", {}),
         "daemon":   base_cfg.get("daemon", {}),
-        "strava": {
-            "session_cookie": txt("strava", "session_cookie"),
-        },
+        "strava": {},
         "mastodon": {
             "instance":      txt("mastodon", "instance",   "https://mastodon.social"),
             "token":         txt("mastodon", "token"),
@@ -415,11 +413,12 @@ def load_user_config(db_path: str, user_id: int, base_cfg: dict) -> dict:
 def upsert_activity(db_path, data: dict, user_id: int = 1):
     conn = _conn(db_path)
     existing = conn.execute(
-        "SELECT posted_at, mastodon_post_url FROM activities WHERE id=? AND user_id=?",
+        "SELECT posted_at, mastodon_post_url, scheduled_for_post FROM activities WHERE id=? AND user_id=?",
         (data["id"], user_id),
     ).fetchone()
-    posted_at         = existing["posted_at"]         if existing else None
-    mastodon_post_url = existing["mastodon_post_url"] if existing else None
+    posted_at          = existing["posted_at"]          if existing else None
+    mastodon_post_url  = existing["mastodon_post_url"]  if existing else None
+    scheduled_for_post = existing["scheduled_for_post"] if existing else 0
 
     conn.execute("""
         INSERT OR REPLACE INTO activities
@@ -427,8 +426,8 @@ def upsert_activity(db_path, data: dict, user_id: int = 1):
          distance, moving_time, elapsed_time, total_elevation_gain, max_speed,
          average_heartrate, max_heartrate, average_watts, max_watts,
          start_lat, start_lon, points_json, fetched_at,
-         strava_url, posted_at, mastodon_post_url)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         strava_url, posted_at, mastodon_post_url, scheduled_for_post)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """, (
         data["id"], user_id,
         data.get("name"),
@@ -450,6 +449,7 @@ def upsert_activity(db_path, data: dict, user_id: int = 1):
         f"https://www.strava.com/activities/{data['id']}",
         posted_at,
         mastodon_post_url,
+        scheduled_for_post,
     ))
     conn.commit()
     conn.close()
@@ -486,11 +486,22 @@ def get_activity(db_path, activity_id, user_id: int = 1):
 def get_unposted(db_path, user_id: int = 1) -> list:
     conn = _conn(db_path)
     rows = conn.execute(
-        "SELECT * FROM activities WHERE user_id=? AND posted_at IS NULL ORDER BY start_date ASC",
+        "SELECT * FROM activities WHERE user_id=? AND posted_at IS NULL"
+        " AND scheduled_for_post=1 ORDER BY start_date ASC",
         (user_id,),
     ).fetchall()
     conn.close()
     return rows
+
+
+def set_scheduled(db_path, activity_id: int, user_id: int, value: bool):
+    conn = _conn(db_path)
+    conn.execute(
+        "UPDATE activities SET scheduled_for_post=? WHERE id=? AND user_id=?",
+        (1 if value else 0, activity_id, user_id),
+    )
+    conn.commit()
+    conn.close()
 
 
 def get_points(row) -> list[tuple[float, float]]:
