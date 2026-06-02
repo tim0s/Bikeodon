@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Admin – Bikeodon{% endblock %}
+{% block content %}
+
+<h2>Admin</h2>
+
+<div class="activity-stats" style="margin-bottom:2rem">
+  <div class="stat-chip">
+    <span class="stat-label">Users</span>
+    <span class="stat-value">{{ stats.user_count }}</span>
+  </div>
+  <div class="stat-chip">
+    <span class="stat-label">Activities</span>
+    <span class="stat-value">{{ stats.activity_count }}</span>
+  </div>
+</div>
+
+<article>
+  <header><strong>Daemon cycles</strong> <small style="font-weight:normal;color:#888">(last 20 — warning if &gt; {{ interval_minutes }} min)</small></header>
+  {% if stats.recent_runs %}
+  <table>
+    <thead>
+      <tr>
+        <th>Started</th>
+        <th>Duration</th>
+        <th>Synced</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for run in stats.recent_runs %}
+      {% set warn = run.duration_secs > interval_minutes * 60 %}
+      <tr {% if warn %}style="background:#fff8e1"{% endif %}>
+        <td><small>{{ run.started_at[:16].replace("T", " ") }} UTC</small></td>
+        <td {% if warn %}style="color:#b45309;font-weight:700"{% endif %}>
+          {% set m = (run.duration_secs // 60)|int %}
+          {% set s = (run.duration_secs % 60)|int %}
+          {% if m %}{{ m }}m {% endif %}{{ s }}s
+        </td>
+        <td>{{ run.activities_synced }}</td>
+        <td>
+          {% if run.error %}
+            <span style="color:#c0392b">&#x26A0; {{ run.error }}</span>
+          {% else %}
+            <span style="color:#27ae60">&#x2713;</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted"><small>No daemon cycles recorded yet.</small></p>
+  {% endif %}
+</article>
+
+{% endblock %}

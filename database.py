@@ -104,11 +104,26 @@ def init_db(db_path):
             created_at    TEXT NOT NULL
         )
     """)
-    for col, typedef in [("username", "TEXT"), ("password_hash", "TEXT")]:
+    for col, typedef in [
+        ("username",      "TEXT"),
+        ("password_hash", "TEXT"),
+        ("is_admin",      "INTEGER NOT NULL DEFAULT 0"),
+    ]:
         try:
             conn.execute(f"ALTER TABLE users ADD COLUMN {col} {typedef}")
         except sqlite3.OperationalError:
             pass
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS daemon_runs (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            started_at        TEXT NOT NULL,
+            finished_at       TEXT NOT NULL,
+            duration_secs     REAL NOT NULL,
+            activities_synced INTEGER NOT NULL DEFAULT 0,
+            error             TEXT
+        )
+    """)
 
     conn.execute("""
         CREATE TABLE IF NOT EXISTS settings (
@@ -573,7 +588,7 @@ def get_user_by_username(db_path, username: str):
 def get_user_by_id(db_path, user_id: int):
     conn = _conn(db_path)
     row = conn.execute(
-        "SELECT id, username FROM users WHERE id=?", (user_id,)
+        "SELECT id, username, is_admin FROM users WHERE id=?", (user_id,)
     ).fetchone()
     conn.close()
     return row
@@ -603,6 +618,48 @@ def create_user(db_path, username: str, password_hash: str) -> int:
     conn.commit()
     conn.close()
     return user_id
+
+
+def log_daemon_run(db_path, started_at: str, finished_at: str,
+                   duration_secs: float, activities_synced: int, error: str = None):
+    conn = _conn(db_path)
+    conn.execute(
+        "INSERT INTO daemon_runs (started_at, finished_at, duration_secs, activities_synced, error)"
+        " VALUES (?,?,?,?,?)",
+        (started_at, finished_at, duration_secs, activities_synced, error),
+    )
+    # Keep only the last 100 runs
+    conn.execute(
+        "DELETE FROM daemon_runs WHERE id NOT IN"
+        " (SELECT id FROM daemon_runs ORDER BY id DESC LIMIT 100)"
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_admin_stats(db_path) -> dict:
+    conn = _conn(db_path)
+    user_count     = conn.execute("SELECT COUNT(*) FROM users WHERE username IS NOT NULL").fetchone()[0]
+    activity_count = conn.execute("SELECT COUNT(*) FROM activities").fetchone()[0]
+    recent_runs    = conn.execute(
+        "SELECT started_at, finished_at, duration_secs, activities_synced, error"
+        " FROM daemon_runs ORDER BY id DESC LIMIT 20"
+    ).fetchall()
+    conn.close()
+    interval_minutes = 15
+    return {
+        "user_count":      user_count,
+        "activity_count":  activity_count,
+        "recent_runs":     [dict(r) for r in recent_runs],
+        "interval_minutes": interval_minutes,
+    }
+
+
+def set_admin(db_path, username: str, is_admin: bool):
+    conn = _conn(db_path)
+    conn.execute("UPDATE users SET is_admin=? WHERE username=?", (1 if is_admin else 0, username))
+    conn.commit()
+    conn.close()
 
 
 def get_user_stats(db_path, user_id: int) -> dict:

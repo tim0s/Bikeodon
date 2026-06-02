@@ -21,9 +21,9 @@ from flask_login import (
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from database import (
-    _conn, create_user, get_activity, get_setting, get_site_setting, get_user_by_id,
-    get_user_by_username, get_user_stats, get_zones, init_db, list_activities,
-    list_settings, load_user_config, set_scheduled, set_setting,
+    _conn, create_user, get_activity, get_admin_stats, get_setting, get_site_setting,
+    get_user_by_id, get_user_by_username, get_user_stats, get_zones, init_db,
+    list_activities, list_settings, load_user_config, set_scheduled, set_setting,
 )
 from strava import StravaClient, exchange_code, strava_auth_url
 
@@ -55,17 +55,29 @@ login_manager.login_view = "login"
 
 
 class User(UserMixin):
-    def __init__(self, id, username):
+    def __init__(self, id, username, is_admin=False):
         self.id       = str(id)
         self.username = username
+        self.is_admin = is_admin
 
 
 @login_manager.user_loader
 def load_user(user_id):
     row = get_user_by_id(DB_PATH, int(user_id))
     if row and row["username"]:
-        return User(row["id"], row["username"])
+        return User(row["id"], row["username"], bool(row["is_admin"]))
     return None
+
+
+def admin_required(f):
+    from functools import wraps
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not current_user.is_authenticated or not current_user.is_admin:
+            flash("Admin access required.", "error")
+            return redirect(url_for("index"))
+        return f(*args, **kwargs)
+    return decorated
 
 
 # ---------------------------------------------------------------------------
@@ -221,6 +233,19 @@ def schedule_activity(activity_id):
 def output_file(filename):
     out_dir = os.path.abspath(_base_cfg["map"].get("output_dir", "output"))
     return send_from_directory(out_dir, filename)
+
+
+# ---------------------------------------------------------------------------
+# Admin dashboard
+# ---------------------------------------------------------------------------
+
+@app.route("/admin")
+@login_required
+@admin_required
+def admin():
+    stats = get_admin_stats(DB_PATH)
+    interval = _base_cfg.get("daemon", {}).get("interval_minutes", 15)
+    return render_template("admin.html", stats=stats, interval_minutes=interval)
 
 
 # ---------------------------------------------------------------------------

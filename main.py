@@ -33,7 +33,8 @@ from database import (
     get_activity, get_all_users, get_latest_activity_date,
     get_points, get_setting, get_site_setting, get_stream, get_unposted,
     get_user_by_username, init_db, list_activities, list_settings,
-    load_user_config, mark_posted, set_setting, set_site_setting, upsert_activity,
+    load_user_config, log_daemon_run, mark_posted, set_admin, set_setting,
+    set_site_setting, upsert_activity,
 )
 from strava import StravaClient
 from map_renderer import render_activity_map
@@ -389,6 +390,12 @@ def cmd_daemon(args, cfg):
     print(f"Daemon started — polling every {interval // 60} min. Ctrl-C to stop.")
 
     while True:
+        from datetime import datetime, timezone as _tz
+        cycle_start    = time.monotonic()
+        started_at     = datetime.now(_tz.utc).isoformat()
+        total_synced   = 0
+        cycle_error    = None
+
         try:
             print(f"\n[{_now()}] Syncing all users…")
             users = get_all_users(db_path)
@@ -400,6 +407,7 @@ def cmd_daemon(args, cfg):
                     user_id  = user["id"]
                     username = user["username"] or f"user:{user_id}"
                     new_ids  = _sync_user(db_path, user_id, username, count=args.count)
+                    total_synced += len(new_ids)
 
                     user_cfg = load_user_config(db_path, user_id, base_cfg)
                     if new_ids:
@@ -419,9 +427,13 @@ def cmd_daemon(args, cfg):
                         except Exception as e:
                             print(f"    Failed: {e}")
         except Exception as e:
+            cycle_error = str(e)
             print(f"  Error: {e}")
 
-        print(f"  Sleeping {interval // 60} min…")
+        duration = time.monotonic() - cycle_start
+        finished_at = datetime.now(_tz.utc).isoformat()
+        log_daemon_run(db_path, started_at, finished_at, duration, total_synced, cycle_error)
+        print(f"  Cycle done in {duration:.0f}s. Sleeping {interval // 60} min…")
         time.sleep(interval)
 
 
@@ -433,6 +445,16 @@ def _now():
 # ---------------------------------------------------------------------------
 # Config management
 # ---------------------------------------------------------------------------
+
+def cmd_admin(args, cfg):
+    db_path = cfg["database"]["path"]
+    user = get_user_by_username(db_path, args.username)
+    if not user:
+        print(f"User '{args.username}' not found.")
+        sys.exit(1)
+    set_admin(db_path, args.username, True)
+    print(f"'{args.username}' is now an admin.")
+
 
 def cmd_invite_code(args, cfg):
     db_path = cfg["database"]["path"]
@@ -516,6 +538,9 @@ def main():
     p_daemon.add_argument("--count", type=int, default=20,
                           help="Activities to check per poll cycle (default: 20)")
 
+    p_admin = sub.add_parser("admin", help="Grant admin privileges to a user")
+    p_admin.add_argument("username", help="Username to promote")
+
     p_invite = sub.add_parser("invite-code", help="Set or show the registration invite code")
     p_invite.add_argument("code", nargs="?", help="New invite code (omit to show current)")
 
@@ -545,7 +570,7 @@ def main():
 
     args.base_cfg = _base
 
-    if args.command in ("sync", "daemon", "invite-code"):
+    if args.command in ("sync", "daemon", "invite-code", "admin"):
         args.user_id = None
         cfg = load_user_config(_db_path, 1, _base)
     else:
@@ -559,6 +584,7 @@ def main():
         "charts":      cmd_charts,
         "post":        cmd_post,
         "daemon":      cmd_daemon,
+        "admin":       cmd_admin,
         "invite-code": cmd_invite_code,
         "config":      cmd_config,
     }[args.command](args, cfg)
