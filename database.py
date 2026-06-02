@@ -181,6 +181,8 @@ def init_db(db_path):
         ("posted_at",            "TEXT"),
         ("mastodon_post_url",    "TEXT"),
         ("scheduled_for_post",   "INTEGER NOT NULL DEFAULT 0"),
+        ("map_rendered_at",      "TEXT"),
+        ("charts_rendered_at",   "TEXT"),
     ]:
         try:
             conn.execute(f"ALTER TABLE activities ADD COLUMN {col} {typedef}")
@@ -450,15 +452,66 @@ def load_user_config(db_path: str, user_id: int, base_cfg: dict) -> dict:
 # Activities CRUD
 # ---------------------------------------------------------------------------
 
+def mark_rendered(db_path, activity_id: int, user_id: int, map: bool = False, charts: bool = False):
+    now = datetime.now(timezone.utc).isoformat()
+    fields = []
+    if map:
+        fields.append(f"map_rendered_at='{now}'")
+    if charts:
+        fields.append(f"charts_rendered_at='{now}'")
+    if not fields:
+        return
+    conn = _conn(db_path)
+    conn.execute(
+        f"UPDATE activities SET {', '.join(fields)} WHERE id=? AND user_id=?",
+        (activity_id, user_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def clear_rendered(db_path, activity_id: int, user_id: int, map: bool = True, charts: bool = True):
+    fields = []
+    if map:
+        fields.append("map_rendered_at=NULL")
+    if charts:
+        fields.append("charts_rendered_at=NULL")
+    if not fields:
+        return
+    conn = _conn(db_path)
+    conn.execute(
+        f"UPDATE activities SET {', '.join(fields)} WHERE id=? AND user_id=?",
+        (activity_id, user_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_unrendered(db_path, user_id: int) -> list:
+    conn = _conn(db_path)
+    rows = conn.execute(
+        "SELECT * FROM activities WHERE user_id=?"
+        " AND (map_rendered_at IS NULL OR charts_rendered_at IS NULL)"
+        " ORDER BY start_date DESC",
+        (user_id,),
+    ).fetchall()
+    conn.close()
+    return rows
+
+
 def upsert_activity(db_path, data: dict, user_id: int):
     conn = _conn(db_path)
     existing = conn.execute(
-        "SELECT posted_at, mastodon_post_url, scheduled_for_post FROM activities WHERE id=? AND user_id=?",
+        "SELECT posted_at, mastodon_post_url, scheduled_for_post,"
+        " map_rendered_at, charts_rendered_at"
+        " FROM activities WHERE id=? AND user_id=?",
         (data["id"], user_id),
     ).fetchone()
     posted_at          = existing["posted_at"]          if existing else None
     mastodon_post_url  = existing["mastodon_post_url"]  if existing else None
     scheduled_for_post = existing["scheduled_for_post"] if existing else 0
+    map_rendered_at    = existing["map_rendered_at"]    if existing else None
+    charts_rendered_at = existing["charts_rendered_at"] if existing else None
 
     conn.execute("""
         INSERT OR REPLACE INTO activities
@@ -466,8 +519,9 @@ def upsert_activity(db_path, data: dict, user_id: int):
          distance, moving_time, elapsed_time, total_elevation_gain, max_speed,
          average_heartrate, max_heartrate, average_watts, max_watts,
          start_lat, start_lon, points_json, fetched_at,
-         strava_url, posted_at, mastodon_post_url, scheduled_for_post)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         strava_url, posted_at, mastodon_post_url, scheduled_for_post,
+         map_rendered_at, charts_rendered_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """, (
         data["id"], user_id,
         data.get("name"),
@@ -490,6 +544,8 @@ def upsert_activity(db_path, data: dict, user_id: int):
         posted_at,
         mastodon_post_url,
         scheduled_for_post,
+        map_rendered_at,
+        charts_rendered_at,
     ))
     conn.commit()
     conn.close()

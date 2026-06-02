@@ -30,11 +30,11 @@ load_dotenv()
 
 from charts import generate_charts
 from database import (
-    get_activity, get_all_users, get_latest_activity_date,
+    clear_rendered, get_activity, get_all_users, get_latest_activity_date,
     get_points, get_setting, get_site_setting, get_stream, get_unposted,
-    get_user_by_username, init_db, list_activities, list_settings,
-    load_user_config, log_daemon_run, mark_posted, set_admin, set_setting,
-    set_site_setting, upsert_activity,
+    get_unrendered, get_user_by_username, init_db, list_activities, list_settings,
+    load_user_config, log_daemon_run, mark_posted, mark_rendered, set_admin,
+    set_setting, set_site_setting, upsert_activity,
 )
 from strava import StravaClient
 from map_renderer import render_activity_map
@@ -132,47 +132,42 @@ def _sync_user(db_path: str, user_id: int, username: str, count: int = 20) -> li
 
 
 def _render_missing(db_path: str, user_id: int, cfg: dict):
-    """Render maps and charts for any stored activities missing output files."""
-    out_dir = cfg["map"].get("output_dir", "output")
-    rows = list_activities(db_path, user_id=user_id)
-    missing = [
-        r for r in rows
-        if not os.path.exists(os.path.join(out_dir, f"{r['id']}.png"))
-        or not _charts_rendered(r["id"], out_dir)
-    ]
-    if missing:
-        _render_activities([r["id"] for r in missing], db_path, user_id, cfg)
+    """Render maps and charts for any activities not yet rendered according to the DB."""
+    rows = get_unrendered(db_path, user_id=user_id)
+    if rows:
+        _render_activities([r["id"] for r in rows], db_path, user_id, cfg,
+                           force_map=False, force_charts=False)
 
 
-def _charts_rendered(activity_id: int, out_dir: str) -> bool:
-    """Return True if charts have already been attempted (sentinel file exists)."""
-    return os.path.exists(os.path.join(out_dir, f"{activity_id}.charts_done"))
-
-
-def _render_activities(new_ids: list[int], db_path: str, user_id: int, cfg: dict):
+def _render_activities(ids: list[int], db_path: str, user_id: int, cfg: dict,
+                       force_map: bool = True, force_charts: bool = True):
     """Render maps and charts for a list of activity IDs."""
     out_dir = cfg["map"].get("output_dir", "output")
     os.makedirs(out_dir, exist_ok=True)
-    for activity_id in new_ids:
+    for activity_id in ids:
         row = get_activity(db_path, activity_id, user_id=user_id)
         if not row:
             continue
 
-        # Map
-        map_path = os.path.join(out_dir, f"{activity_id}.png")
-        if not os.path.exists(map_path):
+        need_map    = force_map    or not row["map_rendered_at"]
+        need_charts = force_charts or not row["charts_rendered_at"]
+
+        if need_map:
+            map_path = os.path.join(out_dir, f"{activity_id}.png")
             points = get_points(row)
             if points:
                 try:
                     img = render_activity_map(points, dict(row), cfg)
                     if img:
                         img.save(map_path)
+                        mark_rendered(db_path, activity_id, user_id, map=True)
                         print(f"    Rendered map → {map_path}")
                 except Exception as e:
                     print(f"    Map render failed for {activity_id}: {e}")
+            else:
+                mark_rendered(db_path, activity_id, user_id, map=True)
 
-        # Charts
-        if not _charts_rendered(activity_id, out_dir):
+        if need_charts:
             stream = get_stream(row)
             try:
                 paths = generate_charts(activity_id, stream, cfg, out_dir, db_path=db_path)
@@ -180,8 +175,7 @@ def _render_activities(new_ids: list[int], db_path: str, user_id: int, cfg: dict
                     print(f"    Rendered chart → {p}")
             except Exception as e:
                 print(f"    Chart render failed for {activity_id}: {e}")
-            # Write sentinel so we don't retry on every cycle for activities with no data
-            open(os.path.join(out_dir, f"{activity_id}.charts_done"), "w").close()
+            mark_rendered(db_path, activity_id, user_id, charts=True)
 
 
 # ---------------------------------------------------------------------------

@@ -21,10 +21,13 @@ from flask_login import (
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from database import (
-    _conn, create_user, get_activity, get_admin_stats, get_setting, get_site_setting,
-    get_user_by_id, get_user_by_username, get_user_stats, get_zones, init_db,
-    list_activities, list_settings, load_user_config, set_scheduled, set_setting,
+    _conn, clear_rendered, create_user, get_activity, get_admin_stats, get_setting,
+    get_site_setting, get_user_by_id, get_user_by_username, get_user_stats, get_zones,
+    init_db, list_activities, list_settings, load_user_config, mark_rendered,
+    set_scheduled, set_setting,
 )
+from charts import generate_charts
+from map_renderer import render_activity_map
 from strava import StravaClient, exchange_code, strava_auth_url
 
 # ---------------------------------------------------------------------------
@@ -213,6 +216,50 @@ def activity(activity_id):
     mastodon_configured = bool(get_setting(DB_PATH, uid, "mastodon", "token"))
     return render_template("activity.html", activity=act, map_url=map_url,
                            chart_urls=chart_urls, mastodon_configured=mastodon_configured)
+
+
+@app.route("/activity/<int:activity_id>/rerender", methods=["POST"])
+@login_required
+def rerender_activity(activity_id):
+    uid = int(current_user.id)
+    row = get_activity(DB_PATH, activity_id, user_id=uid)
+    if not row:
+        flash("Activity not found.", "error")
+        return redirect(url_for("index"))
+
+    cfg     = load_user_config(DB_PATH, uid, _base_cfg)
+    out_dir = _base_cfg["map"].get("output_dir", "output")
+    os.makedirs(out_dir, exist_ok=True)
+
+    # Map
+    points = _get_points_from_row(row)
+    if points:
+        try:
+            img = render_activity_map(points, dict(row), cfg)
+            if img:
+                img.save(os.path.join(out_dir, f"{activity_id}.png"))
+                mark_rendered(DB_PATH, activity_id, uid, map=True)
+        except Exception as e:
+            flash(f"Map render failed: {e}", "error")
+    else:
+        mark_rendered(DB_PATH, activity_id, uid, map=True)
+
+    # Charts
+    from database import get_stream
+    stream = get_stream(row)
+    try:
+        generate_charts(activity_id, stream, cfg, out_dir, db_path=DB_PATH)
+        mark_rendered(DB_PATH, activity_id, uid, charts=True)
+    except Exception as e:
+        flash(f"Chart render failed: {e}", "error")
+
+    flash("Re-rendered successfully.", "success")
+    return redirect(url_for("activity", activity_id=activity_id))
+
+
+def _get_points_from_row(row):
+    from database import get_points
+    return get_points(row)
 
 
 @app.route("/activity/<int:activity_id>/schedule", methods=["POST"])

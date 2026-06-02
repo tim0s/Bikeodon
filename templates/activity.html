@@ -93,6 +93,10 @@
   {% endif %}
 {% endif %}
 
+<form method="post" action="{{ url_for('rerender_activity', activity_id=activity.id) }}" style="margin-bottom:1rem">
+  <button type="submit" class="secondary outline">Re-render map &amp; charts</button>
+</form>
+
 <p><a href="{{ url_for('index') }}">&larr; Back to activities</a></p>
 
 {% endblock %}
