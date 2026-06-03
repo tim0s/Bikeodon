@@ -7,6 +7,7 @@ Target: Oracle Cloud free tier (Ampere A1, Oracle Linux), nginx reverse proxy, g
 ```bash
 sudo dnf update -y
 sudo dnf install -y git python3 python3-pip nginx
+sudo dnf install -y liberation-fonts dejavu-fonts-all google-noto-emoji-color-fonts
 ```
 
 Open firewall ports (if not already done):

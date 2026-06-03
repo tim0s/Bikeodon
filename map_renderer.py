@@ -261,15 +261,27 @@ def _crop_to_output(img: Image.Image, origin: tuple[int, int],
 # ---------------------------------------------------------------------------
 
 _FONT_CANDIDATES = [
+    # macOS
     "/System/Library/Fonts/Helvetica.ttc",
     "/System/Library/Fonts/Avenir Next.ttc",
     "/Library/Fonts/Arial.ttf",
+    # Oracle Linux / RHEL / Fedora
+    "/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
+    "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/google-noto/NotoSans-Regular.ttf",
+    # Ubuntu / Debian
     "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+    # Windows
     "C:/Windows/Fonts/arial.ttf",
 ]
 _EMOJI_FONT_CANDIDATES = [
+    # macOS
     "/System/Library/Fonts/Apple Color Emoji.ttc",
+    # Oracle Linux / RHEL / Fedora
+    "/usr/share/fonts/google-noto-emoji/NotoColorEmoji.ttf",
+    # Ubuntu / Debian
     "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
 ]
 _ACTIVITY_ICONS = {
@@ -293,10 +305,35 @@ _ACTIVITY_ICONS = {
 }
 
 
+def _fc_find(pattern: str) -> str | None:
+    """Use fontconfig (fc-list) to locate a font by name pattern."""
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["fc-list", f":family={pattern}", "--format=%{file}\n"],
+            capture_output=True, text=True, timeout=3,
+        )
+        for line in result.stdout.splitlines():
+            line = line.strip()
+            if line and os.path.exists(line):
+                return line
+    except Exception:
+        pass
+    return None
+
+
 def _load_font(size: int) -> "ImageFont.FreeTypeFont":
     from PIL import ImageFont
     for path in _FONT_CANDIDATES:
         if os.path.exists(path):
+            try:
+                return ImageFont.truetype(path, size)
+            except Exception:
+                continue
+    # Last resort: ask fontconfig for any sans-serif font
+    for family in ("Liberation Sans", "DejaVu Sans", "Noto Sans", "Arial"):
+        path = _fc_find(family)
+        if path:
             try:
                 return ImageFont.truetype(path, size)
             except Exception:
