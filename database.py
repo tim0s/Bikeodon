@@ -794,3 +794,70 @@ def get_stream(row) -> list[dict]:
         return []
     keys = ["lat", "lon", "ele", "hr", "power", "elapsed_secs"]
     return [dict(zip(keys, p)) for p in json.loads(raw)]
+
+
+def find_overlapping_activity(db_path, user_id: int, start_date_iso: str | None,
+                               elapsed_secs: int | None,
+                               start_window_secs: int = 1800,
+                               overlap_threshold: float = 0.8):
+    """
+    Find an existing activity whose time window significantly overlaps with the given one.
+    Candidates must start within ±start_window_secs and have overlap/min_duration >= threshold.
+    Returns the best-matching activity row, or None.
+    """
+    if not start_date_iso or not elapsed_secs:
+        return None
+
+    try:
+        from datetime import timedelta
+        start    = datetime.fromisoformat(start_date_iso.replace("Z", "+00:00"))
+        start_ts = start.timestamp()
+        end_ts   = start_ts + elapsed_secs
+
+        window_lo = (start - timedelta(seconds=start_window_secs)).isoformat()
+        window_hi = (start + timedelta(seconds=start_window_secs)).isoformat()
+    except (ValueError, AttributeError):
+        return None
+
+    conn = _conn(db_path)
+    rows = conn.execute(
+        "SELECT * FROM activities WHERE user_id=? AND start_date >= ? AND start_date <= ?",
+        (user_id, window_lo, window_hi),
+    ).fetchall()
+    conn.close()
+
+    best       = None
+    best_ratio = 0.0
+
+    for row in rows:
+        try:
+            row_start_ts = datetime.fromisoformat(
+                row["start_date"].replace("Z", "+00:00")
+            ).timestamp()
+        except (ValueError, AttributeError):
+            continue
+
+        row_elapsed = row["elapsed_time"] or row["moving_time"] or 0
+        row_end_ts  = row_start_ts + row_elapsed
+
+        overlap  = max(0.0, min(end_ts, row_end_ts) - max(start_ts, row_start_ts))
+        min_dur  = min(elapsed_secs, max(row_elapsed, 1))
+        ratio    = overlap / min_dur if min_dur > 0 else 0.0
+
+        if ratio >= overlap_threshold and ratio > best_ratio:
+            best_ratio = ratio
+            best       = row
+
+    return best
+
+
+def enrich_activity_stream(db_path, activity_id: int, user_id: int, points: list):
+    """Replace points_json for an existing activity and clear charts_rendered_at."""
+    conn = _conn(db_path)
+    conn.execute(
+        "UPDATE activities SET points_json=?, charts_rendered_at=NULL"
+        " WHERE id=? AND user_id=?",
+        (json.dumps(points), activity_id, user_id),
+    )
+    conn.commit()
+    conn.close()

@@ -21,7 +21,8 @@ from flask_login import (
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from database import (
-    _conn, clear_rendered, count_activities, create_user, get_activity, get_admin_stats,
+    _conn, clear_rendered, count_activities, create_user, enrich_activity_stream,
+    find_overlapping_activity, get_activity, get_admin_stats,
     get_setting, get_site_setting, get_stream, get_user_by_athlete_id, get_user_by_id,
     get_user_by_username, get_user_stats, get_zones, init_db, list_activities,
     list_settings, load_user_config, mark_rendered, set_scheduled, set_setting,
@@ -234,8 +235,11 @@ def activity(activity_id):
     }
 
     mastodon_configured = bool(get_setting(DB_PATH, uid, "mastodon", "token"))
+    has_avg_watts   = bool(row["average_watts"])
+    has_power_chart = os.path.exists(os.path.join(out_dir, f"{activity_id}_power.png"))
     return render_template("activity.html", activity=act, map_url=map_url,
-                           chart_urls=chart_urls, mastodon_configured=mastodon_configured)
+                           chart_urls=chart_urls, mastodon_configured=mastodon_configured,
+                           has_avg_watts=has_avg_watts, has_power_chart=has_power_chart)
 
 
 @app.route("/activity/<int:activity_id>/rerender", methods=["POST"])
@@ -319,6 +323,7 @@ def upload():
     os.makedirs(out_dir, exist_ok=True)
 
     imported = 0
+    enriched = 0
     skipped  = 0
     errors   = []
 
@@ -333,11 +338,46 @@ def upload():
             continue
 
         for act in activities:
-            existing = get_activity(DB_PATH, act["id"], user_id=uid)
-            if existing:
+            # Exact ID match → already imported, skip
+            if get_activity(DB_PATH, act["id"], user_id=uid):
                 skipped += 1
                 continue
 
+            # Time overlap with an existing activity → enrich its stream
+            overlap_row = find_overlapping_activity(
+                DB_PATH, uid,
+                act.get("start_date"),
+                act.get("elapsed_time") or act.get("moving_time"),
+            )
+            if overlap_row:
+                file_points = act.get("points") or []
+                enrich_activity_stream(DB_PATH, overlap_row["id"], uid, file_points)
+                enriched_row = get_activity(DB_PATH, overlap_row["id"], user_id=uid)
+                if enriched_row:
+                    stream = get_stream(enriched_row)
+                    try:
+                        generate_charts(overlap_row["id"], stream, cfg, out_dir, db_path=DB_PATH)
+                        mark_rendered(DB_PATH, overlap_row["id"], uid, charts=True)
+                    except Exception:
+                        pass
+                    # Re-render map only when file has GPS and no map exists yet
+                    file_has_gps = any(p[0] is not None for p in file_points)
+                    map_path = os.path.join(out_dir, f"{overlap_row['id']}.png")
+                    if file_has_gps and not os.path.exists(map_path):
+                        from database import get_points as _gp2
+                        pts = _gp2(enriched_row)
+                        if pts:
+                            try:
+                                img = render_activity_map(pts, dict(enriched_row), cfg)
+                                if img:
+                                    img.save(map_path)
+                                    mark_rendered(DB_PATH, overlap_row["id"], uid, map=True)
+                            except Exception:
+                                pass
+                enriched += 1
+                continue
+
+            # No match → import as a new activity
             upsert_activity(DB_PATH, act, user_id=uid, source="upload")
 
             row = get_activity(DB_PATH, act["id"], user_id=uid)
@@ -366,6 +406,8 @@ def upload():
 
     if imported:
         flash(f"Imported {imported} activit{'y' if imported == 1 else 'ies'}.", "success")
+    if enriched:
+        flash(f"Enriched {enriched} existing activit{'y' if enriched == 1 else 'ies'} with stream data from file.", "success")
     if skipped:
         flash(f"{skipped} already in your library — skipped.", "success")
     for e in errors:

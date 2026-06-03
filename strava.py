@@ -184,16 +184,20 @@ def _build_activity(detail: dict, streams: dict) -> dict:
     watts    = streams.get("watts",     {}).get("data", [])
     time_s   = streams.get("time",      {}).get("data", [])
 
-    n = len(latlng)
+    # Use the longest available stream so indoor activities (no GPS) still get
+    # HR/power/time points recorded.
+    n = max(len(latlng), len(time_s), len(hr), len(watts))
 
     def _at(lst, i):
         return lst[i] if i < len(lst) else None
 
     points = []
     for i in range(n):
-        pair = latlng[i]
+        lat = lon = None
+        if i < len(latlng):
+            lat, lon = latlng[i][0], latlng[i][1]
         points.append([
-            pair[0], pair[1],
+            lat, lon,
             _at(altitude, i),
             _at(hr, i),
             _at(watts, i),

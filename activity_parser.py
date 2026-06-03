@@ -248,7 +248,8 @@ def _parse_tcx(content: bytes) -> list[dict]:
                 ref_time = t
             elapsed = int((t - ref_time).total_seconds()) if t and ref_time else None
 
-            if lat is not None and lon is not None:
+            # Include points even without GPS (indoor/virtual rides)
+            if t is not None:
                 points.append([lat, lon, ele, hr, power, elapsed])
 
         if not points:
@@ -262,8 +263,8 @@ def _parse_tcx(content: bytes) -> list[dict]:
             "name":       name,
             "sport_type": sport,
             "start_date": _iso(start_date) if start_date else None,
-            "start_lat":  points[0][0],
-            "start_lon":  points[0][1],
+            "start_lat":  next((p[0] for p in points if p[0] is not None), None),
+            "start_lon":  next((p[1] for p in points if p[1] is not None), None),
             "points":     points,
             "source_url": None,
             **stats,
@@ -328,7 +329,8 @@ def _parse_fit(content: bytes) -> list[dict]:
             ref_time = t
         elapsed = int((t - ref_time).total_seconds()) if t and ref_time else None
 
-        if lat is not None and lon is not None:
+        # Include points even without GPS (indoor/virtual rides)
+        if t is not None:
             points.append([lat, lon, ele,
                            float(hr) if hr else None,
                            float(power) if power else None,
@@ -361,8 +363,8 @@ def _parse_fit(content: bytes) -> list[dict]:
         "name":       name,
         "sport_type": sport,
         "start_date": _iso(start_time) if start_time else None,
-        "start_lat":  points[0][0],
-        "start_lon":  points[0][1],
+        "start_lat":  next((p[0] for p in points if p[0] is not None), None),
+        "start_lon":  next((p[1] for p in points if p[1] is not None), None),
         "points":     points,
         "source_url": None,
         **stats,
