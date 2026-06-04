@@ -215,6 +215,11 @@
         <label><input type="checkbox" name="hr_enabled" {% if cfg.charts.heart_rate.enabled %}checked{% endif %}> Enabled</label>
         <label>Max HR (bpm) — leave blank to infer from data
           <input type="number" name="max_hr" value="{{ cfg.charts.heart_rate.max_hr or '' }}" min="100" max="250" placeholder="auto">
+          {% if not cfg.charts.heart_rate.max_hr and inferred_max_hr %}
+          <small>Auto-detected from your data: <strong>{{ inferred_max_hr|int }} bpm</strong> (99th percentile)</small>
+          {% elif not cfg.charts.heart_rate.max_hr %}
+          <small>Will be inferred from your activity data on first sync.</small>
+          {% endif %}
         </label>
       </fieldset>
       <fieldset>
@@ -222,6 +227,11 @@
         <label><input type="checkbox" name="power_enabled" {% if cfg.charts.power.enabled %}checked{% endif %}> Enabled</label>
         <label>FTP (watts) — leave blank to infer from data
           <input type="number" name="ftp" value="{{ cfg.charts.power.ftp or '' }}" min="50" max="600" placeholder="auto">
+          {% if not cfg.charts.power.ftp and inferred_ftp %}
+          <small>Auto-detected from your data: <strong>{{ inferred_ftp|int }} W</strong> (best 20-min × 0.95)</small>
+          {% elif not cfg.charts.power.ftp %}
+          <small>Will be inferred from your activity data on first sync.</small>
+          {% endif %}
         </label>
       </fieldset>
     </div>

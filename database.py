@@ -987,6 +987,16 @@ def get_all_peak_powers(db_path, user_id: int, days: int | None = None) -> list:
     return result
 
 
+def reset_metrics_computed(db_path, user_id: int):
+    """Clear metrics_computed_at so the next backfill reprocesses all activities."""
+    conn = _conn(db_path)
+    conn.execute(
+        "UPDATE activities SET metrics_computed_at=NULL WHERE user_id=?", (user_id,)
+    )
+    conn.commit()
+    conn.close()
+
+
 def get_activities_without_metrics(db_path, user_id: int) -> list:
     """Return activities that have a stream but have never had metrics computed."""
     conn = _conn(db_path)

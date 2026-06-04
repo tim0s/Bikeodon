@@ -31,7 +31,8 @@ from database import (
     get_user_by_username, get_user_stats, get_zone_totals, get_zones, init_db,
     job_finish, job_start, get_recent_jobs,
     list_activities, list_settings, load_user_config, mark_posted, mark_rendered,
-    set_activity_error, set_scheduled, set_setting, update_activity_metrics, upsert_activity,
+    reset_metrics_computed, set_activity_error, set_scheduled, set_setting,
+    update_activity_metrics, upsert_activity,
 )
 from mastodon_client import MastodonClient
 
@@ -103,9 +104,18 @@ def _compute_and_store_metrics(activity_id: int, uid: int, cfg: dict, stream: li
         hr_list      = [p.get("hr")           for p in stream]
         elapsed_list = [p.get("elapsed_secs") for p in stream]
 
-        ftp     = cfg["charts"]["power"]["ftp"]
-        hr_max  = cfg["charts"]["heart_rate"]["max_hr"]
-        hr_rest = float(get_setting(DB_PATH, uid, "training", "hr_rest") or 0) or None
+        ftp    = cfg["charts"]["power"]["ftp"]
+        hr_max = cfg["charts"]["heart_rate"]["max_hr"]
+
+        # Fall back to inference cache (populated once per backfill run)
+        if not ftp:
+            v = get_setting(DB_PATH, uid, "inference", "ftp")
+            ftp = float(v) if v else None
+        if not hr_max:
+            v = get_setting(DB_PATH, uid, "inference", "max_hr")
+            hr_max = float(v) if v else None
+
+        hr_rest  = float(get_setting(DB_PATH, uid, "training", "hr_rest") or 0) or None
         duration = row["moving_time"] or row["elapsed_time"]
 
         np_w     = compute_np(watts_list)
@@ -207,6 +217,7 @@ from training_load import (
     aggregate_power_curve, compute_np, compute_peak_powers, compute_pmc,
     compute_trimp, compute_tss, compute_zone_times, weekly_load,
 )
+from inference import infer_training_params
 
 # ---------------------------------------------------------------------------
 # Bootstrap
@@ -692,6 +703,20 @@ def admin_full_sync():
     return redirect(url_for("admin"))
 
 
+@app.route("/admin/recompute-metrics", methods=["POST"])
+@login_required
+@admin_required
+def admin_recompute_metrics():
+    """Clear metrics_computed_at for all activities and trigger a fresh backfill."""
+    uid = int(current_user.id)
+    reset_metrics_computed(DB_PATH, uid)
+    # Invalidate cached inference so it runs fresh
+    set_setting(DB_PATH, uid, "inference", "ftp", "")
+    set_setting(DB_PATH, uid, "inference", "max_hr", "")
+    flash("Metrics reset. Visit the You page to trigger recomputation.", "success")
+    return redirect(url_for("admin"))
+
+
 # ---------------------------------------------------------------------------
 # You / user dashboard
 # ---------------------------------------------------------------------------
@@ -717,6 +742,19 @@ def me():
             job_id = job_start(DB_PATH, "metrics_backfill",
                                f"Starting — {len(pending)} activities pending")
             print(f"[backfill] Starting metrics for {len(pending)} activities (user {uid})")
+
+            # Run inference once and cache it so each activity can use it without re-scanning all streams
+            bcfg_pre = load_user_config(DB_PATH, uid, _base_cfg)
+            if not bcfg_pre["charts"]["power"]["ftp"] or not bcfg_pre["charts"]["heart_rate"]["max_hr"]:
+                inferred = infer_training_params(DB_PATH)
+                if inferred["ftp"] and not bcfg_pre["charts"]["power"]["ftp"]:
+                    set_setting(DB_PATH, uid, "inference", "ftp", str(round(inferred["ftp"], 1)))
+                    print(f"[backfill] Inferred FTP: {inferred['ftp']:.0f} W")
+                if inferred["max_hr"] and not bcfg_pre["charts"]["heart_rate"]["max_hr"]:
+                    set_setting(DB_PATH, uid, "inference", "max_hr", str(round(inferred["max_hr"], 1)))
+                    print(f"[backfill] Inferred max HR: {inferred['max_hr']:.0f} bpm")
+
+            import time as _time
             done = 0
             for brow in pending:
                 try:
@@ -726,7 +764,6 @@ def me():
                     done += 1
                 except Exception as e:
                     print(f"[backfill] Error on activity {brow['id']}: {e}")
-                import time as _time
                 _time.sleep(0.05)   # yield CPU between activities
             job_finish(DB_PATH, job_id, "done",
                        f"Computed metrics for {done}/{len(pending)} activities")
@@ -827,6 +864,8 @@ def settings():
         for f in (get_setting(DB_PATH, uid, "stats", "fields") or "").split(",")
         if f.strip()
     ]
+    inferred_ftp    = get_setting(DB_PATH, uid, "inference", "ftp")
+    inferred_max_hr = get_setting(DB_PATH, uid, "inference", "max_hr")
     return render_template(
         "settings.html",
         cfg=cfg,
@@ -836,6 +875,8 @@ def settings():
         active_fields=active_fields,
         strava_connected=strava_connected,
         strava_configured=strava_configured,
+        inferred_ftp=float(inferred_ftp) if inferred_ftp else None,
+        inferred_max_hr=float(inferred_max_hr) if inferred_max_hr else None,
     )
 
 
