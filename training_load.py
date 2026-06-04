@@ -200,6 +200,72 @@ def weekly_load(daily_tss: dict, weeks: int = 26) -> list:
     return result
 
 
+def compute_zone_times(
+    stream:      list,
+    hr_zones:    list,
+    power_zones: list,
+    hr_max:      float | None,
+    ftp:         float | None,
+) -> tuple:
+    """
+    Compute seconds spent in each HR and power zone across a stream.
+
+    Zones are defined as a list of {name, max_pct, color} dicts where max_pct is the
+    upper boundary of each zone as a percentage of hr_max / FTP.
+
+    Returns (hr_zone_secs, power_zone_secs): each is {zone_name: seconds} or None
+    if there was no data of that type.
+    """
+    def build_bounds(zones, ref):
+        """List of (lower, upper, name) in absolute units (bpm / watts)."""
+        if not zones or not ref:
+            return []
+        bounds, prev = [], 0.0
+        for z in zones:
+            upper = z["max_pct"] / 100.0 * ref
+            bounds.append((prev, upper, z["name"]))
+            prev = upper
+        return bounds
+
+    def find_zone(value, bounds):
+        for lower, upper, name in bounds[:-1]:
+            if lower <= value < upper:
+                return name
+        return bounds[-1][2] if bounds else None  # last zone catches everything above
+
+    hr_bounds    = build_bounds(hr_zones,    hr_max)
+    power_bounds = build_bounds(power_zones, ftp)
+
+    hr_secs    = {z["name"]: 0.0 for z in hr_zones}    if hr_zones    else {}
+    power_secs = {z["name"]: 0.0 for z in power_zones} if power_zones else {}
+
+    for i in range(1, len(stream)):
+        prev_t = stream[i - 1].get("elapsed_secs")
+        curr_t = stream[i].get("elapsed_secs")
+        if prev_t is None or curr_t is None:
+            continue
+        dt = curr_t - prev_t
+        if dt <= 0 or dt > 300:   # skip gaps / large pauses
+            continue
+
+        hr = stream[i].get("hr")
+        if hr is not None and hr_bounds:
+            zone = find_zone(hr, hr_bounds)
+            if zone and zone in hr_secs:
+                hr_secs[zone] += dt
+
+        pw = stream[i].get("power")
+        if pw is not None and power_bounds:
+            zone = find_zone(pw, power_bounds)
+            if zone and zone in power_secs:
+                power_secs[zone] += dt
+
+    return (
+        hr_secs    if any(v > 0 for v in hr_secs.values())    else None,
+        power_secs if any(v > 0 for v in power_secs.values()) else None,
+    )
+
+
 def aggregate_power_curve(peak_list: list) -> dict:
     """
     Best power at each duration across a list of per-activity peak dicts.

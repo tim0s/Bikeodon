@@ -192,6 +192,8 @@ def init_db(db_path):
         ("np_watts",             "REAL"),
         ("trimp",                "REAL"),
         ("peak_power_json",      "TEXT"),
+        ("hr_zone_secs_json",    "TEXT"),
+        ("power_zone_secs_json", "TEXT"),
     ]:
         try:
             conn.execute(f"ALTER TABLE activities ADD COLUMN {col} {typedef}")
@@ -910,12 +912,17 @@ def update_activity_metrics(
     db_path, activity_id: int, user_id: int,
     tss: float | None, np_watts: float | None,
     trimp: float | None, peak_power_json: str | None,
+    hr_zone_secs_json: str | None = None,
+    power_zone_secs_json: str | None = None,
 ):
     conn = _conn(db_path)
     conn.execute(
-        "UPDATE activities SET tss=?, np_watts=?, trimp=?, peak_power_json=?"
+        "UPDATE activities"
+        " SET tss=?, np_watts=?, trimp=?, peak_power_json=?,"
+        "     hr_zone_secs_json=?, power_zone_secs_json=?"
         " WHERE id=? AND user_id=?",
-        (tss, np_watts, trimp, peak_power_json, activity_id, user_id),
+        (tss, np_watts, trimp, peak_power_json,
+         hr_zone_secs_json, power_zone_secs_json, activity_id, user_id),
     )
     conn.commit()
     conn.close()
@@ -968,12 +975,40 @@ def get_all_peak_powers(db_path, user_id: int, days: int | None = None) -> list:
 
 
 def get_activities_without_metrics(db_path, user_id: int) -> list:
-    """Return activities that have a stream but no computed metrics yet."""
+    """Return activities that have a stream but are missing any computed metric."""
     conn = _conn(db_path)
     rows = conn.execute(
         "SELECT * FROM activities"
-        " WHERE user_id=? AND tss IS NULL AND points_json IS NOT NULL AND points_json != '[]'",
+        " WHERE user_id=? AND points_json IS NOT NULL AND points_json != '[]'"
+        " AND (tss IS NULL OR hr_zone_secs_json IS NULL AND power_zone_secs_json IS NULL)",
         (user_id,),
     ).fetchall()
     conn.close()
     return rows
+
+
+def get_zone_totals(db_path, user_id: int) -> tuple:
+    """
+    Aggregate zone times across all activities.
+    Returns (hr_totals, power_totals): each is {zone_name: total_seconds}.
+    """
+    conn = _conn(db_path)
+    rows = conn.execute(
+        "SELECT hr_zone_secs_json, power_zone_secs_json FROM activities"
+        " WHERE user_id=? AND (hr_zone_secs_json IS NOT NULL OR power_zone_secs_json IS NOT NULL)",
+        (user_id,),
+    ).fetchall()
+    conn.close()
+
+    hr_totals    = {}
+    power_totals = {}
+    for r in rows:
+        for col, dest in ((r["hr_zone_secs_json"], hr_totals),
+                          (r["power_zone_secs_json"], power_totals)):
+            if col:
+                try:
+                    for k, v in json.loads(col).items():
+                        dest[k] = dest.get(k, 0.0) + v
+                except (json.JSONDecodeError, TypeError):
+                    pass
+    return hr_totals, power_totals

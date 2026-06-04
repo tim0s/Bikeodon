@@ -310,6 +310,82 @@
   </article>
 </div>
 
+<h3>Time in zones — all activities</h3>
+<div class="grid" style="align-items:start">
+  <article>
+    <header><strong>Heart rate</strong></header>
+    <div style="position:relative;height:240px">
+      <canvas id="hrZoneChart"></canvas>
+    </div>
+  </article>
+  <article>
+    <header><strong>Power</strong></header>
+    <div style="position:relative;height:240px">
+      <canvas id="powerZoneChart"></canvas>
+    </div>
+  </article>
+</div>
+<small class="muted">
+  Only activities with stream data contribute. Re-render activities to backfill if the charts look empty.
+  Settings → <a href="{{ url_for('settings') }}#charts">Charts</a> (FTP / max HR) must be configured.
+</small>
+
+<script src="{{ url_for('static', filename='chart.min.js') }}"></script>
+<script>
+(function () {
+  function buildZoneChart(canvasId, data) {
+    const total = data.reduce((s, d) => s + d.secs, 0);
+    if (total === 0) {
+      const el = document.getElementById(canvasId);
+      if (el) {
+        el.style.display = 'none';
+        el.insertAdjacentHTML('afterend', '<p class="muted" style="text-align:center;padding:2rem 0"><small>No data yet — render activities with HR/power data to populate this chart.</small></p>');
+      }
+      return;
+    }
+    const ctx = document.getElementById(canvasId).getContext('2d');
+    function fmtTime(s) {
+      const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+      return h > 0 ? `${h}h ${m.toString().padStart(2,'0')}m` : `${m}m`;
+    }
+    new Chart(ctx, {
+      type: 'doughnut',
+      data: {
+        labels: data.map(d => d.name),
+        datasets: [{
+          data: data.map(d => d.secs),
+          backgroundColor: data.map(d => d.color),
+          borderColor: '#1a1a2e',
+          borderWidth: 2,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            position: 'right',
+            labels: { color: '#ccc', boxWidth: 14, padding: 10 },
+          },
+          tooltip: {
+            callbacks: {
+              label: item => {
+                const secs = item.raw;
+                const pct  = total > 0 ? (secs / total * 100).toFixed(1) : '0.0';
+                return ` ${fmtTime(secs)}  (${pct}%)`;
+              },
+            },
+          },
+        },
+      },
+    });
+  }
+
+  buildZoneChart('hrZoneChart',    {{ hr_zone_chart_json }});
+  buildZoneChart('powerZoneChart', {{ power_zone_chart_json }});
+})();
+</script>
+
 <article>
   <header><strong>About training zones</strong></header>
   <details>

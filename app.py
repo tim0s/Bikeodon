@@ -27,9 +27,9 @@ from database import (
     find_overlapping_activity, get_activity, get_admin_stats, get_all_peak_powers,
     get_activities_without_metrics, get_daily_loads, get_error_activities,
     get_setting, get_site_setting, get_stream, get_user_by_athlete_id, get_user_by_id,
-    get_user_by_username, get_user_stats, get_zones, init_db, list_activities,
-    list_settings, load_user_config, mark_posted, mark_rendered, set_activity_error,
-    set_scheduled, set_setting, update_activity_metrics, upsert_activity,
+    get_user_by_username, get_user_stats, get_zone_totals, get_zones, init_db,
+    list_activities, list_settings, load_user_config, mark_posted, mark_rendered,
+    set_activity_error, set_scheduled, set_setting, update_activity_metrics, upsert_activity,
 )
 from mastodon_client import MastodonClient
 
@@ -92,24 +92,36 @@ def _render_and_track(activity_id: int, uid: int, cfg: dict, out_dir: str, row=N
 
 
 def _compute_and_store_metrics(activity_id: int, uid: int, cfg: dict, stream: list, row):
-    """Compute NP, TSS, TRIMP, peak powers from stream data and store them."""
+    """Compute NP, TSS, TRIMP, peak powers, and zone times from stream data and store them."""
     try:
-        watts_list   = [p.get("power")       for p in stream]
-        hr_list      = [p.get("hr")          for p in stream]
+        watts_list   = [p.get("power")        for p in stream]
+        hr_list      = [p.get("hr")           for p in stream]
         elapsed_list = [p.get("elapsed_secs") for p in stream]
 
-        ftp      = cfg["charts"]["power"]["ftp"]
-        hr_max   = cfg["charts"]["heart_rate"]["max_hr"]
-        hr_rest  = float(get_setting(DB_PATH, uid, "training", "hr_rest") or 0) or None
+        ftp     = cfg["charts"]["power"]["ftp"]
+        hr_max  = cfg["charts"]["heart_rate"]["max_hr"]
+        hr_rest = float(get_setting(DB_PATH, uid, "training", "hr_rest") or 0) or None
         duration = row["moving_time"] or row["elapsed_time"]
 
-        np_w  = compute_np(watts_list)
-        tss   = compute_tss(np_w, duration, ftp) if np_w else None
-        trimp = compute_trimp(hr_list, elapsed_list, hr_max, hr_rest) if hr_max and hr_rest else None
-        peaks = compute_peak_powers(stream)
+        np_w     = compute_np(watts_list)
+        tss      = compute_tss(np_w, duration, ftp) if np_w else None
+        trimp    = compute_trimp(hr_list, elapsed_list, hr_max, hr_rest) if hr_max and hr_rest else None
+        peaks    = compute_peak_powers(stream)
         peak_json = json.dumps(peaks) if peaks else None
 
-        update_activity_metrics(DB_PATH, activity_id, uid, tss, np_w, trimp, peak_json)
+        hr_zones    = cfg["charts"]["heart_rate"]["zones"]
+        power_zones = cfg["charts"]["power"]["zones"]
+        hr_zone_secs, power_zone_secs = compute_zone_times(
+            stream, hr_zones, power_zones, hr_max, ftp
+        )
+        hr_zone_json    = json.dumps(hr_zone_secs)    if hr_zone_secs    else None
+        power_zone_json = json.dumps(power_zone_secs) if power_zone_secs else None
+
+        update_activity_metrics(
+            DB_PATH, activity_id, uid,
+            tss, np_w, trimp, peak_json,
+            hr_zone_json, power_zone_json,
+        )
     except Exception as e:
         print(f"[metrics] Failed for {activity_id}: {e}")
 
@@ -190,7 +202,7 @@ from map_renderer import render_activity_map
 from strava import StravaClient, exchange_code, strava_auth_url
 from training_load import (
     aggregate_power_curve, compute_np, compute_peak_powers, compute_pmc,
-    compute_trimp, compute_tss, weekly_load,
+    compute_trimp, compute_tss, compute_zone_times, weekly_load,
 )
 
 # ---------------------------------------------------------------------------
@@ -727,6 +739,18 @@ def me():
     hr_max      = cfg["charts"]["heart_rate"]["max_hr"]
     hr_rest     = float(get_setting(DB_PATH, uid, "training", "hr_rest") or 0) or None
 
+    # Zone distribution totals
+    hr_totals, power_totals = get_zone_totals(DB_PATH, uid)
+
+    def _zone_chart_data(zones, totals):
+        """Build {labels, colors, secs, total} for a zone doughnut chart."""
+        data = [{"name": z["name"], "color": z["color"],
+                 "secs": totals.get(z["name"], 0.0)} for z in zones]
+        return json.dumps(data)
+
+    hr_zone_chart_json    = _zone_chart_data(hr_zones,    hr_totals)
+    power_zone_chart_json = _zone_chart_data(power_zones, power_totals)
+
     return render_template(
         "me.html",
         username=current_user.username,
@@ -741,6 +765,8 @@ def me():
         body_weight=body_weight,
         hr_zones=hr_zones,
         power_zones=power_zones,
+        hr_zone_chart_json=hr_zone_chart_json,
+        power_zone_chart_json=power_zone_chart_json,
         curve_all=json.dumps(curve_all),
         curve_recent=json.dumps(curve_recent),
         wpk_all=json.dumps(wpk_all),
