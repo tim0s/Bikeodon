@@ -85,17 +85,28 @@
 </p>
 {% endif %}
 
+{% if activity.render_error %}
+<p class="flash flash-error" style="margin-bottom:1rem">
+  Render failed: {{ activity.render_error }}
+</p>
+{% endif %}
+
 {% if not activity.post_url %}
   {% if mastodon_configured %}
-  <form method="post" action="{{ url_for('schedule_activity', activity_id=activity.id) }}" style="margin-bottom:1rem">
-    <button type="submit" class="{% if activity.scheduled %}btn-scheduled{% else %}btn-schedule{% endif %}">
-      {% if activity.scheduled %}
-        ✓ Scheduled for Mastodon — click to cancel
-      {% else %}
-        Post to Mastodon
-      {% endif %}
-    </button>
-  </form>
+    {% if activity.scheduled %}
+    <form method="post" action="{{ url_for('schedule_activity', activity_id=activity.id) }}" style="margin-bottom:1rem">
+      <button type="submit" class="btn-scheduled">Posting to Mastodon… — click to cancel</button>
+    </form>
+    {% elif activity.post_error %}
+    <p class="flash flash-error" style="margin-bottom:.5rem">Post failed: {{ activity.post_error }}</p>
+    <form method="post" action="{{ url_for('schedule_activity', activity_id=activity.id) }}" style="margin-bottom:1rem">
+      <button type="submit" class="btn-schedule">Retry post to Mastodon</button>
+    </form>
+    {% else %}
+    <form method="post" action="{{ url_for('schedule_activity', activity_id=activity.id) }}" style="margin-bottom:1rem">
+      <button type="submit" class="btn-schedule">Post to Mastodon</button>
+    </form>
+    {% endif %}
   {% else %}
   <p><a href="{{ url_for('settings') }}#mastodon" class="btn-schedule" style="display:inline-block;text-decoration:none;margin-bottom:1rem">Configure Mastodon in Settings to post this activity</a></p>
   {% endif %}

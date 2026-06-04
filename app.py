@@ -22,12 +22,13 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 from database import (
     _conn, clear_rendered, count_activities, create_user, enrich_activity_stream,
-    find_overlapping_activity, get_activity, get_admin_stats,
+    find_overlapping_activity, get_activity, get_admin_stats, get_error_activities,
     get_setting, get_site_setting, get_stream, get_user_by_athlete_id, get_user_by_id,
     get_user_by_username, get_user_stats, get_zones, init_db, list_activities,
-    list_settings, load_user_config, mark_rendered, set_scheduled, set_setting,
-    upsert_activity,
+    list_settings, load_user_config, mark_posted, mark_rendered, set_activity_error,
+    set_scheduled, set_setting, upsert_activity,
 )
+from mastodon_client import MastodonClient
 
 SYNC_COOLDOWN_SECS = 15 * 60
 
@@ -44,6 +45,115 @@ def _sync_cooldown_remaining(user_id: int) -> int:
         return max(0, int(SYNC_COOLDOWN_SECS - elapsed))
     except (ValueError, AttributeError):
         return 0
+
+
+# ---------------------------------------------------------------------------
+# Shared rendering helper (used by webhook, manual sync, upload, rerender)
+# ---------------------------------------------------------------------------
+
+def _render_and_track(activity_id: int, uid: int, cfg: dict, out_dir: str, row=None):
+    """Render map + charts for an activity, storing any errors in the DB."""
+    if row is None:
+        row = get_activity(DB_PATH, activity_id, user_id=uid)
+    if not row:
+        return
+    os.makedirs(out_dir, exist_ok=True)
+    errors = []
+
+    from database import get_points as _gp
+    pts = _gp(row)
+    if pts:
+        try:
+            img = render_activity_map(pts, dict(row), cfg)
+            if img:
+                img.save(os.path.join(out_dir, f"{activity_id}.png"))
+            mark_rendered(DB_PATH, activity_id, uid, map=True)
+        except Exception as e:
+            errors.append(f"map: {e}")
+            print(f"[render] map failed for {activity_id}: {e}")
+    else:
+        mark_rendered(DB_PATH, activity_id, uid, map=True)
+
+    stream = get_stream(row)
+    try:
+        generate_charts(activity_id, stream, cfg, out_dir, db_path=DB_PATH)
+        mark_rendered(DB_PATH, activity_id, uid, charts=True)
+    except Exception as e:
+        errors.append(f"charts: {e}")
+        print(f"[render] charts failed for {activity_id}: {e}")
+
+    set_activity_error(DB_PATH, activity_id, uid, "render",
+                       "; ".join(errors) if errors else None)
+
+
+# ---------------------------------------------------------------------------
+# Mastodon posting (runs in background thread)
+# ---------------------------------------------------------------------------
+
+def _build_post_text(activity: dict, template: str) -> str:
+    def fmt_time(secs):
+        if not secs:
+            return "?"
+        h, m = divmod(int(secs) // 60, 60)
+        return f"{h}h {m:02d}m" if h else f"{m}m"
+    return template.format(
+        name          = activity.get("name", "Activity"),
+        distance_km   = (activity.get("distance") or 0) / 1000,
+        elevation_m   = activity.get("total_elevation_gain") or 0,
+        moving_time   = fmt_time(activity.get("moving_time")),
+        average_speed = (activity.get("average_speed") or 0) * 3.6,
+        date          = (activity.get("start_date") or "")[:10],
+        sport_type    = activity.get("sport_type") or "",
+    )
+
+
+def _do_post_activity(activity_id: int, uid: int):
+    """Post an activity to Mastodon. Meant to run in a background thread."""
+    row = get_activity(DB_PATH, activity_id, user_id=uid)
+    if not row:
+        return
+
+    cfg     = load_user_config(DB_PATH, uid, _base_cfg)
+    out_dir = _base_cfg["map"].get("output_dir", "output")
+    os.makedirs(out_dir, exist_ok=True)
+    img_path = os.path.join(out_dir, f"{activity_id}.png")
+
+    # Ensure map exists
+    if not os.path.exists(img_path):
+        _render_and_track(activity_id, uid, cfg, out_dir, row=row)
+        row = get_activity(DB_PATH, activity_id, user_id=uid)
+        if not row or row["render_error"]:
+            msg = (row["render_error"] if row else "render failed")
+            set_activity_error(DB_PATH, activity_id, uid, "post", f"render required first: {msg}")
+            set_scheduled(DB_PATH, activity_id, uid, False)
+            return
+
+    try:
+        text        = _build_post_text(dict(row), cfg["mastodon"].get("post_template", "{name}\n#cycling"))
+        stream      = get_stream(row)
+        chart_paths = generate_charts(activity_id, stream, cfg, out_dir, db_path=DB_PATH)
+        images      = ([img_path] if os.path.exists(img_path) else []) + chart_paths
+        images      = images[:4]
+
+        client    = MastodonClient.from_cfg(cfg)
+        media_ids = [client.upload_image(p) for p in images]
+        resp = client._session.post(
+            f"{client._base}/api/v1/statuses",
+            json={
+                "status":     text,
+                "media_ids":  media_ids,
+                "visibility": cfg["mastodon"].get("visibility", "public"),
+            },
+        )
+        resp.raise_for_status()
+        post_url = resp.json().get("url", "")
+        mark_posted(DB_PATH, activity_id, post_url, user_id=uid)
+        set_activity_error(DB_PATH, activity_id, uid, "post", None)
+        print(f"[post] Posted activity {activity_id} → {post_url}")
+    except Exception as e:
+        set_activity_error(DB_PATH, activity_id, uid, "post", str(e))
+        set_scheduled(DB_PATH, activity_id, uid, False)
+        print(f"[post] Failed to post activity {activity_id}: {e}")
 import threading
 
 from activity_parser import parse_file
@@ -264,27 +374,7 @@ def manual_sync():
                 print(f"[manual-sync] Failed {activity_id}: {e}")
 
         for activity_id in new_ids:
-            row = get_activity(DB_PATH, activity_id, user_id=uid)
-            if not row:
-                continue
-            from database import get_points as _gp
-            pts = _gp(row)
-            if pts:
-                try:
-                    img = render_activity_map(pts, dict(row), cfg)
-                    if img:
-                        img.save(os.path.join(out_dir, f"{activity_id}.png"))
-                        mark_rendered(DB_PATH, activity_id, uid, map=True)
-                except Exception:
-                    pass
-            else:
-                mark_rendered(DB_PATH, activity_id, uid, map=True)
-            stream = get_stream(row)
-            try:
-                generate_charts(activity_id, stream, cfg, out_dir, db_path=DB_PATH)
-                mark_rendered(DB_PATH, activity_id, uid, charts=True)
-            except Exception:
-                pass
+            _render_and_track(activity_id, uid, cfg, out_dir)
 
         print(f"[manual-sync] Done — {len(new_ids)} new activities for user {uid}")
 
@@ -337,9 +427,11 @@ def activity(activity_id):
         "avg_speed":  f"{(row['max_speed'] or 0) * 3.6:.1f} km/h" if row["max_speed"] else None,
         "avg_hr":     f"{row['average_heartrate']:.0f}" if row["average_heartrate"] else None,
         "avg_watts":  f"{row['average_watts']:.0f}" if row["average_watts"] else None,
-        "strava_url": row["strava_url"] or "",
-        "post_url":   row["mastodon_post_url"] or "",
-        "scheduled":  bool(row["scheduled_for_post"]),
+        "strava_url":    row["strava_url"] or "",
+        "post_url":      row["mastodon_post_url"] or "",
+        "scheduled":     bool(row["scheduled_for_post"]),
+        "render_error":  row["render_error"] or "",
+        "post_error":    row["post_error"] or "",
     }
 
     mastodon_configured = bool(get_setting(DB_PATH, uid, "mastodon", "token"))
@@ -361,37 +453,15 @@ def rerender_activity(activity_id):
 
     cfg     = load_user_config(DB_PATH, uid, _base_cfg)
     out_dir = _base_cfg["map"].get("output_dir", "output")
-    os.makedirs(out_dir, exist_ok=True)
+    clear_rendered(DB_PATH, activity_id, uid)
+    _render_and_track(activity_id, uid, cfg, out_dir, row=row)
 
-    # Map
-    points = _get_points_from_row(row)
-    if points:
-        try:
-            img = render_activity_map(points, dict(row), cfg)
-            if img:
-                img.save(os.path.join(out_dir, f"{activity_id}.png"))
-                mark_rendered(DB_PATH, activity_id, uid, map=True)
-        except Exception as e:
-            flash(f"Map render failed: {e}", "error")
+    row = get_activity(DB_PATH, activity_id, user_id=uid)
+    if row and row["render_error"]:
+        flash(f"Render failed: {row['render_error']}", "error")
     else:
-        mark_rendered(DB_PATH, activity_id, uid, map=True)
-
-    # Charts
-    from database import get_stream
-    stream = get_stream(row)
-    try:
-        generate_charts(activity_id, stream, cfg, out_dir, db_path=DB_PATH)
-        mark_rendered(DB_PATH, activity_id, uid, charts=True)
-    except Exception as e:
-        flash(f"Chart render failed: {e}", "error")
-
-    flash("Re-rendered successfully.", "success")
+        flash("Re-rendered successfully.", "success")
     return redirect(url_for("activity", activity_id=activity_id))
-
-
-def _get_points_from_row(row):
-    from database import get_points
-    return get_points(row)
 
 
 @app.route("/activity/<int:activity_id>/schedule", methods=["POST"])
@@ -402,8 +472,20 @@ def schedule_activity(activity_id):
     if not row:
         flash("Activity not found.", "error")
         return redirect(url_for("index"))
-    new_state = not bool(row["scheduled_for_post"])
-    set_scheduled(DB_PATH, activity_id, uid, new_state)
+
+    if row["posted_at"]:
+        return redirect(request.referrer or url_for("activity", activity_id=activity_id))
+
+    if row["scheduled_for_post"]:
+        # Cancel an in-progress post
+        set_scheduled(DB_PATH, activity_id, uid, False)
+    else:
+        # Post now (or retry after failure)
+        if row["post_error"]:
+            set_activity_error(DB_PATH, activity_id, uid, "post", None)
+        set_scheduled(DB_PATH, activity_id, uid, True)
+        threading.Thread(target=_do_post_activity, args=(activity_id, uid), daemon=True).start()
+
     return redirect(request.referrer or url_for("activity", activity_id=activity_id))
 
 
@@ -462,53 +544,22 @@ def upload():
                 enrich_activity_stream(DB_PATH, overlap_row["id"], uid, file_points)
                 enriched_row = get_activity(DB_PATH, overlap_row["id"], user_id=uid)
                 if enriched_row:
-                    stream = get_stream(enriched_row)
-                    try:
-                        generate_charts(overlap_row["id"], stream, cfg, out_dir, db_path=DB_PATH)
-                        mark_rendered(DB_PATH, overlap_row["id"], uid, charts=True)
-                    except Exception:
-                        pass
-                    # Re-render map only when file has GPS and no map exists yet
                     file_has_gps = any(p[0] is not None for p in file_points)
                     map_path = os.path.join(out_dir, f"{overlap_row['id']}.png")
                     if file_has_gps and not os.path.exists(map_path):
-                        from database import get_points as _gp2
-                        pts = _gp2(enriched_row)
-                        if pts:
-                            try:
-                                img = render_activity_map(pts, dict(enriched_row), cfg)
-                                if img:
-                                    img.save(map_path)
-                                    mark_rendered(DB_PATH, overlap_row["id"], uid, map=True)
-                            except Exception:
-                                pass
+                        # Full re-render when file adds GPS we didn't have
+                        clear_rendered(DB_PATH, overlap_row["id"], uid)
+                        _render_and_track(overlap_row["id"], uid, cfg, out_dir, row=enriched_row)
+                    else:
+                        # Charts only — map already rendered or no GPS in file
+                        clear_rendered(DB_PATH, overlap_row["id"], uid, map=False, charts=True)
+                        _render_and_track(overlap_row["id"], uid, cfg, out_dir, row=enriched_row)
                 enriched += 1
                 continue
 
             # No match → import as a new activity
             upsert_activity(DB_PATH, act, user_id=uid, source="upload")
-
-            row = get_activity(DB_PATH, act["id"], user_id=uid)
-            if row:
-                from database import get_points as _gp
-                pts = _gp(row)
-                if pts:
-                    try:
-                        img = render_activity_map(pts, dict(row), cfg)
-                        if img:
-                            img.save(os.path.join(out_dir, f"{act['id']}.png"))
-                            mark_rendered(DB_PATH, act["id"], uid, map=True)
-                    except Exception:
-                        pass
-                else:
-                    mark_rendered(DB_PATH, act["id"], uid, map=True)
-
-                stream = get_stream(row)
-                try:
-                    generate_charts(act["id"], stream, cfg, out_dir, db_path=DB_PATH)
-                    mark_rendered(DB_PATH, act["id"], uid, charts=True)
-                except Exception:
-                    pass
+            _render_and_track(act["id"], uid, cfg, out_dir)
 
             imported += 1
 
@@ -532,9 +583,9 @@ def upload():
 @login_required
 @admin_required
 def admin():
-    stats = get_admin_stats(DB_PATH)
-    interval = _base_cfg.get("daemon", {}).get("interval_minutes", 15)
-    return render_template("admin.html", stats=stats, interval_minutes=interval)
+    stats  = get_admin_stats(DB_PATH)
+    errors = get_error_activities(DB_PATH)
+    return render_template("admin.html", stats=stats, errors=errors)
 
 
 @app.route("/admin/full-sync", methods=["POST"])
@@ -583,29 +634,8 @@ def admin_full_sync():
 
     def _render_new(new_ids, uid, cfg):
         out_dir = _base_cfg["map"].get("output_dir", "output")
-        os.makedirs(out_dir, exist_ok=True)
         for activity_id in new_ids:
-            row = get_activity(DB_PATH, activity_id, user_id=uid)
-            if not row:
-                continue
-            from database import get_points as _gp
-            pts = _gp(row)
-            if pts:
-                try:
-                    img = render_activity_map(pts, dict(row), cfg)
-                    if img:
-                        img.save(os.path.join(out_dir, f"{activity_id}.png"))
-                        mark_rendered(DB_PATH, activity_id, uid, map=True)
-                except Exception:
-                    pass
-            else:
-                mark_rendered(DB_PATH, activity_id, uid, map=True)
-            stream = get_stream(row)
-            try:
-                generate_charts(activity_id, stream, cfg, out_dir, db_path=DB_PATH)
-                mark_rendered(DB_PATH, activity_id, uid, charts=True)
-            except Exception:
-                pass
+            _render_and_track(activity_id, uid, cfg, out_dir)
 
     threading.Thread(target=_run, daemon=True).start()
     flash("Full sync started in the background — check logs for progress.", "success")
@@ -888,31 +918,7 @@ def _handle_webhook_event(event: dict):
 
         cfg     = load_user_config(DB_PATH, uid, _base_cfg)
         out_dir = _base_cfg["map"].get("output_dir", "output")
-        os.makedirs(out_dir, exist_ok=True)
-
-        from database import get_points as _get_points
-        row = get_activity(DB_PATH, obj_id, user_id=uid)
-        if not row:
-            return
-
-        points = _get_points(row)
-        if points:
-            try:
-                img = render_activity_map(points, dict(row), cfg)
-                if img:
-                    img.save(os.path.join(out_dir, f"{obj_id}.png"))
-                    mark_rendered(DB_PATH, obj_id, uid, map=True)
-            except Exception:
-                pass
-        else:
-            mark_rendered(DB_PATH, obj_id, uid, map=True)
-
-        stream = get_stream(row)
-        try:
-            generate_charts(obj_id, stream, cfg, out_dir, db_path=DB_PATH)
-            mark_rendered(DB_PATH, obj_id, uid, charts=True)
-        except Exception:
-            pass
+        _render_and_track(obj_id, uid, cfg, out_dir)
 
 
 @app.route("/strava/disconnect")

@@ -184,6 +184,8 @@ def init_db(db_path):
         ("map_rendered_at",      "TEXT"),
         ("charts_rendered_at",   "TEXT"),
         ("source",               "TEXT NOT NULL DEFAULT 'strava'"),
+        ("render_error",         "TEXT"),
+        ("post_error",           "TEXT"),
     ]:
         try:
             conn.execute(f"ALTER TABLE activities ADD COLUMN {col} {typedef}")
@@ -556,11 +558,42 @@ def upsert_activity(db_path, data: dict, user_id: int, source: str = "strava"):
 def mark_posted(db_path, activity_id: int, mastodon_post_url: str, user_id: int):
     conn = _conn(db_path)
     conn.execute(
-        "UPDATE activities SET posted_at=?, mastodon_post_url=? WHERE id=? AND user_id=?",
+        "UPDATE activities SET posted_at=?, mastodon_post_url=?, scheduled_for_post=0, post_error=NULL"
+        " WHERE id=? AND user_id=?",
         (datetime.now(timezone.utc).isoformat(), mastodon_post_url, activity_id, user_id),
     )
     conn.commit()
     conn.close()
+
+
+def set_activity_error(db_path, activity_id: int, user_id: int, kind: str, error: str | None):
+    """Set or clear render_error / post_error on an activity."""
+    col = "render_error" if kind == "render" else "post_error"
+    conn = _conn(db_path)
+    conn.execute(f"UPDATE activities SET {col}=? WHERE id=? AND user_id=?",
+                 (error, activity_id, user_id))
+    conn.commit()
+    conn.close()
+
+
+def get_error_activities(db_path) -> dict:
+    """Return activities with render or post errors, for the admin dashboard."""
+    conn = _conn(db_path)
+    render_errors = conn.execute(
+        "SELECT a.id, a.name, a.user_id, u.username, a.render_error, a.start_date"
+        " FROM activities a JOIN users u ON u.id = a.user_id"
+        " WHERE a.render_error IS NOT NULL ORDER BY a.start_date DESC LIMIT 50"
+    ).fetchall()
+    post_errors = conn.execute(
+        "SELECT a.id, a.name, a.user_id, u.username, a.post_error, a.start_date"
+        " FROM activities a JOIN users u ON u.id = a.user_id"
+        " WHERE a.post_error IS NOT NULL ORDER BY a.start_date DESC LIMIT 50"
+    ).fetchall()
+    conn.close()
+    return {
+        "render_errors": [dict(r) for r in render_errors],
+        "post_errors":   [dict(r) for r in post_errors],
+    }
 
 
 _SORT_COLS = {

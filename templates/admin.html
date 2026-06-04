@@ -6,7 +6,7 @@
 
 <form method="post" action="{{ url_for('admin_full_sync') }}" style="margin-bottom:1.5rem">
   <button type="submit" class="btn-schedule">Full sync — fetch all Strava history</button>
-  <small style="display:block;margin-top:.4rem;color:#888">Runs in the background. Only syncs your own account. Watch logs for progress.</small>
+  <small style="display:block;margin-top:.4rem;color:#888">Runs in the background for your account. Watch logs for progress.</small>
 </form>
 
 <div class="activity-stats" style="margin-bottom:2rem">
@@ -20,42 +20,54 @@
   </div>
 </div>
 
-<article>
-  <header><strong>Daemon cycles</strong> <small style="font-weight:normal;color:#888">(last 20 — warning if &gt; {{ interval_minutes }} min)</small></header>
-  {% if stats.recent_runs %}
+<article style="margin-bottom:2rem">
+  <header><strong>Render errors</strong> <small style="font-weight:normal;color:#888">({{ errors.render_errors|length }} activities)</small></header>
+  {% if errors.render_errors %}
   <table>
     <thead>
-      <tr>
-        <th>Started</th>
-        <th>Duration</th>
-        <th>Posted</th>
-        <th>Status</th>
-      </tr>
+      <tr><th>Date</th><th>User</th><th>Activity</th><th>Error</th><th></th></tr>
     </thead>
     <tbody>
-      {% for run in stats.recent_runs %}
-      {% set warn = run.duration_secs > interval_minutes * 60 %}
-      <tr {% if warn %}style="background:#fff8e1"{% endif %}>
-        <td><small>{{ run.started_at[:16].replace("T", " ") }} UTC</small></td>
-        <td {% if warn %}style="color:#b45309;font-weight:700"{% endif %}>
-          {% set m = (run.duration_secs // 60)|int %}
-          {% set s = (run.duration_secs % 60)|int %}
-          {% if m %}{{ m }}m {% endif %}{{ s }}s
-        </td>
-        <td>{{ run.activities_synced }}</td>
+      {% for e in errors.render_errors %}
+      <tr>
+        <td><small>{{ e.start_date[:10] if e.start_date else '—' }}</small></td>
+        <td><small>{{ e.username }}</small></td>
+        <td><a href="{{ url_for('activity', activity_id=e.id) }}">{{ e.name or e.id }}</a></td>
+        <td><small style="color:#c0392b">{{ e.render_error }}</small></td>
         <td>
-          {% if run.error %}
-            <span style="color:#c0392b">&#x26A0; {{ run.error }}</span>
-          {% else %}
-            <span style="color:#27ae60">&#x2713;</span>
-          {% endif %}
+          <form method="post" action="{{ url_for('rerender_activity', activity_id=e.id) }}" style="margin:0">
+            <button type="submit" class="secondary outline" style="padding:.2rem .6rem;font-size:.8rem">Re-render</button>
+          </form>
         </td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
   {% else %}
-  <p class="muted"><small>No daemon cycles recorded yet.</small></p>
+  <p class="muted"><small>No render errors.</small></p>
+  {% endif %}
+</article>
+
+<article>
+  <header><strong>Post errors</strong> <small style="font-weight:normal;color:#888">({{ errors.post_errors|length }} activities)</small></header>
+  {% if errors.post_errors %}
+  <table>
+    <thead>
+      <tr><th>Date</th><th>User</th><th>Activity</th><th>Error</th></tr>
+    </thead>
+    <tbody>
+      {% for e in errors.post_errors %}
+      <tr>
+        <td><small>{{ e.start_date[:10] if e.start_date else '—' }}</small></td>
+        <td><small>{{ e.username }}</small></td>
+        <td><a href="{{ url_for('activity', activity_id=e.id) }}">{{ e.name or e.id }}</a></td>
+        <td><small style="color:#c0392b">{{ e.post_error }}</small></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted"><small>No post errors.</small></p>
   {% endif %}
 </article>
 

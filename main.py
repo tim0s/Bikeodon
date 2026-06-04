@@ -381,60 +381,12 @@ def _do_post(row, cfg, db_path: str, out_dir: str, rerender: bool = False, user_
 # ---------------------------------------------------------------------------
 
 def cmd_daemon(args, cfg):
-    import yaml as _yaml
-    db_path  = cfg["database"]["path"]
-    interval = cfg.get("daemon", {}).get("interval_minutes", 15) * 60
-
-    with open(args.config) as f:
-        base_cfg = _yaml.safe_load(f)
-
-    print(f"Daemon started — rendering and auto-posting every {interval // 60} min. Ctrl-C to stop.")
-    print("  (Strava sync is now triggered manually via the web UI or by webhooks.)")
-
+    print("The bikeodon-daemon service is no longer needed.")
+    print("Strava sync, rendering, and Mastodon posting are all handled by the web process.")
+    print("You can disable the bikeodon-daemon systemd service.")
+    print("Sleeping to avoid a systemd restart loop — stop this service instead.")
     while True:
-        from datetime import datetime, timezone as _tz
-        cycle_start  = time.monotonic()
-        started_at   = datetime.now(_tz.utc).isoformat()
-        total_posted = 0
-        cycle_error  = None
-
-        try:
-            print(f"\n[{_now()}] Processing all users…")
-            users = get_all_users(db_path)
-
-            if not users:
-                print("  No connected users.")
-            else:
-                for user in users:
-                    user_id  = user["id"]
-                    username = user["username"] or f"user:{user_id}"
-                    user_cfg = load_user_config(db_path, user_id, base_cfg)
-
-                    _render_missing(db_path, user_id, user_cfg)
-
-                    out_dir  = base_cfg["map"].get("output_dir", "output")
-                    unposted = get_unposted(db_path, user_id=user_id)
-
-                    if unposted:
-                        print(f"  [{username}] {len(unposted)} unposted activit{'y' if len(unposted) == 1 else 'ies'}")
-                    for row in unposted:
-                        print(f"  [{username}] Posting [{row['id']}] {row['name']}…")
-                        try:
-                            url = _do_post(row, user_cfg, db_path, out_dir, user_id=user_id)
-                            if url:
-                                print(f"    → {url}")
-                                total_posted += 1
-                        except Exception as e:
-                            print(f"    Failed: {e}")
-        except Exception as e:
-            cycle_error = str(e)
-            print(f"  Error: {e}")
-
-        duration    = time.monotonic() - cycle_start
-        finished_at = datetime.now(_tz.utc).isoformat()
-        log_daemon_run(db_path, started_at, finished_at, duration, total_posted, cycle_error)
-        print(f"  Cycle done in {duration:.0f}s. Sleeping {interval // 60} min…")
-        time.sleep(interval)
+        time.sleep(3600)
 
 
 def _now():
