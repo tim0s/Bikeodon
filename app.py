@@ -893,7 +893,7 @@ def save_mastodon():
     if token:
         set_setting(DB_PATH, uid, "mastodon", "token", token)
     flash("Mastodon settings saved.", "success")
-    return redirect(url_for("settings", section="mastodon") + "#mastodon")
+    return redirect(url_for("settings", section="mastodon"))
 
 
 @app.route("/settings/map", methods=["POST"])
@@ -917,7 +917,7 @@ def save_map():
     for key in ("start_marker_enabled", "end_marker_enabled"):
         set_setting(DB_PATH, uid, "map", key, "true" if request.form.get(key) else "false")
     flash("Map settings saved.", "success")
-    return redirect(url_for("settings", section="map") + "#map")
+    return redirect(url_for("settings", section="map"))
 
 
 @app.route("/settings/charts", methods=["POST"])
@@ -935,7 +935,7 @@ def save_charts():
         val = request.form.get(key, "").strip()
         set_setting(DB_PATH, uid, "charts", key, val if val else "")
     flash("Chart settings saved.", "success")
-    return redirect(url_for("settings", section="charts") + "#charts")
+    return redirect(url_for("settings", section="charts"))
 
 
 @app.route("/settings/training", methods=["POST"])
@@ -946,7 +946,7 @@ def save_training():
         val = request.form.get(key, "").strip()
         set_setting(DB_PATH, uid, "training", key, val)
     flash("Training settings saved.", "success")
-    return redirect(url_for("settings", section="training") + "#training")
+    return redirect(url_for("settings", section="training"))
 
 
 @app.route("/settings/stats", methods=["POST"])
@@ -963,7 +963,7 @@ def save_stats():
     set_setting(DB_PATH, uid, "stats_overlay", "enabled",
                 "true" if request.form.get("overlay_enabled") else "false")
     flash("Stats settings saved.", "success")
-    return redirect(url_for("settings", section="stats") + "#stats")
+    return redirect(url_for("settings", section="stats"))
 
 
 @app.route("/settings/zones", methods=["GET", "POST"])

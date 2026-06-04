@@ -5,12 +5,13 @@
 
 <div role="tablist" class="tab-bar">
   {% for s, label in [("strava","Strava"),("mastodon","Mastodon"),("training","Training"),("charts","Charts"),("stats","Stats"),("map","Map")] %}
-  <a href="{{ url_for('settings', section=s) }}#{{ s }}" role="tab" {% if section == s %}aria-selected="true"{% endif %}>{{ label }}</a>
+  <a href="{{ url_for('settings', section=s) }}" role="tab" {% if section == s %}aria-selected="true"{% endif %}>{{ label }}</a>
   {% endfor %}
 </div>
 
 {# ── Strava ──────────────────────────────────────────────────────────────── #}
-<article id="strava">
+{% if section == 'strava' %}
+<article>
   <header><strong>Strava</strong></header>
   {% if strava_connected %}
     <p>✓ Connected. <a href="{{ url_for('strava_disconnect') }}" class="secondary">Disconnect</a></p>
@@ -24,9 +25,11 @@
     <a href="{{ url_for('strava_connect') }}" role="button">Connect Strava</a>
   {% endif %}
 </article>
+{% endif %}
 
 {# ── Mastodon ─────────────────────────────────────────────────────────────── #}
-<article id="mastodon">
+{% if section == 'mastodon' %}
+<article>
   <header><strong>Mastodon</strong></header>
   <form method="post" action="{{ url_for('save_mastodon') }}">
     <div class="grid">
@@ -64,9 +67,84 @@
     <button type="submit">Save Mastodon settings</button>
   </form>
 </article>
+{% endif %}
+
+{# ── Training ─────────────────────────────────────────────────────────────── #}
+{% if section == 'training' %}
+<article>
+  <header><strong>Training</strong></header>
+  <form method="post" action="{{ url_for('save_training') }}">
+    <div class="grid">
+      <label>Body weight (kg)
+        <input type="number" name="body_weight_kg"
+               value="{{ cfg.get('training', {}).get('body_weight_kg') or '' }}"
+               min="30" max="200" step="0.1" placeholder="e.g. 70.5">
+        <small>Used to compute W/kg on the Power tab of your dashboard.</small>
+      </label>
+      <label>Resting heart rate (bpm)
+        <input type="number" name="hr_rest"
+               value="{{ cfg.get('training', {}).get('hr_rest') or '' }}"
+               min="30" max="100" placeholder="e.g. 50">
+        <small>Used for TRIMP computation. Measure first thing in the morning.</small>
+      </label>
+    </div>
+    <button type="submit">Save training settings</button>
+  </form>
+</article>
+{% endif %}
+
+{# ── Charts ───────────────────────────────────────────────────────────────── #}
+{% if section == 'charts' %}
+<article>
+  <header><strong>Charts</strong></header>
+  <form method="post" action="{{ url_for('save_charts') }}">
+    <div class="grid">
+      <fieldset>
+        <legend>Heart rate</legend>
+        <label><input type="checkbox" name="hr_enabled" {% if cfg.charts.heart_rate.enabled %}checked{% endif %}> Enabled</label>
+        <label>Max HR (bpm) — leave blank to infer from data
+          <input type="number" name="max_hr" value="{{ cfg.charts.heart_rate.max_hr or '' }}" min="100" max="250" placeholder="auto">
+          {% if not cfg.charts.heart_rate.max_hr and inferred_max_hr %}
+          <small>Auto-detected from your data: <strong>{{ inferred_max_hr|int }} bpm</strong> (99th percentile)</small>
+          {% elif not cfg.charts.heart_rate.max_hr %}
+          <small>Will be inferred from your activity data on first sync.</small>
+          {% endif %}
+        </label>
+      </fieldset>
+      <fieldset>
+        <legend>Power</legend>
+        <label><input type="checkbox" name="power_enabled" {% if cfg.charts.power.enabled %}checked{% endif %}> Enabled</label>
+        <label>FTP (watts) — leave blank to infer from data
+          <input type="number" name="ftp" value="{{ cfg.charts.power.ftp or '' }}" min="50" max="600" placeholder="auto">
+          {% if not cfg.charts.power.ftp and inferred_ftp %}
+          <small>Auto-detected from your data: <strong>{{ inferred_ftp|int }} W</strong> (best 20-min × 0.95)</small>
+          {% elif not cfg.charts.power.ftp %}
+          <small>Will be inferred from your activity data on first sync.</small>
+          {% endif %}
+        </label>
+      </fieldset>
+    </div>
+    <details>
+      <summary>Chart colors</summary>
+      <div class="grid">
+        <label>Background <input type="color" name="style_background_color" value="{{ cfg.charts.style.background_color }}"></label>
+        <label>Text <input type="color" name="style_text_color" value="{{ cfg.charts.style.text_color }}"></label>
+        <label>Grid <input type="color" name="style_grid_color" value="{{ cfg.charts.style.grid_color }}"></label>
+        <label>HR line <input type="color" name="style_line_color" value="{{ cfg.charts.style.line_color }}"></label>
+        <label>Power line <input type="color" name="style_power_line_color" value="{{ cfg.charts.style.power_line_color }}"></label>
+      </div>
+    </details>
+    <button type="submit">Save chart settings</button>
+  </form>
+  <footer>
+    <a href="{{ url_for('zones') }}">Edit HR &amp; power zones →</a>
+  </footer>
+</article>
+{% endif %}
 
 {# ── Stats bar ────────────────────────────────────────────────────────────── #}
-<article id="stats">
+{% if section == 'stats' %}
+<article>
   <header><strong>Stats bar</strong></header>
   <form method="post" action="{{ url_for('save_stats') }}">
     <fieldset>
@@ -113,9 +191,11 @@
     <button type="submit">Save stats settings</button>
   </form>
 </article>
+{% endif %}
 
 {# ── Map ──────────────────────────────────────────────────────────────────── #}
-<article id="map">
+{% if section == 'map' %}
+<article>
   <header><strong>Map</strong></header>
   <form method="post" action="{{ url_for('save_map') }}">
     <div class="grid">
@@ -188,74 +268,6 @@
     <button type="submit">Save map settings</button>
   </form>
 </article>
-
-{# ── Training ─────────────────────────────────────────────────────────────── #}
-<article id="training">
-  <header><strong>Training</strong></header>
-  <form method="post" action="{{ url_for('save_training') }}">
-    <div class="grid">
-      <label>Body weight (kg)
-        <input type="number" name="body_weight_kg"
-               value="{{ cfg.get('training', {}).get('body_weight_kg') or '' }}"
-               min="30" max="200" step="0.1" placeholder="e.g. 70.5">
-        <small>Used to compute W/kg on the Power tab of your dashboard.</small>
-      </label>
-      <label>Resting heart rate (bpm)
-        <input type="number" name="hr_rest"
-               value="{{ cfg.get('training', {}).get('hr_rest') or '' }}"
-               min="30" max="100" placeholder="e.g. 50">
-        <small>Used for TRIMP computation. Measure first thing in the morning.</small>
-      </label>
-    </div>
-    <button type="submit">Save training settings</button>
-  </form>
-</article>
-
-{# ── Charts ───────────────────────────────────────────────────────────────── #}
-<article id="charts">
-  <header><strong>Charts</strong></header>
-  <form method="post" action="{{ url_for('save_charts') }}">
-    <div class="grid">
-      <fieldset>
-        <legend>Heart rate</legend>
-        <label><input type="checkbox" name="hr_enabled" {% if cfg.charts.heart_rate.enabled %}checked{% endif %}> Enabled</label>
-        <label>Max HR (bpm) — leave blank to infer from data
-          <input type="number" name="max_hr" value="{{ cfg.charts.heart_rate.max_hr or '' }}" min="100" max="250" placeholder="auto">
-          {% if not cfg.charts.heart_rate.max_hr and inferred_max_hr %}
-          <small>Auto-detected from your data: <strong>{{ inferred_max_hr|int }} bpm</strong> (99th percentile)</small>
-          {% elif not cfg.charts.heart_rate.max_hr %}
-          <small>Will be inferred from your activity data on first sync.</small>
-          {% endif %}
-        </label>
-      </fieldset>
-      <fieldset>
-        <legend>Power</legend>
-        <label><input type="checkbox" name="power_enabled" {% if cfg.charts.power.enabled %}checked{% endif %}> Enabled</label>
-        <label>FTP (watts) — leave blank to infer from data
-          <input type="number" name="ftp" value="{{ cfg.charts.power.ftp or '' }}" min="50" max="600" placeholder="auto">
-          {% if not cfg.charts.power.ftp and inferred_ftp %}
-          <small>Auto-detected from your data: <strong>{{ inferred_ftp|int }} W</strong> (best 20-min × 0.95)</small>
-          {% elif not cfg.charts.power.ftp %}
-          <small>Will be inferred from your activity data on first sync.</small>
-          {% endif %}
-        </label>
-      </fieldset>
-    </div>
-    <details>
-      <summary>Chart colors</summary>
-      <div class="grid">
-        <label>Background <input type="color" name="style_background_color" value="{{ cfg.charts.style.background_color }}"></label>
-        <label>Text <input type="color" name="style_text_color" value="{{ cfg.charts.style.text_color }}"></label>
-        <label>Grid <input type="color" name="style_grid_color" value="{{ cfg.charts.style.grid_color }}"></label>
-        <label>HR line <input type="color" name="style_line_color" value="{{ cfg.charts.style.line_color }}"></label>
-        <label>Power line <input type="color" name="style_power_line_color" value="{{ cfg.charts.style.power_line_color }}"></label>
-      </div>
-    </details>
-    <button type="submit">Save chart settings</button>
-  </form>
-  <footer>
-    <a href="{{ url_for('zones') }}">Edit HR &amp; power zones →</a>
-  </footer>
-</article>
+{% endif %}
 
 {% endblock %}

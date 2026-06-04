@@ -24,6 +24,9 @@ body > header {
   background: #ffffff;
   border-bottom: 3px solid var(--orange);
   padding-block: 0;
+  position: sticky;
+  top: 0;
+  z-index: 100;
   --pico-nav-element-spacing-vertical: .15rem;
   --pico-nav-link-spacing-vertical: .1rem;
 }
