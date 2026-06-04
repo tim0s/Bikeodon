@@ -8,15 +8,11 @@
 </hgroup>
 
 {# ── Tab navigation ───────────────────────────────────────────────────────── #}
-<nav class="tab-nav" style="display:flex;gap:.5rem;margin-bottom:1.5rem;border-bottom:1px solid var(--pico-muted-border-color,#333);padding-bottom:.5rem">
+<div role="tablist" class="tab-bar">
   {% for t, label in [("overview","Overview"),("fitness","Fitness"),("zones","Zones"),("power","Power")] %}
-  <a href="{{ url_for('me') }}?tab={{ t }}"
-     style="padding:.4rem .9rem;border-radius:4px 4px 0 0;text-decoration:none;
-            {% if tab == t %}background:var(--pico-primary);color:#fff{% else %}color:inherit;opacity:.7{% endif %}">
-    {{ label }}
-  </a>
+  <a href="{{ url_for('me') }}?tab={{ t }}" role="tab" {% if tab == t %}aria-selected="true"{% endif %}>{{ label }}</a>
   {% endfor %}
-</nav>
+</div>
 
 {# ═══════════════════════════════════════════════════════════════════════════ #}
 {# TAB: OVERVIEW                                                              #}

@@ -3,6 +3,12 @@
 {% block content %}
 <h2>Settings</h2>
 
+<div role="tablist" class="tab-bar">
+  {% for s, label in [("strava","Strava"),("mastodon","Mastodon"),("training","Training"),("charts","Charts"),("stats","Stats"),("map","Map")] %}
+  <a href="{{ url_for('settings', section=s) }}#{{ s }}" role="tab" {% if section == s %}aria-selected="true"{% endif %}>{{ label }}</a>
+  {% endfor %}
+</div>
+
 {# ── Strava ──────────────────────────────────────────────────────────────── #}
 <article id="strava">
   <header><strong>Strava</strong></header>

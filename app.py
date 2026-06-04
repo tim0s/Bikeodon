@@ -853,8 +853,9 @@ _STAT_FIELDS = [
 @app.route("/settings")
 @login_required
 def settings():
-    uid = int(current_user.id)
-    cfg = load_user_config(DB_PATH, uid, _base_cfg)
+    uid     = int(current_user.id)
+    section = request.args.get("section", "strava")
+    cfg     = load_user_config(DB_PATH, uid, _base_cfg)
     hr_zones    = get_zones(DB_PATH, uid, "hr")
     power_zones = get_zones(DB_PATH, uid, "power")
     strava_connected   = bool(get_setting(DB_PATH, uid, "strava", "access_token"))
@@ -877,6 +878,7 @@ def settings():
         strava_configured=strava_configured,
         inferred_ftp=float(inferred_ftp) if inferred_ftp else None,
         inferred_max_hr=float(inferred_max_hr) if inferred_max_hr else None,
+        section=section,
     )
 
 
@@ -891,7 +893,7 @@ def save_mastodon():
     if token:
         set_setting(DB_PATH, uid, "mastodon", "token", token)
     flash("Mastodon settings saved.", "success")
-    return redirect(url_for("settings") + "#mastodon")
+    return redirect(url_for("settings", section="mastodon") + "#mastodon")
 
 
 @app.route("/settings/map", methods=["POST"])
@@ -915,7 +917,7 @@ def save_map():
     for key in ("start_marker_enabled", "end_marker_enabled"):
         set_setting(DB_PATH, uid, "map", key, "true" if request.form.get(key) else "false")
     flash("Map settings saved.", "success")
-    return redirect(url_for("settings") + "#map")
+    return redirect(url_for("settings", section="map") + "#map")
 
 
 @app.route("/settings/charts", methods=["POST"])
@@ -933,7 +935,7 @@ def save_charts():
         val = request.form.get(key, "").strip()
         set_setting(DB_PATH, uid, "charts", key, val if val else "")
     flash("Chart settings saved.", "success")
-    return redirect(url_for("settings") + "#charts")
+    return redirect(url_for("settings", section="charts") + "#charts")
 
 
 @app.route("/settings/training", methods=["POST"])
@@ -944,7 +946,7 @@ def save_training():
         val = request.form.get(key, "").strip()
         set_setting(DB_PATH, uid, "training", key, val)
     flash("Training settings saved.", "success")
-    return redirect(url_for("settings") + "#training")
+    return redirect(url_for("settings", section="training") + "#training")
 
 
 @app.route("/settings/stats", methods=["POST"])
@@ -961,7 +963,7 @@ def save_stats():
     set_setting(DB_PATH, uid, "stats_overlay", "enabled",
                 "true" if request.form.get("overlay_enabled") else "false")
     flash("Stats settings saved.", "success")
-    return redirect(url_for("settings") + "#stats")
+    return redirect(url_for("settings", section="stats") + "#stats")
 
 
 @app.route("/settings/zones", methods=["GET", "POST"])
