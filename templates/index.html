@@ -10,6 +10,16 @@
   <h2>Activities</h2>
   {% if not strava_connected %}
   <p><a href="{{ url_for('strava_connect') }}" role="button" class="outline">Connect Strava to start syncing</a></p>
+  {% else %}
+  <p>
+    <form method="post" action="{{ url_for('manual_sync') }}" style="display:inline">
+      {% if sync_available %}
+        <button type="submit" class="outline" style="padding:.3rem .9rem;font-size:.9rem">Sync from Strava</button>
+      {% else %}
+        <button type="button" class="outline" disabled style="padding:.3rem .9rem;font-size:.9rem;opacity:0.45;cursor:default">Next sync in {{ sync_mins_left }} min</button>
+      {% endif %}
+    </form>
+  </p>
   {% endif %}
 </hgroup>
 

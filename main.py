@@ -9,7 +9,7 @@ Usage:
   python main.py render 12345678   # render map for a specific activity ID
   python main.py charts 12345678   # generate HR/power charts
   python main.py post 12345678     # render and post to Mastodon
-  python main.py daemon            # poll Strava and auto-post new activities
+  python main.py daemon            # render unrendered activities and auto-post scheduled ones
   python main.py config list       # show all per-user settings
   python main.py config get <area> <key>
   python main.py config set <area> <key> <value>
@@ -388,17 +388,18 @@ def cmd_daemon(args, cfg):
     with open(args.config) as f:
         base_cfg = _yaml.safe_load(f)
 
-    print(f"Daemon started — polling every {interval // 60} min. Ctrl-C to stop.")
+    print(f"Daemon started — rendering and auto-posting every {interval // 60} min. Ctrl-C to stop.")
+    print("  (Strava sync is now triggered manually via the web UI or by webhooks.)")
 
     while True:
         from datetime import datetime, timezone as _tz
-        cycle_start    = time.monotonic()
-        started_at     = datetime.now(_tz.utc).isoformat()
-        total_synced   = 0
-        cycle_error    = None
+        cycle_start  = time.monotonic()
+        started_at   = datetime.now(_tz.utc).isoformat()
+        total_posted = 0
+        cycle_error  = None
 
         try:
-            print(f"\n[{_now()}] Syncing all users…")
+            print(f"\n[{_now()}] Processing all users…")
             users = get_all_users(db_path)
 
             if not users:
@@ -407,13 +408,10 @@ def cmd_daemon(args, cfg):
                 for user in users:
                     user_id  = user["id"]
                     username = user["username"] or f"user:{user_id}"
-                    new_ids  = _sync_user(db_path, user_id, username, count=args.count)
-                    total_synced += len(new_ids)
-
                     user_cfg = load_user_config(db_path, user_id, base_cfg)
-                    if new_ids:
-                        _render_activities(new_ids, db_path, user_id, user_cfg)
+
                     _render_missing(db_path, user_id, user_cfg)
+
                     out_dir  = base_cfg["map"].get("output_dir", "output")
                     unposted = get_unposted(db_path, user_id=user_id)
 
@@ -425,15 +423,16 @@ def cmd_daemon(args, cfg):
                             url = _do_post(row, user_cfg, db_path, out_dir, user_id=user_id)
                             if url:
                                 print(f"    → {url}")
+                                total_posted += 1
                         except Exception as e:
                             print(f"    Failed: {e}")
         except Exception as e:
             cycle_error = str(e)
             print(f"  Error: {e}")
 
-        duration = time.monotonic() - cycle_start
+        duration    = time.monotonic() - cycle_start
         finished_at = datetime.now(_tz.utc).isoformat()
-        log_daemon_run(db_path, started_at, finished_at, duration, total_synced, cycle_error)
+        log_daemon_run(db_path, started_at, finished_at, duration, total_posted, cycle_error)
         print(f"  Cycle done in {duration:.0f}s. Sleeping {interval // 60} min…")
         time.sleep(interval)
 
@@ -567,9 +566,7 @@ def main():
     p_post.add_argument("--dry-run",  action="store_true", help="Preview without publishing")
     p_post.add_argument("--rerender", action="store_true", help="Re-render even if image exists")
 
-    p_daemon = sub.add_parser("daemon", help="Poll Strava and auto-post new activities")
-    p_daemon.add_argument("--count", type=int, default=20,
-                          help="Activities to check per poll cycle (default: 20)")
+    sub.add_parser("daemon", help="Render unrendered activities and auto-post scheduled ones")
 
     p_webhook = sub.add_parser("webhook", help="Manage Strava webhook subscription")
     wh_sub = p_webhook.add_subparsers(dest="webhook_cmd")

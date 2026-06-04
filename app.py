@@ -28,6 +28,22 @@ from database import (
     list_settings, load_user_config, mark_rendered, set_scheduled, set_setting,
     upsert_activity,
 )
+
+SYNC_COOLDOWN_SECS = 15 * 60
+
+
+def _sync_cooldown_remaining(user_id: int) -> int:
+    """Return seconds until the user may sync again, or 0 if available."""
+    last = get_setting(DB_PATH, user_id, "strava", "last_manual_sync_at")
+    if not last:
+        return 0
+    try:
+        from datetime import datetime, timezone
+        last_dt = datetime.fromisoformat(last.replace("Z", "+00:00"))
+        elapsed = (datetime.now(timezone.utc) - last_dt).total_seconds()
+        return max(0, int(SYNC_COOLDOWN_SECS - elapsed))
+    except (ValueError, AttributeError):
+        return 0
 import threading
 
 from activity_parser import parse_file
@@ -178,11 +194,103 @@ def index():
             "post_url":      r["mastodon_post_url"] or "",
             "strava_url":    r["strava_url"] or "",
         })
-    strava_connected = bool(get_setting(DB_PATH, uid, "strava", "access_token"))
+    strava_connected  = bool(get_setting(DB_PATH, uid, "strava", "access_token"))
+    sync_remaining    = _sync_cooldown_remaining(uid) if strava_connected else 0
+    sync_mins_left    = (sync_remaining + 59) // 60 if sync_remaining > 0 else 0
     return render_template("index.html", activities=activities,
                            strava_connected=strava_connected,
+                           sync_available=(sync_remaining == 0),
+                           sync_mins_left=sync_mins_left,
                            page=page, n_pages=n_pages, total=total,
                            sort=sort, dir=dir_)
+
+
+# ---------------------------------------------------------------------------
+# Manual Strava sync
+# ---------------------------------------------------------------------------
+
+@app.route("/sync", methods=["POST"])
+@login_required
+def manual_sync():
+    uid = int(current_user.id)
+
+    remaining = _sync_cooldown_remaining(uid)
+    if remaining > 0:
+        mins = (remaining + 59) // 60
+        flash(f"Sync rate-limited — try again in {mins} min.", "error")
+        return redirect(url_for("index"))
+
+    from datetime import datetime, timezone
+    set_setting(DB_PATH, uid, "strava", "last_manual_sync_at",
+                datetime.now(timezone.utc).isoformat())
+
+    def _run():
+        access_token = get_setting(DB_PATH, uid, "strava", "access_token") or ""
+        refresh_tok  = get_setting(DB_PATH, uid, "strava", "refresh_token") or ""
+        expires_at   = float(get_setting(DB_PATH, uid, "strava", "token_expires_at") or 0)
+        if not access_token:
+            return
+
+        def _on_refresh(a, r, e):
+            set_setting(DB_PATH, uid, "strava", "access_token",     a)
+            set_setting(DB_PATH, uid, "strava", "refresh_token",    r)
+            set_setting(DB_PATH, uid, "strava", "token_expires_at", str(e))
+
+        client = StravaClient(
+            access_token=access_token, client_id=STRAVA_CLIENT_ID,
+            client_secret=STRAVA_CLIENT_SECRET, refresh_tok=refresh_tok,
+            expires_at=expires_at, on_refresh=_on_refresh,
+        )
+        try:
+            ids = client.get_activity_ids(n=10)
+        except Exception as e:
+            print(f"[manual-sync] Strava API error: {e}")
+            return
+
+        cfg     = load_user_config(DB_PATH, uid, _base_cfg)
+        out_dir = _base_cfg["map"].get("output_dir", "output")
+        os.makedirs(out_dir, exist_ok=True)
+
+        new_ids = []
+        for activity_id in ids:
+            if get_activity(DB_PATH, activity_id, user_id=uid):
+                continue
+            try:
+                data = client.get_activity(activity_id)
+                upsert_activity(DB_PATH, data, user_id=uid)
+                new_ids.append(activity_id)
+                print(f"[manual-sync] + {data['name']}")
+            except Exception as e:
+                print(f"[manual-sync] Failed {activity_id}: {e}")
+
+        for activity_id in new_ids:
+            row = get_activity(DB_PATH, activity_id, user_id=uid)
+            if not row:
+                continue
+            from database import get_points as _gp
+            pts = _gp(row)
+            if pts:
+                try:
+                    img = render_activity_map(pts, dict(row), cfg)
+                    if img:
+                        img.save(os.path.join(out_dir, f"{activity_id}.png"))
+                        mark_rendered(DB_PATH, activity_id, uid, map=True)
+                except Exception:
+                    pass
+            else:
+                mark_rendered(DB_PATH, activity_id, uid, map=True)
+            stream = get_stream(row)
+            try:
+                generate_charts(activity_id, stream, cfg, out_dir, db_path=DB_PATH)
+                mark_rendered(DB_PATH, activity_id, uid, charts=True)
+            except Exception:
+                pass
+
+        print(f"[manual-sync] Done — {len(new_ids)} new activities for user {uid}")
+
+    threading.Thread(target=_run, daemon=True).start()
+    flash("Syncing from Strava — new activities will appear shortly.", "success")
+    return redirect(url_for("index"))
 
 
 # ---------------------------------------------------------------------------
