@@ -194,6 +194,7 @@ def init_db(db_path):
         ("peak_power_json",      "TEXT"),
         ("hr_zone_secs_json",    "TEXT"),
         ("power_zone_secs_json", "TEXT"),
+        ("metrics_computed_at",  "TEXT"),
     ]:
         try:
             conn.execute(f"ALTER TABLE activities ADD COLUMN {col} {typedef}")
@@ -204,6 +205,17 @@ def init_db(db_path):
         CREATE TABLE IF NOT EXISTS site_settings (
             key   TEXT PRIMARY KEY,
             value TEXT
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS job_log (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            started_at  TEXT NOT NULL,
+            finished_at TEXT,
+            job_type    TEXT NOT NULL,
+            status      TEXT NOT NULL DEFAULT 'running',
+            details     TEXT
         )
     """)
 
@@ -915,14 +927,15 @@ def update_activity_metrics(
     hr_zone_secs_json: str | None = None,
     power_zone_secs_json: str | None = None,
 ):
+    now = datetime.now(timezone.utc).isoformat()
     conn = _conn(db_path)
     conn.execute(
         "UPDATE activities"
         " SET tss=?, np_watts=?, trimp=?, peak_power_json=?,"
-        "     hr_zone_secs_json=?, power_zone_secs_json=?"
+        "     hr_zone_secs_json=?, power_zone_secs_json=?, metrics_computed_at=?"
         " WHERE id=? AND user_id=?",
         (tss, np_watts, trimp, peak_power_json,
-         hr_zone_secs_json, power_zone_secs_json, activity_id, user_id),
+         hr_zone_secs_json, power_zone_secs_json, now, activity_id, user_id),
     )
     conn.commit()
     conn.close()
@@ -975,16 +988,54 @@ def get_all_peak_powers(db_path, user_id: int, days: int | None = None) -> list:
 
 
 def get_activities_without_metrics(db_path, user_id: int) -> list:
-    """Return activities that have a stream but are missing any computed metric."""
+    """Return activities that have a stream but have never had metrics computed."""
     conn = _conn(db_path)
     rows = conn.execute(
         "SELECT * FROM activities"
-        " WHERE user_id=? AND points_json IS NOT NULL AND points_json != '[]'"
-        " AND (tss IS NULL OR hr_zone_secs_json IS NULL AND power_zone_secs_json IS NULL)",
+        " WHERE user_id=? AND metrics_computed_at IS NULL"
+        " AND points_json IS NOT NULL AND points_json != '[]'",
         (user_id,),
     ).fetchall()
     conn.close()
     return rows
+
+
+def job_start(db_path, job_type: str, details: str = "") -> int:
+    """Log the start of a background job. Returns the job id."""
+    conn = _conn(db_path)
+    cur = conn.execute(
+        "INSERT INTO job_log (started_at, job_type, status, details) VALUES (?,?,?,?)",
+        (datetime.now(timezone.utc).isoformat(), job_type, "running", details),
+    )
+    job_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return job_id
+
+
+def job_finish(db_path, job_id: int, status: str = "done", details: str = ""):
+    conn = _conn(db_path)
+    conn.execute(
+        "UPDATE job_log SET finished_at=?, status=?, details=? WHERE id=?",
+        (datetime.now(timezone.utc).isoformat(), status, details, job_id),
+    )
+    # Keep only last 200 entries
+    conn.execute(
+        "DELETE FROM job_log WHERE id NOT IN (SELECT id FROM job_log ORDER BY id DESC LIMIT 200)"
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_recent_jobs(db_path, limit: int = 30) -> list:
+    conn = _conn(db_path)
+    rows = conn.execute(
+        "SELECT id, started_at, finished_at, job_type, status, details"
+        " FROM job_log ORDER BY id DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 
 def get_zone_totals(db_path, user_id: int) -> tuple:

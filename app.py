@@ -6,6 +6,7 @@ Run:  flask --app app run
 """
 
 import os
+import threading
 
 import yaml
 from dotenv import load_dotenv
@@ -28,12 +29,16 @@ from database import (
     get_activities_without_metrics, get_daily_loads, get_error_activities,
     get_setting, get_site_setting, get_stream, get_user_by_athlete_id, get_user_by_id,
     get_user_by_username, get_user_stats, get_zone_totals, get_zones, init_db,
+    job_finish, job_start, get_recent_jobs,
     list_activities, list_settings, load_user_config, mark_posted, mark_rendered,
     set_activity_error, set_scheduled, set_setting, update_activity_metrics, upsert_activity,
 )
 from mastodon_client import MastodonClient
 
 SYNC_COOLDOWN_SECS = 15 * 60
+
+# Ensures only one metric backfill runs at a time across all users
+_backfill_lock = threading.Lock()
 
 
 def _sync_cooldown_remaining(user_id: int) -> int:
@@ -194,8 +199,6 @@ def _do_post_activity(activity_id: int, uid: int):
         set_activity_error(DB_PATH, activity_id, uid, "post", str(e))
         set_scheduled(DB_PATH, activity_id, uid, False)
         print(f"[post] Failed to post activity {activity_id}: {e}")
-import threading
-
 from activity_parser import parse_file
 from charts import generate_charts
 from map_renderer import render_activity_map
@@ -627,9 +630,12 @@ def upload():
 @login_required
 @admin_required
 def admin():
-    stats  = get_admin_stats(DB_PATH)
-    errors = get_error_activities(DB_PATH)
-    return render_template("admin.html", stats=stats, errors=errors)
+    stats        = get_admin_stats(DB_PATH)
+    errors       = get_error_activities(DB_PATH)
+    recent_jobs  = get_recent_jobs(DB_PATH)
+    backfill_running = _backfill_lock.locked()
+    return render_template("admin.html", stats=stats, errors=errors,
+                           recent_jobs=recent_jobs, backfill_running=backfill_running)
 
 
 @app.route("/admin/full-sync", methods=["POST"])
@@ -699,15 +705,37 @@ def me():
     stats = get_user_stats(DB_PATH, uid)
     cfg   = load_user_config(DB_PATH, uid, _base_cfg)
 
-    # Backfill metrics for any activities that are missing them (background)
+    # Backfill metrics for activities that have never been processed.
+    # The lock ensures at most one backfill runs at a time (across all page loads).
     def _backfill():
-        pending = get_activities_without_metrics(DB_PATH, uid)
-        if not pending:
-            return
-        bcfg = load_user_config(DB_PATH, uid, _base_cfg)
-        for brow in pending:
-            bstream = get_stream(brow)
-            _compute_and_store_metrics(brow["id"], uid, bcfg, bstream, brow)
+        if not _backfill_lock.acquire(blocking=False):
+            return   # another backfill is already running
+        try:
+            pending = get_activities_without_metrics(DB_PATH, uid)
+            if not pending:
+                return
+            job_id = job_start(DB_PATH, "metrics_backfill",
+                               f"Starting — {len(pending)} activities pending")
+            print(f"[backfill] Starting metrics for {len(pending)} activities (user {uid})")
+            done = 0
+            for brow in pending:
+                try:
+                    bcfg    = load_user_config(DB_PATH, uid, _base_cfg)
+                    bstream = get_stream(brow)
+                    _compute_and_store_metrics(brow["id"], uid, bcfg, bstream, brow)
+                    done += 1
+                except Exception as e:
+                    print(f"[backfill] Error on activity {brow['id']}: {e}")
+                import time as _time
+                _time.sleep(0.05)   # yield CPU between activities
+            job_finish(DB_PATH, job_id, "done",
+                       f"Computed metrics for {done}/{len(pending)} activities")
+            print(f"[backfill] Done — {done}/{len(pending)} activities processed")
+        except Exception as e:
+            print(f"[backfill] Fatal error: {e}")
+        finally:
+            _backfill_lock.release()
+
     threading.Thread(target=_backfill, daemon=True).start()
 
     # PMC and weekly load

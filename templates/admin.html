@@ -21,6 +21,49 @@
 </div>
 
 <article style="margin-bottom:2rem">
+  <header>
+    <strong>Background jobs</strong>
+    {% if backfill_running %}
+    <small style="font-weight:normal;color:#ffc000"> ● metrics backfill running…</small>
+    {% endif %}
+  </header>
+  {% if recent_jobs %}
+  <table>
+    <thead>
+      <tr><th>Started</th><th>Job</th><th>Status</th><th>Details</th><th>Duration</th></tr>
+    </thead>
+    <tbody>
+      {% for j in recent_jobs %}
+      <tr>
+        <td><small>{{ j.started_at[:19].replace('T',' ') }}</small></td>
+        <td><small>{{ j.job_type }}</small></td>
+        <td>
+          {% if j.status == 'running' %}
+          <small style="color:#ffc000">running</small>
+          {% elif j.status == 'done' %}
+          <small style="color:#70ad47">done</small>
+          {% else %}
+          <small style="color:#c0392b">{{ j.status }}</small>
+          {% endif %}
+        </td>
+        <td><small>{{ j.details or '—' }}</small></td>
+        <td>
+          {% if j.finished_at %}
+          <small class="muted">{{ ((j.finished_at[:19] | replace('T',' ')) | string) }}</small>
+          {% else %}
+          <small class="muted">—</small>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted"><small>No background jobs recorded yet. Visit <a href="{{ url_for('me') }}">You</a> to trigger metrics backfill.</small></p>
+  {% endif %}
+</article>
+
+<article style="margin-bottom:2rem">
   <header><strong>Render errors</strong> <small style="font-weight:normal;color:#888">({{ errors.render_errors|length }} activities)</small></header>
   {% if errors.render_errors %}
   <table>
