@@ -100,7 +100,7 @@
 <script src="{{ url_for('static', filename='chart.min.js') }}"></script>
 <script>
 (function () {
-  const weekly = {{ weekly_json }};
+  const weekly = {{ weekly_json | safe }};
   const ctx = document.getElementById('weeklyChart').getContext('2d');
   new Chart(ctx, {
     type: 'bar',
@@ -174,7 +174,7 @@
 <script src="{{ url_for('static', filename='chart.min.js') }}"></script>
 <script>
 (function () {
-  const pmc = {{ pmc_json }};
+  const pmc = {{ pmc_json | safe }};
   const labels = pmc.map(d => d.date);
   const ctx = document.getElementById('pmcChart').getContext('2d');
   new Chart(ctx, {
@@ -381,8 +381,8 @@
     });
   }
 
-  buildZoneChart('hrZoneChart',    {{ hr_zone_chart_json }});
-  buildZoneChart('powerZoneChart', {{ power_zone_chart_json }});
+  buildZoneChart('hrZoneChart',    {{ hr_zone_chart_json | safe }});
+  buildZoneChart('powerZoneChart', {{ power_zone_chart_json | safe }});
 })();
 </script>
 
@@ -483,10 +483,10 @@
 <script src="{{ url_for('static', filename='chart.min.js') }}"></script>
 <script>
 (function () {
-  const curveAll    = {{ curve_all }};
-  const curveRecent = {{ curve_recent }};
-  const wpkAll      = {{ wpk_all }};
-  const wpkRecent   = {{ wpk_recent }};
+  const curveAll    = {{ curve_all | safe }};
+  const curveRecent = {{ curve_recent | safe }};
+  const wpkAll      = {{ wpk_all | safe }};
+  const wpkRecent   = {{ wpk_recent | safe }};
   const labels      = ["5s","30s","1min","5min","20min","60min"];
 
   const allData    = labels.map(l => curveAll[l]    ?? null);
