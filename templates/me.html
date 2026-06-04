@@ -1,11 +1,27 @@
 {% extends "base.html" %}
-{% block title %}You – Bikeodon{% endblock %}
+{% block title %}{{ username }} – Bikeodon{% endblock %}
 {% block content %}
 
 <hgroup>
   <h2>{{ username }}</h2>
-  <p>Your activity summary</p>
+  <p>Your training dashboard</p>
 </hgroup>
+
+{# ── Tab navigation ───────────────────────────────────────────────────────── #}
+<nav class="tab-nav" style="display:flex;gap:.5rem;margin-bottom:1.5rem;border-bottom:1px solid var(--pico-muted-border-color,#333);padding-bottom:.5rem">
+  {% for t, label in [("overview","Overview"),("fitness","Fitness"),("zones","Zones"),("power","Power")] %}
+  <a href="{{ url_for('me') }}?tab={{ t }}"
+     style="padding:.4rem .9rem;border-radius:4px 4px 0 0;text-decoration:none;
+            {% if tab == t %}background:var(--pico-primary);color:#fff{% else %}color:inherit;opacity:.7{% endif %}">
+    {{ label }}
+  </a>
+  {% endfor %}
+</nav>
+
+{# ═══════════════════════════════════════════════════════════════════════════ #}
+{# TAB: OVERVIEW                                                              #}
+{# ═══════════════════════════════════════════════════════════════════════════ #}
+{% if tab == "overview" %}
 
 <h3>All time</h3>
 <div class="activity-stats">
@@ -39,6 +55,36 @@
   </div>
 </div>
 
+{% if pmc_latest.ctl > 0 %}
+<h3>Current fitness</h3>
+<div class="activity-stats">
+  <div class="stat-chip" title="Chronic Training Load — your 42-day fitness base">
+    <span class="stat-label">Fitness (CTL)</span>
+    <span class="stat-value" style="color:#4fc3f7">{{ "%.0f"|format(pmc_latest.ctl) }}</span>
+  </div>
+  <div class="stat-chip" title="Acute Training Load — recent 7-day fatigue">
+    <span class="stat-label">Fatigue (ATL)</span>
+    <span class="stat-value" style="color:#ff7043">{{ "%.0f"|format(pmc_latest.atl) }}</span>
+  </div>
+  <div class="stat-chip" title="Training Stress Balance — form = CTL − ATL. Positive = fresh, negative = fatigued.">
+    <span class="stat-label">Form (TSB)</span>
+    <span class="stat-value" style="color:{% if pmc_latest.tsb >= 0 %}#70ad47{% else %}#d32f2f{% endif %}">
+      {% if pmc_latest.tsb >= 0 %}+{% endif %}{{ "%.0f"|format(pmc_latest.tsb) }}
+    </span>
+  </div>
+</div>
+<small class="muted">TSS-based. <a href="{{ url_for('me') }}?tab=fitness">View full PMC →</a></small>
+{% endif %}
+
+<h3>Weekly load (last 26 weeks)</h3>
+<div style="position:relative;height:200px;margin-bottom:1rem">
+  <canvas id="weeklyChart"></canvas>
+</div>
+<small class="muted">
+  Training Stress Score (TSS) per week. Activities without power data do not contribute TSS.
+  Set your FTP in <a href="{{ url_for('settings') }}#charts">Settings → Charts</a> and re-render older activities to backfill.
+</small>
+
 {% if stats.by_sport %}
 <h3>By activity type</h3>
 <div class="activity-stats">
@@ -50,5 +96,386 @@
   {% endfor %}
 </div>
 {% endif %}
+
+<script src="{{ url_for('static', filename='chart.min.js') }}"></script>
+<script>
+(function () {
+  const weekly = {{ weekly_json }};
+  const ctx = document.getElementById('weeklyChart').getContext('2d');
+  new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: weekly.map(w => w.week),
+      datasets: [{
+        label: 'TSS',
+        data: weekly.map(w => w.tss),
+        backgroundColor: weekly.map(w => {
+          if (w.tss >= 600) return '#d32f2f';
+          if (w.tss >= 400) return '#ff7043';
+          if (w.tss >= 200) return '#ffc000';
+          return '#70ad47';
+        }),
+        borderRadius: 2,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { maxTicksLimit: 8, color: '#aaa' }, grid: { color: '#2a2a35' } },
+        y: { ticks: { color: '#aaa' }, grid: { color: '#2a2a35' }, beginAtZero: true },
+      },
+    },
+  });
+})();
+</script>
+
+{# ═══════════════════════════════════════════════════════════════════════════ #}
+{# TAB: FITNESS (PMC)                                                         #}
+{# ═══════════════════════════════════════════════════════════════════════════ #}
+{% elif tab == "fitness" %}
+
+<article>
+  <header><strong>Performance Management Chart</strong></header>
+  <div style="position:relative;height:300px">
+    <canvas id="pmcChart"></canvas>
+  </div>
+  <footer>
+    <details>
+      <summary>What does this show?</summary>
+      <p style="margin-top:.5rem">
+        The PMC models how your body adapts to training load over time using
+        <strong>Training Stress Score (TSS)</strong> as the currency of effort.
+      </p>
+      <ul>
+        <li><strong style="color:#4fc3f7">Fitness (CTL)</strong> — Chronic Training Load.
+          A 42-day exponential weighted average of daily TSS. Think of it as your aerobic base:
+          slow to build, slow to lose.</li>
+        <li><strong style="color:#ff7043">Fatigue (ATL)</strong> — Acute Training Load.
+          A 7-day EWA. Spikes quickly after a hard block and falls fast during recovery.</li>
+        <li><strong style="color:#70ad47">Form (TSB)</strong> — Training Stress Balance = CTL − ATL.
+          Positive = fresh and ready to race. Deeply negative = accumulated fatigue.
+          A "hot spot" for peak performance is roughly +5 to +25 after a taper.</li>
+      </ul>
+      <p>
+        The two-component model was first described by Banister (1991) and is the basis for
+        <a href="https://pubmed.ncbi.nlm.nih.gov/1972190/" target="_blank" rel="noopener">Morton et al. (1990)</a>.
+        Coggan's TSS formulation is the de-facto standard in cycling; see
+        <a href="https://www.trainingpeaks.com/blog/normalized-power-intensity-factor-training-stress/" target="_blank" rel="noopener">TrainingPeaks: NP, IF, TSS</a>.
+      </p>
+      <p><strong>Note:</strong> TSS is only computed for activities with power data and a set FTP.
+        Activities without TSS contribute 0 to the chart.
+        Set your FTP in <a href="{{ url_for('settings') }}#charts">Settings → Charts</a>.</p>
+    </details>
+  </footer>
+</article>
+
+<script src="{{ url_for('static', filename='chart.min.js') }}"></script>
+<script>
+(function () {
+  const pmc = {{ pmc_json }};
+  const labels = pmc.map(d => d.date);
+  const ctx = document.getElementById('pmcChart').getContext('2d');
+  new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Fitness (CTL)',
+          data: pmc.map(d => d.ctl),
+          borderColor: '#4fc3f7',
+          backgroundColor: 'transparent',
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: 0.3,
+        },
+        {
+          label: 'Fatigue (ATL)',
+          data: pmc.map(d => d.atl),
+          borderColor: '#ff7043',
+          backgroundColor: 'transparent',
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: 0.3,
+        },
+        {
+          label: 'Form (TSB)',
+          data: pmc.map(d => d.tsb),
+          borderColor: '#70ad47',
+          backgroundColor: pmc.map(d => d.tsb >= 0 ? 'rgba(112,173,71,0.08)' : 'rgba(211,47,47,0.08)'),
+          borderWidth: 1.5,
+          pointRadius: 0,
+          tension: 0.3,
+          fill: true,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { labels: { color: '#ccc' } },
+        tooltip: {
+          callbacks: {
+            title: items => items[0].label,
+            label: item => ` ${item.dataset.label}: ${item.raw.toFixed(1)}`,
+          },
+        },
+      },
+      scales: {
+        x: {
+          ticks: { maxTicksLimit: 10, color: '#aaa' },
+          grid: { color: '#2a2a35' },
+        },
+        y: {
+          ticks: { color: '#aaa' },
+          grid: { color: '#2a2a35' },
+        },
+      },
+    },
+  });
+})();
+</script>
+
+{# ═══════════════════════════════════════════════════════════════════════════ #}
+{# TAB: ZONES                                                                 #}
+{# ═══════════════════════════════════════════════════════════════════════════ #}
+{% elif tab == "zones" %}
+
+<p>
+  Zone thresholds are configured in <a href="{{ url_for('zones') }}">Settings → Zones</a>.
+  Reference values (HR max, FTP) are in <a href="{{ url_for('settings') }}#charts">Settings → Charts</a>.
+</p>
+
+<div class="grid">
+  <article>
+    <header><strong>Heart rate zones</strong>
+      {% if hr_max %}<small class="muted"> — max {{ hr_max|int }} bpm</small>{% endif %}
+    </header>
+    {% if hr_zones %}
+    <table>
+      <thead><tr><th>Zone</th><th>% Max HR</th>{% if hr_max %}<th>bpm</th>{% endif %}</tr></thead>
+      <tbody>
+        {% set prev_pct = 0 %}
+        {% for z in hr_zones %}
+        <tr>
+          <td><span style="display:inline-block;width:12px;height:12px;border-radius:2px;background:{{ z.color }};margin-right:.4rem;vertical-align:middle"></span>{{ z.name }}</td>
+          <td>{{ prev_pct|int }}–{{ z.max_pct|int }}%</td>
+          {% if hr_max %}
+          <td>{{ (prev_pct / 100 * hr_max)|int }}–{{ (z.max_pct / 100 * hr_max)|int }}</td>
+          {% endif %}
+        </tr>
+        {% set prev_pct = z.max_pct %}
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="muted"><small>No HR zones configured.</small></p>
+    {% endif %}
+    {% if not hr_max %}
+    <footer><small class="muted">Set your max HR in <a href="{{ url_for('settings') }}#charts">Settings → Charts</a> to see bpm ranges.</small></footer>
+    {% endif %}
+  </article>
+
+  <article>
+    <header><strong>Power zones</strong>
+      {% if ftp %}<small class="muted"> — FTP {{ ftp|int }} W</small>{% endif %}
+    </header>
+    {% if power_zones %}
+    <table>
+      <thead><tr><th>Zone</th><th>% FTP</th>{% if ftp %}<th>Watts</th>{% endif %}</tr></thead>
+      <tbody>
+        {% set prev_pct = 0 %}
+        {% for z in power_zones %}
+        <tr>
+          <td><span style="display:inline-block;width:12px;height:12px;border-radius:2px;background:{{ z.color }};margin-right:.4rem;vertical-align:middle"></span>{{ z.name }}</td>
+          <td>{{ prev_pct|int }}–{% if z.max_pct >= 900 %}∞{% else %}{{ z.max_pct|int }}{% endif %}%</td>
+          {% if ftp %}
+          <td>{{ (prev_pct / 100 * ftp)|int }}{% if z.max_pct < 900 %}–{{ (z.max_pct / 100 * ftp)|int }}{% else %}+{% endif %}</td>
+          {% endif %}
+        </tr>
+        {% set prev_pct = z.max_pct %}
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="muted"><small>No power zones configured.</small></p>
+    {% endif %}
+    {% if not ftp %}
+    <footer><small class="muted">Set your FTP in <a href="{{ url_for('settings') }}#charts">Settings → Charts</a> to see watt ranges.</small></footer>
+    {% endif %}
+  </article>
+</div>
+
+<article>
+  <header><strong>About training zones</strong></header>
+  <details>
+    <summary>Heart rate zones</summary>
+    <p style="margin-top:.5rem">
+      HR zones define exercise intensity relative to your maximum heart rate.
+      The percentages shown are the upper boundary of each zone.
+      Zone 2 (endurance) riding is the foundation of aerobic fitness; most polarized training plans
+      recommend 80% of training volume there. Zone 5 (VO₂ max) work is high-intensity and should
+      make up a small fraction of total training.
+    </p>
+    <p>
+      The five-zone model used here follows the widely adopted system described in
+      <a href="https://www.tandfonline.com/doi/abs/10.1080/02640410310001641638" target="_blank" rel="noopener">
+        Seiler &amp; Kjerland (2006)</a> and the British Cycling / TrainingPeaks conventions.
+      Your max HR can be estimated as 220 − age, but a field test gives a more accurate value.
+    </p>
+  </details>
+  <details>
+    <summary>Power zones</summary>
+    <p style="margin-top:.5rem">
+      Power zones are set relative to your <strong>Functional Threshold Power (FTP)</strong>: the
+      highest average power you can sustain for approximately 60 minutes.
+      The seven-zone Coggan model is the de-facto standard in cycling.
+    </p>
+    <p>
+      FTP can be estimated from a 20-minute all-out effort (take 95% of the average power) or
+      a dedicated ramp test. See
+      <a href="https://www.trainingpeaks.com/blog/power-training-levels/" target="_blank" rel="noopener">
+        Coggan's training levels</a> for the full model.
+    </p>
+    {% if hr_rest %}
+    <p>Your resting HR is set to <strong>{{ hr_rest|int }} bpm</strong>
+       (used for TRIMP computation in the fitness model).</p>
+    {% else %}
+    <p>Set your resting HR in <a href="{{ url_for('settings') }}#training">Settings → Training</a>
+       to enable TRIMP computation.</p>
+    {% endif %}
+  </details>
+</article>
+
+{# ═══════════════════════════════════════════════════════════════════════════ #}
+{# TAB: POWER CURVE                                                           #}
+{# ═══════════════════════════════════════════════════════════════════════════ #}
+{% elif tab == "power" %}
+
+{% set has_curve = curve_all != '{}' %}
+{% if not has_curve %}
+<article>
+  <p>No power curve data yet. Power curves are computed from activities with power meter data.
+     Upload or sync activities with power data to see your curve.</p>
+  {% if not ftp %}
+  <p><small class="muted">Set your FTP in <a href="{{ url_for('settings') }}#charts">Settings → Charts</a>
+     to unlock TSS-based metrics.</small></p>
+  {% endif %}
+</article>
+{% else %}
+
+<article>
+  <header><strong>Mean maximal power curve</strong></header>
+  <div style="position:relative;height:280px">
+    <canvas id="powerCurveChart"></canvas>
+  </div>
+  <footer>
+    <details>
+      <summary>What is the power curve?</summary>
+      <p style="margin-top:.5rem">
+        The <strong>Mean Maximal Power (MMP) curve</strong> plots the best average power you have
+        ever produced for each duration — from a 5-second sprint to a 60-minute effort.
+        It is a comprehensive fingerprint of your physiological capabilities.
+      </p>
+      <ul>
+        <li><strong>5s / 30s</strong> — neuromuscular / anaerobic capacity</li>
+        <li><strong>1 min / 5 min</strong> — VO₂ max power range</li>
+        <li><strong>20 min</strong> — a proxy for FTP (95% of 20-min best ≈ FTP)</li>
+        <li><strong>60 min</strong> — true functional threshold power</li>
+      </ul>
+      <p>
+        The model traces back to Monod &amp; Scherrer's critical power concept (1965) and
+        was popularized in cycling by Coggan. See
+        <a href="https://www.sciencedirect.com/science/article/pii/S1440244014001066" target="_blank" rel="noopener">
+          Pettitt (2014)</a> for a modern review.
+      </p>
+      {% if body_weight %}
+      <p>W/kg values use your body weight of <strong>{{ "%.1f"|format(body_weight) }} kg</strong>.
+        Update it in <a href="{{ url_for('settings') }}#training">Settings → Training</a>.</p>
+      {% else %}
+      <p>Set your body weight in <a href="{{ url_for('settings') }}#training">Settings → Training</a>
+         to see W/kg values.</p>
+      {% endif %}
+    </details>
+  </footer>
+</article>
+
+<script src="{{ url_for('static', filename='chart.min.js') }}"></script>
+<script>
+(function () {
+  const curveAll    = {{ curve_all }};
+  const curveRecent = {{ curve_recent }};
+  const wpkAll      = {{ wpk_all }};
+  const wpkRecent   = {{ wpk_recent }};
+  const labels      = ["5s","30s","1min","5min","20min","60min"];
+
+  const allData    = labels.map(l => curveAll[l]    ?? null);
+  const recentData = labels.map(l => curveRecent[l] ?? null);
+
+  const ctx = document.getElementById('powerCurveChart').getContext('2d');
+  new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'All-time best (W)',
+          data: allData,
+          borderColor: '#4fc3f7',
+          backgroundColor: 'rgba(79,195,247,0.08)',
+          borderWidth: 2,
+          pointRadius: 5,
+          tension: 0.3,
+          fill: false,
+        },
+        {
+          label: 'Last 90 days (W)',
+          data: recentData,
+          borderColor: '#FC4C02',
+          backgroundColor: 'rgba(252,76,2,0.08)',
+          borderWidth: 2,
+          pointRadius: 5,
+          tension: 0.3,
+          fill: false,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { labels: { color: '#ccc' } },
+        tooltip: {
+          callbacks: {
+            label: item => {
+              const w = item.raw;
+              if (w === null) return null;
+              const isAll = item.datasetIndex === 0;
+              const wpk = isAll ? wpkAll[item.label] : wpkRecent[item.label];
+              return ` ${item.dataset.label.split(' (')[0]}: ${w.toFixed(0)} W` +
+                (wpk ? `  (${wpk.toFixed(2)} W/kg)` : '');
+            },
+          },
+        },
+      },
+      scales: {
+        x: { ticks: { color: '#aaa' }, grid: { color: '#2a2a35' } },
+        y: {
+          ticks: { color: '#aaa', callback: v => v + ' W' },
+          grid: { color: '#2a2a35' },
+          beginAtZero: false,
+        },
+      },
+    },
+  });
+})();
+</script>
+{% endif %}
+
+{% endif %}{# end tab switch #}
 
 {% endblock %}

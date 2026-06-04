@@ -20,13 +20,16 @@ from flask_login import (
 )
 from werkzeug.security import check_password_hash, generate_password_hash
 
+import json
+
 from database import (
     _conn, clear_rendered, count_activities, create_user, enrich_activity_stream,
-    find_overlapping_activity, get_activity, get_admin_stats, get_error_activities,
+    find_overlapping_activity, get_activity, get_admin_stats, get_all_peak_powers,
+    get_activities_without_metrics, get_daily_loads, get_error_activities,
     get_setting, get_site_setting, get_stream, get_user_by_athlete_id, get_user_by_id,
     get_user_by_username, get_user_stats, get_zones, init_db, list_activities,
     list_settings, load_user_config, mark_posted, mark_rendered, set_activity_error,
-    set_scheduled, set_setting, upsert_activity,
+    set_scheduled, set_setting, update_activity_metrics, upsert_activity,
 )
 from mastodon_client import MastodonClient
 
@@ -84,6 +87,31 @@ def _render_and_track(activity_id: int, uid: int, cfg: dict, out_dir: str, row=N
 
     set_activity_error(DB_PATH, activity_id, uid, "render",
                        "; ".join(errors) if errors else None)
+
+    _compute_and_store_metrics(activity_id, uid, cfg, stream, row)
+
+
+def _compute_and_store_metrics(activity_id: int, uid: int, cfg: dict, stream: list, row):
+    """Compute NP, TSS, TRIMP, peak powers from stream data and store them."""
+    try:
+        watts_list   = [p.get("power")       for p in stream]
+        hr_list      = [p.get("hr")          for p in stream]
+        elapsed_list = [p.get("elapsed_secs") for p in stream]
+
+        ftp      = cfg["charts"]["power"]["ftp"]
+        hr_max   = cfg["charts"]["heart_rate"]["max_hr"]
+        hr_rest  = float(get_setting(DB_PATH, uid, "training", "hr_rest") or 0) or None
+        duration = row["moving_time"] or row["elapsed_time"]
+
+        np_w  = compute_np(watts_list)
+        tss   = compute_tss(np_w, duration, ftp) if np_w else None
+        trimp = compute_trimp(hr_list, elapsed_list, hr_max, hr_rest) if hr_max and hr_rest else None
+        peaks = compute_peak_powers(stream)
+        peak_json = json.dumps(peaks) if peaks else None
+
+        update_activity_metrics(DB_PATH, activity_id, uid, tss, np_w, trimp, peak_json)
+    except Exception as e:
+        print(f"[metrics] Failed for {activity_id}: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -160,6 +188,10 @@ from activity_parser import parse_file
 from charts import generate_charts
 from map_renderer import render_activity_map
 from strava import StravaClient, exchange_code, strava_auth_url
+from training_load import (
+    aggregate_power_curve, compute_np, compute_peak_powers, compute_pmc,
+    compute_trimp, compute_tss, weekly_load,
+)
 
 # ---------------------------------------------------------------------------
 # Bootstrap
@@ -649,9 +681,71 @@ def admin_full_sync():
 @app.route("/me")
 @login_required
 def me():
-    uid   = int(current_user.id)
+    uid = int(current_user.id)
+    tab = request.args.get("tab", "overview")
+
     stats = get_user_stats(DB_PATH, uid)
-    return render_template("me.html", stats=stats, username=current_user.username)
+    cfg   = load_user_config(DB_PATH, uid, _base_cfg)
+
+    # Backfill metrics for any activities that are missing them (background)
+    def _backfill():
+        pending = get_activities_without_metrics(DB_PATH, uid)
+        if not pending:
+            return
+        bcfg = load_user_config(DB_PATH, uid, _base_cfg)
+        for brow in pending:
+            bstream = get_stream(brow)
+            _compute_and_store_metrics(brow["id"], uid, bcfg, bstream, brow)
+    threading.Thread(target=_backfill, daemon=True).start()
+
+    # PMC and weekly load
+    daily_loads = get_daily_loads(DB_PATH, uid)
+    pmc_rows    = compute_pmc(daily_loads, days=180)
+    weekly_rows = weekly_load(daily_loads, weeks=26)
+
+    # Current fitness snapshot (last PMC point)
+    pmc_latest = pmc_rows[-1] if pmc_rows else {"ctl": 0, "atl": 0, "tsb": 0}
+
+    # Power curve
+    ftp = cfg["charts"]["power"]["ftp"]
+    body_weight = float(get_setting(DB_PATH, uid, "training", "body_weight_kg") or 0) or None
+    all_peaks    = get_all_peak_powers(DB_PATH, uid)
+    recent_peaks = get_all_peak_powers(DB_PATH, uid, days=90)
+    curve_all    = aggregate_power_curve(all_peaks)
+    curve_recent = aggregate_power_curve(recent_peaks)
+
+    # W/kg variants
+    if body_weight and ftp:
+        wpk_all    = {k: round(v / body_weight, 2) for k, v in curve_all.items()}
+        wpk_recent = {k: round(v / body_weight, 2) for k, v in curve_recent.items()}
+    else:
+        wpk_all = wpk_recent = {}
+
+    # Zones
+    hr_zones    = get_zones(DB_PATH, uid, "hr")
+    power_zones = get_zones(DB_PATH, uid, "power")
+    hr_max      = cfg["charts"]["heart_rate"]["max_hr"]
+    hr_rest     = float(get_setting(DB_PATH, uid, "training", "hr_rest") or 0) or None
+
+    return render_template(
+        "me.html",
+        username=current_user.username,
+        tab=tab,
+        stats=stats,
+        pmc_json=json.dumps(pmc_rows),
+        weekly_json=json.dumps(weekly_rows),
+        pmc_latest=pmc_latest,
+        ftp=ftp,
+        hr_max=hr_max,
+        hr_rest=hr_rest,
+        body_weight=body_weight,
+        hr_zones=hr_zones,
+        power_zones=power_zones,
+        curve_all=json.dumps(curve_all),
+        curve_recent=json.dumps(curve_recent),
+        wpk_all=json.dumps(wpk_all),
+        wpk_recent=json.dumps(wpk_recent),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -745,6 +839,17 @@ def save_charts():
         set_setting(DB_PATH, uid, "charts", key, val if val else "")
     flash("Chart settings saved.", "success")
     return redirect(url_for("settings") + "#charts")
+
+
+@app.route("/settings/training", methods=["POST"])
+@login_required
+def save_training():
+    uid = int(current_user.id)
+    for key in ("body_weight_kg", "hr_rest"):
+        val = request.form.get(key, "").strip()
+        set_setting(DB_PATH, uid, "training", key, val)
+    flash("Training settings saved.", "success")
+    return redirect(url_for("settings") + "#training")
 
 
 @app.route("/settings/stats", methods=["POST"])

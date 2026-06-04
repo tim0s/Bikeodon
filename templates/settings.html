@@ -183,6 +183,28 @@
   </form>
 </article>
 
+{# ── Training ─────────────────────────────────────────────────────────────── #}
+<article id="training">
+  <header><strong>Training</strong></header>
+  <form method="post" action="{{ url_for('save_training') }}">
+    <div class="grid">
+      <label>Body weight (kg)
+        <input type="number" name="body_weight_kg"
+               value="{{ cfg.get('training', {}).get('body_weight_kg') or '' }}"
+               min="30" max="200" step="0.1" placeholder="e.g. 70.5">
+        <small>Used to compute W/kg on the Power tab of your dashboard.</small>
+      </label>
+      <label>Resting heart rate (bpm)
+        <input type="number" name="hr_rest"
+               value="{{ cfg.get('training', {}).get('hr_rest') or '' }}"
+               min="30" max="100" placeholder="e.g. 50">
+        <small>Used for TRIMP computation. Measure first thing in the morning.</small>
+      </label>
+    </div>
+    <button type="submit">Save training settings</button>
+  </form>
+</article>
+
 {# ── Charts ───────────────────────────────────────────────────────────────── #}
 <article id="charts">
   <header><strong>Charts</strong></header>

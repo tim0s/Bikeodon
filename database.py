@@ -49,6 +49,8 @@ _DEFAULT_SETTINGS = [
     ("charts",         "style_power_line_color",  "#4fc3f7"),
     ("charts",         "hr_enabled",              "true"),
     ("charts",         "power_enabled",           "true"),
+    ("training",       "body_weight_kg",           ""),
+    ("training",       "hr_rest",                 ""),
     ("stats",          "fields",                  "distance,elevation_gain"),
     ("stats_overlay",  "enabled",                 "true"),
     ("stats_overlay",  "background_color",        "#000000"),
@@ -186,6 +188,10 @@ def init_db(db_path):
         ("source",               "TEXT NOT NULL DEFAULT 'strava'"),
         ("render_error",         "TEXT"),
         ("post_error",           "TEXT"),
+        ("tss",                  "REAL"),
+        ("np_watts",             "REAL"),
+        ("trimp",                "REAL"),
+        ("peak_power_json",      "TEXT"),
     ]:
         try:
             conn.execute(f"ALTER TABLE activities ADD COLUMN {col} {typedef}")
@@ -425,6 +431,10 @@ def load_user_config(db_path: str, user_id: int, base_cfg: dict) -> dict:
             "stats": {
                 "fields": [f.strip() for f in txt("stats", "fields", "distance,elevation_gain").split(",") if f.strip()],
             },
+        },
+        "training": {
+            "body_weight_kg": txt("training", "body_weight_kg"),
+            "hr_rest":        txt("training", "hr_rest"),
         },
         "stats_overlay": {
             "enabled":            flag("stats_overlay", "enabled", True),
@@ -894,3 +904,76 @@ def enrich_activity_stream(db_path, activity_id: int, user_id: int, points: list
     )
     conn.commit()
     conn.close()
+
+
+def update_activity_metrics(
+    db_path, activity_id: int, user_id: int,
+    tss: float | None, np_watts: float | None,
+    trimp: float | None, peak_power_json: str | None,
+):
+    conn = _conn(db_path)
+    conn.execute(
+        "UPDATE activities SET tss=?, np_watts=?, trimp=?, peak_power_json=?"
+        " WHERE id=? AND user_id=?",
+        (tss, np_watts, trimp, peak_power_json, activity_id, user_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_daily_loads(db_path, user_id: int) -> dict:
+    """Return {ISO-date: tss} for all activities with a TSS value."""
+    conn = _conn(db_path)
+    rows = conn.execute(
+        "SELECT start_date, tss FROM activities"
+        " WHERE user_id=? AND tss IS NOT NULL AND start_date IS NOT NULL",
+        (user_id,),
+    ).fetchall()
+    conn.close()
+    result = {}
+    for r in rows:
+        ds = (r["start_date"] or "")[:10]
+        if ds:
+            result[ds] = result.get(ds, 0.0) + (r["tss"] or 0.0)
+    return result
+
+
+def get_all_peak_powers(db_path, user_id: int, days: int | None = None) -> list:
+    """
+    Return list of parsed peak_power dicts for all activities (or last `days` days).
+    """
+    conn = _conn(db_path)
+    if days is not None:
+        from datetime import datetime, timedelta, timezone
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        rows = conn.execute(
+            "SELECT peak_power_json FROM activities"
+            " WHERE user_id=? AND peak_power_json IS NOT NULL AND start_date >= ?",
+            (user_id, cutoff),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT peak_power_json FROM activities"
+            " WHERE user_id=? AND peak_power_json IS NOT NULL",
+            (user_id,),
+        ).fetchall()
+    conn.close()
+    result = []
+    for r in rows:
+        try:
+            result.append(json.loads(r["peak_power_json"]))
+        except (json.JSONDecodeError, TypeError):
+            pass
+    return result
+
+
+def get_activities_without_metrics(db_path, user_id: int) -> list:
+    """Return activities that have a stream but no computed metrics yet."""
+    conn = _conn(db_path)
+    rows = conn.execute(
+        "SELECT * FROM activities"
+        " WHERE user_id=? AND tss IS NULL AND points_json IS NOT NULL AND points_json != '[]'",
+        (user_id,),
+    ).fetchall()
+    conn.close()
+    return rows
