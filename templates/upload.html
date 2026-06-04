@@ -20,14 +20,51 @@
 </article>
 
 <article>
-  <header><strong>Strava data export</strong></header>
-  <p>To import all your Strava activities:</p>
-  <ol>
-    <li>Go to <strong>Strava → Settings → My Account → Download or Delete your data</strong></li>
-    <li>Request your archive and wait for the email</li>
-    <li>Unzip the archive — activity files are in the <code>activities/</code> folder (GPX and FIT files)</li>
-    <li>Select all files in that folder and upload them here</li>
-  </ol>
+  <details>
+    <summary><strong>Where to get your activity files</strong></summary>
+
+    <p>Every major platform lets you export activity files. Upload them here — Bikeodon accepts FIT, TCX, and GPX.</p>
+
+    <p><strong>Zwift</strong></p>
+    <ol>
+      <li>Go to <a href="https://www.zwift.com/profile" target="_blank" rel="noopener">zwift.com → Profile</a></li>
+      <li>Click an activity → <strong>Download FIT file</strong></li>
+    </ol>
+
+    <p><strong>TrainerRoad</strong></p>
+    <ol>
+      <li>Go to <a href="https://www.trainerroad.com/app/career/calendar" target="_blank" rel="noopener">trainerroad.com → Calendar</a></li>
+      <li>Click a completed workout → <strong>Export</strong> → <strong>Download FIT file</strong></li>
+    </ol>
+
+    <p><strong>Wahoo ELEMNT</strong></p>
+    <ol>
+      <li>Open the Wahoo app on your phone</li>
+      <li>Tap an activity → share icon → <strong>Export FIT file</strong></li>
+      <li>Alternatively, connect the ELEMNT to your computer via USB — FIT files are in the <code>ELEMNT/</code> folder</li>
+    </ol>
+
+    <p><strong>Garmin Connect</strong></p>
+    <ol>
+      <li>Go to <a href="https://connect.garmin.com/modern/activities" target="_blank" rel="noopener">connect.garmin.com → Activities</a></li>
+      <li>Click an activity → gear icon → <strong>Export Original</strong> (FIT format)</li>
+      <li>To export everything at once: <strong>Account → Data Management → Export Your Data</strong></li>
+    </ol>
+
+    <p><strong>Polar</strong></p>
+    <ol>
+      <li>Go to <a href="https://flow.polar.com/training/history" target="_blank" rel="noopener">flow.polar.com → Training → Diary</a></li>
+      <li>Click a session → <strong>Export session</strong> → choose TCX or GPX</li>
+    </ol>
+
+    <p><strong>Strava bulk export</strong></p>
+    <ol>
+      <li>Go to <strong>Settings → My Account → Download or Delete your data</strong></li>
+      <li>Request your archive and wait for the email</li>
+      <li>Unzip — activity files are in the <code>activities/</code> folder</li>
+      <li>Select all files and upload them here</li>
+    </ol>
+  </details>
 </article>
 
 {% endblock %}
