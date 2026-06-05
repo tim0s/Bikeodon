@@ -39,6 +39,15 @@ from database import (
 from strava import StravaClient, delete_webhook, list_webhooks, register_webhook
 from map_renderer import render_activity_map
 from mastodon_client import MastodonClient
+from database import (
+    get_activities_without_metrics, reset_metrics_computed,
+    update_activity_metrics, get_zones, get_all_peak_powers,
+)
+from inference import infer_training_params
+from training_load import (
+    aggregate_power_curve, compute_np, compute_peak_powers, compute_pmc,
+    compute_trimp, compute_tss, compute_zone_times, fit_critical_power,
+)
 
 STRAVA_CLIENT_ID     = os.environ.get("STRAVA_CLIENT_ID", "")
 STRAVA_CLIENT_SECRET = os.environ.get("STRAVA_CLIENT_SECRET", "")
@@ -395,6 +404,98 @@ def _now():
 
 
 # ---------------------------------------------------------------------------
+# Metrics backfill
+# ---------------------------------------------------------------------------
+
+def cmd_metrics(args, cfg):
+    import json as _json
+    db_path = cfg["database"]["path"]
+    uid     = args.user_id
+
+    if args.all:
+        print("Clearing metrics_computed_at for all activities…")
+        reset_metrics_computed(db_path, uid)
+        # Also clear cached inference so it re-runs from scratch
+        set_setting(db_path, uid, "inference", "ftp",      "")
+        set_setting(db_path, uid, "inference", "max_hr",   "")
+        set_setting(db_path, uid, "inference", "cp",       "")
+        set_setting(db_path, uid, "inference", "w_prime",  "")
+
+    pending = get_activities_without_metrics(db_path, uid)
+    if not pending:
+        print("No activities need metrics computation.")
+    else:
+        print(f"{len(pending)} activities to process…")
+
+        # Run inference once upfront
+        user_cfg = load_user_config(db_path, uid, args.base_cfg)
+        ftp    = user_cfg["charts"]["power"]["ftp"]
+        hr_max = user_cfg["charts"]["heart_rate"]["max_hr"]
+
+        if not ftp or not hr_max:
+            print("Running inference (FTP, max HR)…")
+            inferred = infer_training_params(db_path)
+            if inferred["ftp"] and not ftp:
+                ftp = inferred["ftp"]
+                set_setting(db_path, uid, "inference", "ftp", str(round(ftp, 1)))
+                print(f"  Inferred FTP:    {ftp:.0f} W")
+            if inferred["max_hr"] and not hr_max:
+                hr_max = inferred["max_hr"]
+                set_setting(db_path, uid, "inference", "max_hr", str(round(hr_max, 1)))
+                print(f"  Inferred max HR: {hr_max:.0f} bpm")
+
+        hr_rest     = float(get_setting(db_path, uid, "training", "hr_rest") or 0) or None
+        hr_zones    = get_zones(db_path, uid, "hr")
+        power_zones = get_zones(db_path, uid, "power")
+
+        done = errors = 0
+        for i, row in enumerate(pending, 1):
+            try:
+                stream       = get_stream(row)
+                watts_list   = [p.get("power")        for p in stream]
+                hr_list      = [p.get("hr")           for p in stream]
+                elapsed_list = [p.get("elapsed_secs") for p in stream]
+                duration     = row["moving_time"] or row["elapsed_time"]
+
+                np_w  = compute_np(watts_list)
+                tss   = compute_tss(np_w, duration, ftp) if np_w else None
+                trimp = compute_trimp(hr_list, elapsed_list, hr_max, hr_rest) if hr_max and hr_rest else None
+                peaks = compute_peak_powers(stream)
+
+                hr_zone_secs, power_zone_secs = compute_zone_times(
+                    stream, hr_zones, power_zones, hr_max, ftp
+                )
+
+                update_activity_metrics(
+                    db_path, row["id"], uid,
+                    tss, np_w, trimp,
+                    _json.dumps(peaks) if peaks else None,
+                    _json.dumps(hr_zone_secs)    if hr_zone_secs    else None,
+                    _json.dumps(power_zone_secs) if power_zone_secs else None,
+                )
+                done += 1
+                print(f"  [{i}/{len(pending)}] {row['name'] or row['id']}"
+                      + (f"  TSS={tss:.0f}" if tss else "")
+                      + (f"  NP={np_w:.0f}W" if np_w else ""))
+            except Exception as e:
+                errors += 1
+                print(f"  [{i}/{len(pending)}] ERROR {row['id']}: {e}")
+
+        print(f"\nDone — {done} computed, {errors} errors.")
+
+    # Fit CP/W' from the now-populated MMP curve
+    all_peaks   = get_all_peak_powers(db_path, uid)
+    curve       = aggregate_power_curve(all_peaks)
+    cp, w_prime = fit_critical_power(curve)
+    if cp:
+        set_setting(db_path, uid, "inference", "cp",      str(cp))
+        set_setting(db_path, uid, "inference", "w_prime", str(w_prime))
+        print(f"\nCritical Power fit:  CP={cp:.0f} W   W'={w_prime/1000:.1f} kJ")
+    else:
+        print("\nCould not fit CP model (need MMP data at ≥2 durations ≥1 min).")
+
+
+# ---------------------------------------------------------------------------
 # Config management
 # ---------------------------------------------------------------------------
 
@@ -530,6 +631,10 @@ def main():
     p_admin = sub.add_parser("admin", help="Grant admin privileges to a user")
     p_admin.add_argument("username", help="Username to promote")
 
+    p_metrics = sub.add_parser("metrics", help="Compute training metrics for all activities")
+    p_metrics.add_argument("--all", action="store_true",
+                           help="Recompute even already-processed activities")
+
     p_invite = sub.add_parser("invite-code", help="Set or show the registration invite code")
     p_invite.add_argument("code", nargs="?", help="New invite code (omit to show current)")
 
@@ -577,6 +682,7 @@ def main():
         "admin":       cmd_admin,
         "invite-code": cmd_invite_code,
         "config":      cmd_config,
+        "metrics":     cmd_metrics,
     }[args.command](args, cfg)
 
 
