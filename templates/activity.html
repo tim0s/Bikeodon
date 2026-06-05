@@ -77,6 +77,96 @@
 </div>
 {% endif %}
 
+{% if wbal_json %}
+<article style="margin-bottom:1rem">
+  <header>
+    <strong>W' balance</strong>
+    <small class="muted"> — CP {{ cp|int }} W &nbsp;·&nbsp; W' {{ "%.1f"|format(w_prime / 1000) }} kJ</small>
+  </header>
+  <div style="position:relative;height:160px">
+    <canvas id="wbalChart"></canvas>
+  </div>
+  <footer>
+    <details>
+      <summary>What is W' balance?</summary>
+      <p style="margin-top:.5rem">
+        <strong>Critical Power (CP)</strong> is the highest power you can sustain indefinitely
+        without drawing on your finite anaerobic reserve.
+        <strong>W'</strong> (W-prime) is that reserve, measured in joules.
+        Every second you ride above CP, W' depletes; every second below CP, it recovers.
+        When W' hits zero you are at your physiological limit — you must slow down.
+      </p>
+      <p>
+        The recovery model follows
+        <a href="https://journals.lww.com/acsm-msse/fulltext/2012/08000/modeling_the_expenditure_and_reconstitution_of.19.aspx"
+           target="_blank" rel="noopener">Skiba et al. (2012)</a>.
+        CP and W' are estimated from your all-time mean-maximal power curve.
+      </p>
+    </details>
+  </footer>
+</article>
+<script src="{{ url_for('static', filename='chart.min.js') }}"></script>
+<script>
+(function () {
+  const wbal = {{ wbal_json | safe }};
+  const labels = wbal.map(d => {
+    const m = Math.floor(d.elapsed_secs / 60);
+    const s = d.elapsed_secs % 60;
+    return m + ':' + s.toString().padStart(2, '0');
+  });
+  const data = wbal.map(d => d.wbal_pct);
+  const ctx = document.getElementById('wbalChart').getContext('2d');
+  new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: "W' balance (%)",
+        data,
+        borderColor: data.map(v => v > 50 ? '#70ad47' : v > 20 ? '#ffc000' : '#d32f2f'),
+        segment: {
+          borderColor: ctx => {
+            const v = ctx.p1.parsed.y;
+            return v > 50 ? '#70ad47' : v > 20 ? '#ffc000' : '#d32f2f';
+          },
+        },
+        backgroundColor: 'rgba(162,89,255,0.06)',
+        borderWidth: 1.5,
+        pointRadius: 0,
+        tension: 0.2,
+        fill: true,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            title: items => items[0].label,
+            label: item => ` W' balance: ${item.raw.toFixed(1)}%`,
+          },
+        },
+      },
+      scales: {
+        x: {
+          ticks: { maxTicksLimit: 10, color: '#aaa' },
+          grid: { color: '#2a2a35' },
+        },
+        y: {
+          min: 0,
+          max: 100,
+          ticks: { color: '#aaa', callback: v => v + '%' },
+          grid: { color: '#2a2a35' },
+        },
+      },
+    },
+  });
+})();
+</script>
+{% endif %}
+
 {% if has_avg_watts and not has_power_chart %}
 <p class="config-warning" style="margin-bottom:1rem">
   Power chart unavailable — this activity has average power ({{ activity.avg_watts }} W) but

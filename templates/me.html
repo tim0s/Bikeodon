@@ -68,6 +68,16 @@
       {% if pmc_latest.tsb >= 0 %}+{% endif %}{{ "%.0f"|format(pmc_latest.tsb) }}
     </span>
   </div>
+  {% if cp %}
+  <div class="stat-chip" title="Critical Power — highest power you can sustain without W' depletion. Fitted from your MMP curve.">
+    <span class="stat-label">Critical Power</span>
+    <span class="stat-value" style="color:#a259ff">{{ cp|int }} W</span>
+  </div>
+  <div class="stat-chip" title="W' (W-prime) — your total anaerobic work capacity above CP, in kilojoules.">
+    <span class="stat-label">W'</span>
+    <span class="stat-value" style="color:#a259ff">{{ "%.1f"|format(w_prime / 1000) }} kJ</span>
+  </div>
+  {% endif %}
 </div>
 <small class="muted">TSS-based. <a href="{{ url_for('me') }}?tab=fitness">View full PMC →</a></small>
 {% endif %}
@@ -465,11 +475,21 @@
         <a href="https://www.sciencedirect.com/science/article/pii/S1440244014001066" target="_blank" rel="noopener">
           Pettitt (2014)</a> for a modern review.
       </p>
+      {% if cp %}
+      <p>
+        The <strong style="color:#a259ff">dashed purple line</strong> is your fitted
+        <strong>Critical Power model</strong>: P(t) = W′/t + CP.
+        Your CP is <strong>{{ cp|int }} W</strong> — the power you can sustain without depleting
+        your anaerobic reserve — and W′ is <strong>{{ "%.1f"|format(w_prime / 1000) }} kJ</strong>.
+        Points above the model line represent efforts that exceed the CP hyperbola
+        (i.e., W′ was being spent).
+      </p>
+      {% endif %}
       {% if body_weight %}
       <p>W/kg values use your body weight of <strong>{{ "%.1f"|format(body_weight) }} kg</strong>.
-        Update it in <a href="{{ url_for('settings') }}#training">Settings → Training</a>.</p>
+        Update it in <a href="{{ url_for('settings', section='training') }}">Settings → Training</a>.</p>
       {% else %}
-      <p>Set your body weight in <a href="{{ url_for('settings') }}#training">Settings → Training</a>
+      <p>Set your body weight in <a href="{{ url_for('settings', section='training') }}">Settings → Training</a>
          to see W/kg values.</p>
       {% endif %}
     </details>
@@ -484,38 +504,58 @@
   const wpkAll      = {{ wpk_all | safe }};
   const wpkRecent   = {{ wpk_recent | safe }};
   const labels      = ["5s","30s","1min","5min","20min","60min"];
+  const durations   = [5, 30, 60, 300, 1200, 3600];
 
   const allData    = labels.map(l => curveAll[l]    ?? null);
   const recentData = labels.map(l => curveRecent[l] ?? null);
 
+  // CP model overlay: P(t) = W'/t + CP
+  const cp      = {{ cp if cp else 'null' }};
+  const wPrime  = {{ w_prime if w_prime else 'null' }};
+  const cpCurve = (cp && wPrime)
+    ? durations.map(t => Math.round(wPrime / t + cp))
+    : labels.map(() => null);
+
+  const datasets = [
+    {
+      label: 'All-time best (W)',
+      data: allData,
+      borderColor: '#4fc3f7',
+      backgroundColor: 'rgba(79,195,247,0.08)',
+      borderWidth: 2,
+      pointRadius: 5,
+      tension: 0.3,
+      fill: false,
+    },
+    {
+      label: 'Last 90 days (W)',
+      data: recentData,
+      borderColor: '#FC4C02',
+      backgroundColor: 'rgba(252,76,2,0.08)',
+      borderWidth: 2,
+      pointRadius: 5,
+      tension: 0.3,
+      fill: false,
+    },
+  ];
+  if (cp && wPrime) {
+    datasets.push({
+      label: `CP model (CP=${cp}W, W'=${Math.round(wPrime/1000*10)/10}kJ)`,
+      data: cpCurve,
+      borderColor: '#a259ff',
+      backgroundColor: 'transparent',
+      borderWidth: 1.5,
+      borderDash: [5, 4],
+      pointRadius: 0,
+      tension: 0,
+      fill: false,
+    });
+  }
+
   const ctx = document.getElementById('powerCurveChart').getContext('2d');
   new Chart(ctx, {
     type: 'line',
-    data: {
-      labels,
-      datasets: [
-        {
-          label: 'All-time best (W)',
-          data: allData,
-          borderColor: '#4fc3f7',
-          backgroundColor: 'rgba(79,195,247,0.08)',
-          borderWidth: 2,
-          pointRadius: 5,
-          tension: 0.3,
-          fill: false,
-        },
-        {
-          label: 'Last 90 days (W)',
-          data: recentData,
-          borderColor: '#FC4C02',
-          backgroundColor: 'rgba(252,76,2,0.08)',
-          borderWidth: 2,
-          pointRadius: 5,
-          tension: 0.3,
-          fill: false,
-        },
-      ],
-    },
+    data: { labels, datasets },
     options: {
       responsive: true,
       maintainAspectRatio: false,
@@ -526,6 +566,7 @@
             label: item => {
               const w = item.raw;
               if (w === null) return null;
+              if (item.datasetIndex === 2) return ` CP model: ${w} W`;
               const isAll = item.datasetIndex === 0;
               const wpk = isAll ? wpkAll[item.label] : wpkRecent[item.label];
               return ` ${item.dataset.label.split(' (')[0]}: ${w.toFixed(0)} W` +

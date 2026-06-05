@@ -215,7 +215,8 @@ from map_renderer import render_activity_map
 from strava import StravaClient, exchange_code, strava_auth_url
 from training_load import (
     aggregate_power_curve, compute_np, compute_peak_powers, compute_pmc,
-    compute_trimp, compute_tss, compute_zone_times, weekly_load,
+    compute_trimp, compute_tss, compute_wbal, compute_zone_times,
+    fit_critical_power, weekly_load,
 )
 from inference import infer_training_params
 
@@ -235,6 +236,28 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-key-change-me-in-production")
 
 init_db(DB_PATH)
+
+# Log unhandled exceptions to a file so they're visible without a debugger attached.
+import logging
+_log_path = os.path.join(os.path.dirname(DB_PATH), "bikeodon_errors.log")
+logging.basicConfig(
+    filename=_log_path,
+    level=logging.ERROR,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+app.logger.setLevel(logging.ERROR)
+
+
+@app.errorhandler(500)
+def internal_error(exc):
+    import traceback
+    tb = traceback.format_exc()
+    app.logger.error("500 on %s\n%s", request.path, tb)
+    return (
+        f"<pre style='padding:2rem;font-family:monospace;white-space:pre-wrap'>"
+        f"<strong>500 Internal Server Error</strong>\n\n{tb}</pre>"
+    ), 500
+
 
 app.jinja_env.globals["enumerate"] = enumerate
 
@@ -495,9 +518,27 @@ def activity(activity_id):
     mastodon_configured = bool(get_setting(DB_PATH, uid, "mastodon", "token"))
     has_avg_watts   = bool(row["average_watts"])
     has_power_chart = os.path.exists(os.path.join(out_dir, f"{activity_id}_power.png"))
+
+    # W' balance — only available when this activity has power data and CP is cached
+    wbal_json = None
+    act_cp = act_w_prime = None
+    _cp_v     = get_setting(DB_PATH, uid, "inference", "cp")
+    _wprime_v = get_setting(DB_PATH, uid, "inference", "w_prime")
+    if row["average_watts"] and _cp_v and _wprime_v:
+        try:
+            _stream = get_stream(row)
+            _wbal   = compute_wbal(_stream, float(_cp_v), float(_wprime_v))
+            if _wbal:
+                wbal_json   = json.dumps(_wbal)
+                act_cp      = float(_cp_v)
+                act_w_prime = float(_wprime_v)
+        except Exception as _e:
+            print(f"[wbal] Failed for activity {activity_id}: {_e}")
+
     return render_template("activity.html", activity=act, map_url=map_url,
                            chart_urls=chart_urls, mastodon_configured=mastodon_configured,
-                           has_avg_watts=has_avg_watts, has_power_chart=has_power_chart)
+                           has_avg_watts=has_avg_watts, has_power_chart=has_power_chart,
+                           wbal_json=wbal_json, cp=act_cp, w_prime=act_w_prime)
 
 
 @app.route("/activity/<int:activity_id>/rerender", methods=["POST"])
@@ -551,7 +592,9 @@ def schedule_activity(activity_id):
 @login_required
 def output_file(filename):
     out_dir = os.path.abspath(_base_cfg["map"].get("output_dir", "output"))
-    return send_from_directory(out_dir, filename)
+    response = send_from_directory(out_dir, filename)
+    response.headers["Cache-Control"] = "no-cache"
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -791,6 +834,12 @@ def me():
     curve_all    = aggregate_power_curve(all_peaks)
     curve_recent = aggregate_power_curve(recent_peaks)
 
+    # Critical Power model fit from aggregated MMP curve
+    cp, w_prime = fit_critical_power(curve_all)
+    if cp:
+        set_setting(DB_PATH, uid, "inference", "cp",      str(cp))
+        set_setting(DB_PATH, uid, "inference", "w_prime", str(w_prime))
+
     # W/kg variants
     if body_weight and ftp:
         wpk_all    = {k: round(v / body_weight, 2) for k, v in curve_all.items()}
@@ -828,6 +877,8 @@ def me():
         hr_max=hr_max,
         hr_rest=hr_rest,
         body_weight=body_weight,
+        cp=cp,
+        w_prime=w_prime,
         hr_zones=hr_zones,
         power_zones=power_zones,
         hr_zone_chart_json=hr_zone_chart_json,

@@ -282,3 +282,102 @@ def aggregate_power_curve(peak_list: list) -> dict:
         if best is not None:
             result[label] = best
     return result
+
+
+# Map from MMP label to duration in seconds — only the aerobic range used for CP fitting.
+# 5s/30s are excluded because they are neuromuscular and violate the CP model's assumptions.
+_CP_FIT_DURATIONS = {"1min": 60, "5min": 300, "20min": 1200, "60min": 3600}
+
+
+def fit_critical_power(mmp_dict: dict) -> tuple:
+    """
+    Estimate Critical Power (CP) and W' from the mean-maximal power curve.
+
+    Linear work-time model (Monod & Scherrer 1965; Morton et al. 1996):
+        Work(t) = P(t) × t = CP × t + W'
+    Ordinary least-squares regression on (t, Work) gives slope=CP, intercept=W'.
+
+    Uses only durations ≥ 1 min where the severe-intensity domain applies.
+    Returns (cp_watts, w_prime_joules) rounded, or (None, None) if the fit is
+    invalid (fewer than 2 points, or non-positive CP / W').
+
+    Reference:
+      Monod & Scherrer (1965). "The work capacity of a synergic muscular group."
+      Ergonomics, 8(3), 329-338.
+    """
+    points = [
+        (t, mmp_dict[label] * t)
+        for label, t in _CP_FIT_DURATIONS.items()
+        if label in mmp_dict and mmp_dict[label] is not None
+    ]
+    if len(points) < 2:
+        return None, None
+
+    n    = len(points)
+    sx   = sum(p[0] for p in points)
+    sy   = sum(p[1] for p in points)
+    sxy  = sum(p[0] * p[1] for p in points)
+    sx2  = sum(p[0] ** 2 for p in points)
+
+    denom = n * sx2 - sx * sx
+    if denom == 0:
+        return None, None
+
+    cp      = (n * sxy - sx * sy) / denom
+    w_prime = (sy - cp * sx) / n
+
+    if cp <= 0 or w_prime <= 0:
+        return None, None
+
+    return round(cp, 1), round(w_prime)
+
+
+def compute_wbal(stream: list, cp: float, w_prime: float) -> list | None:
+    """
+    W' balance over time using the Skiba (2012) differential model.
+
+    Depletion  (P > CP): dW'bal = -(P - CP) × dt
+    Reconstitution (P ≤ CP): dW'bal = (W' - W'bal) × (CP - P) / W' × dt
+
+    Returns a list of {elapsed_secs, wbal_pct} sampled every ~10 s,
+    where wbal_pct is W'bal expressed as a percentage of the full W' reserve.
+    Returns None if there is insufficient power data.
+
+    Reference:
+      Skiba et al. (2012). "Modeling the expenditure and reconstitution of work
+      capacity above critical power." Medicine & Science in Sports & Exercise, 44(8).
+    """
+    pairs = sorted(
+        [(p["elapsed_secs"], p["power"])
+         for p in stream
+         if p.get("power") is not None and p.get("elapsed_secs") is not None],
+        key=lambda x: x[0],
+    )
+    if len(pairs) < 10:
+        return None
+
+    wbal        = float(w_prime)
+    result      = []
+    sample_step = 10          # output point every ~10 s
+    next_sample = pairs[0][0]
+
+    for i in range(1, len(pairs)):
+        t_prev, p_prev = pairs[i - 1]
+        t_curr, _      = pairs[i]
+        dt = t_curr - t_prev
+        if dt <= 0 or dt > 120:   # skip gaps / pauses
+            continue
+        if p_prev > cp:
+            wbal -= (p_prev - cp) * dt
+        else:
+            wbal += (w_prime - wbal) * (cp - p_prev) / w_prime * dt
+        wbal = max(0.0, min(w_prime, wbal))
+
+        if t_curr >= next_sample:
+            result.append({
+                "elapsed_secs": int(t_curr),
+                "wbal_pct": round(wbal / w_prime * 100, 1),
+            })
+            next_sample = t_curr + sample_step
+
+    return result if len(result) > 5 else None
