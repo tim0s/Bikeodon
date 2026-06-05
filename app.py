@@ -553,13 +553,15 @@ def rerender_activity(activity_id):
     cfg     = load_user_config(DB_PATH, uid, _base_cfg)
     out_dir = _base_cfg["map"].get("output_dir", "output")
     clear_rendered(DB_PATH, activity_id, uid)
-    _render_and_track(activity_id, uid, cfg, out_dir, row=row)
 
-    row = get_activity(DB_PATH, activity_id, user_id=uid)
-    if row and row["render_error"]:
-        flash(f"Render failed: {row['render_error']}", "error")
-    else:
-        flash("Re-rendered successfully.", "success")
+    def _do_render():
+        try:
+            _render_and_track(activity_id, uid, cfg, out_dir, row=row)
+        except Exception as e:
+            print(f"[rerender] Failed for {activity_id}: {e}")
+
+    threading.Thread(target=_do_render, daemon=True).start()
+    flash("Re-rendering in the background — refresh in a few seconds.", "success")
     return redirect(url_for("activity", activity_id=activity_id))
 
 
