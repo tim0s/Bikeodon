@@ -19,38 +19,6 @@
 {# ═══════════════════════════════════════════════════════════════════════════ #}
 {% if tab == "overview" %}
 
-<h3>All time</h3>
-<div class="activity-stats">
-  <div class="stat-chip">
-    <span class="stat-label">Activities</span>
-    <span class="stat-value">{{ stats.total_count }}</span>
-  </div>
-  <div class="stat-chip">
-    <span class="stat-label">Distance</span>
-    <span class="stat-value">{{ "%.0f"|format(stats.total_distance) }} km</span>
-  </div>
-  <div class="stat-chip">
-    <span class="stat-label">Elevation</span>
-    <span class="stat-value">{{ "%.0f"|format(stats.total_elevation) }} m</span>
-  </div>
-</div>
-
-<h3>{{ stats.year }}</h3>
-<div class="activity-stats">
-  <div class="stat-chip">
-    <span class="stat-label">Activities</span>
-    <span class="stat-value">{{ stats.year_count }}</span>
-  </div>
-  <div class="stat-chip">
-    <span class="stat-label">Distance</span>
-    <span class="stat-value">{{ "%.0f"|format(stats.year_distance) }} km</span>
-  </div>
-  <div class="stat-chip">
-    <span class="stat-label">Elevation</span>
-    <span class="stat-value">{{ "%.0f"|format(stats.year_elevation) }} m</span>
-  </div>
-</div>
-
 {% if pmc_latest.ctl > 0 %}
 <h3>Current fitness</h3>
 <div class="activity-stats">
@@ -88,7 +56,7 @@
 </div>
 <small class="muted">
   Training Stress Score (TSS) per week. Activities without power data do not contribute TSS.
-  Set your FTP in <a href="{{ url_for('settings') }}#charts">Settings → Charts</a> and re-render older activities to backfill.
+  Set your FTP in <a href="{{ url_for('settings', section='charts') }}">Settings → Charts</a> and re-render older activities to backfill.
 </small>
 
 {% if stats.by_sport %}
@@ -102,6 +70,30 @@
   {% endfor %}
 </div>
 {% endif %}
+
+<h3>Totals</h3>
+<table>
+  <thead>
+    <tr><th></th><th>{{ stats.year }}</th><th>All time</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td class="muted"><small>Activities</small></td>
+      <td>{{ stats.year_count }}</td>
+      <td>{{ stats.total_count }}</td>
+    </tr>
+    <tr>
+      <td class="muted"><small>Distance</small></td>
+      <td>{{ "%.0f"|format(stats.year_distance) }} km</td>
+      <td>{{ "%.0f"|format(stats.total_distance) }} km</td>
+    </tr>
+    <tr>
+      <td class="muted"><small>Elevation</small></td>
+      <td>{{ "%.0f"|format(stats.year_elevation) }} m</td>
+      <td>{{ "%.0f"|format(stats.total_elevation) }} m</td>
+    </tr>
+  </tbody>
+</table>
 
 <script src="{{ url_for('static', filename='chart.min.js') }}"></script>
 <script>
