@@ -510,10 +510,12 @@
   const recentData = labels.map(l => curveRecent[l] ?? null);
 
   // CP model overlay: P(t) = W'/t + CP
+  // Only draw for durations ≥ 1 min (the domain the model was fitted on).
+  // At 5s/30s the hyperbola diverges to unrealistic wattages and skews the axis.
   const cp      = {{ cp if cp else 'null' }};
   const wPrime  = {{ w_prime if w_prime else 'null' }};
   const cpCurve = (cp && wPrime)
-    ? durations.map(t => Math.round(wPrime / t + cp))
+    ? durations.map(t => t >= 60 ? Math.round(wPrime / t + cp) : null)
     : labels.map(() => null);
 
   const datasets = [
