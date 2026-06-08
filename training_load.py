@@ -192,10 +192,12 @@ def weekly_load(daily_tss: dict, weeks: int = 26) -> list:
             pass
 
     now = datetime.now(timezone.utc)
+    # Anchor to Monday of the current ISO week so each step is exactly one unique week.
+    monday = now - timedelta(days=now.weekday())
     result = []
     for i in range(weeks - 1, -1, -1):
-        week_start = now - timedelta(weeks=i)
-        label = week_start.strftime("%G-W%V")
+        week_monday = monday - timedelta(weeks=i)
+        label = week_monday.strftime("%G-W%V")
         result.append({"week": label, "tss": round(by_week.get(label, 0.0), 1)})
     return result
 
