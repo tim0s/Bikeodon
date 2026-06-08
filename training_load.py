@@ -35,6 +35,61 @@ def compute_np(watts_list: list) -> float | None:
     return mean4 ** 0.25
 
 
+def compute_hr_tss(
+    hr_list:      list,
+    elapsed_list: list,
+    hr_max:       float,
+    hr_rest:      float,
+    lthr:         float,
+) -> float | None:
+    """
+    Heart-rate TSS (hrTSS) — a power-TSS-compatible effort score using HR data.
+
+    Intensity Factor is defined as the ratio of average HR reserve to threshold
+    HR reserve, where HR reserve (HRR) = (HR − HR_rest) / (HR_max − HR_rest).
+
+      IF_hr   = avg_hrr / threshold_hrr
+      hrTSS   = duration_s / 3600 × IF_hr² × 100
+
+    Requires hr_max, hr_rest, and LTHR (lactate threshold heart rate).
+    Returns None if inputs are insufficient or LTHR ≤ HR_rest.
+
+    Reference: Allen & Coggan, "Training and Racing with a Power Meter" (2nd ed.),
+    appendix on HR-based TSS.
+    """
+    if not hr_max or not hr_rest or not lthr:
+        return None
+    if hr_max <= hr_rest or lthr <= hr_rest:
+        return None
+
+    threshold_hrr = (lthr - hr_rest) / (hr_max - hr_rest)
+    if threshold_hrr <= 0:
+        return None
+
+    paired = [(hr, t) for hr, t in zip(hr_list, elapsed_list)
+              if hr is not None and t is not None]
+    if len(paired) < 2:
+        return None
+
+    total_time = 0.0
+    weighted   = 0.0
+    for i in range(1, len(paired)):
+        dt = paired[i][1] - paired[i - 1][1]
+        if dt <= 0 or dt > 300:
+            continue
+        hrr = (paired[i][0] - hr_rest) / (hr_max - hr_rest)
+        hrr = max(0.0, min(1.0, hrr))
+        weighted   += hrr * dt
+        total_time += dt
+
+    if total_time < 60:
+        return None
+
+    avg_hrr   = weighted / total_time
+    if_hr     = avg_hrr / threshold_hrr
+    return (total_time / 3600) * (if_hr ** 2) * 100
+
+
 def compute_tss(np_watts: float, duration_s: float, ftp: float) -> float | None:
     """
     Training Stress Score (Coggan):

@@ -116,6 +116,7 @@ def _compute_and_store_metrics(activity_id: int, uid: int, cfg: dict, stream: li
             hr_max = float(v) if v else None
 
         hr_rest  = float(get_setting(DB_PATH, uid, "training", "hr_rest") or 0) or None
+        lthr     = float(get_setting(DB_PATH, uid, "training", "lthr")     or 0) or None
         duration = row["moving_time"] or row["elapsed_time"]
 
         np_w     = compute_np(watts_list)
@@ -123,6 +124,11 @@ def _compute_and_store_metrics(activity_id: int, uid: int, cfg: dict, stream: li
         trimp    = compute_trimp(hr_list, elapsed_list, hr_max, hr_rest) if hr_max and hr_rest else None
         peaks    = compute_peak_powers(stream)
         peak_json = json.dumps(peaks) if peaks else None
+
+        # hrTSS as fallback when power TSS is unavailable
+        hr_tss = None
+        if tss is None and hr_max and hr_rest and lthr:
+            hr_tss = compute_hr_tss(hr_list, elapsed_list, hr_max, hr_rest, lthr)
 
         hr_zones    = cfg["charts"]["heart_rate"]["zones"]
         power_zones = cfg["charts"]["power"]["zones"]
@@ -136,6 +142,7 @@ def _compute_and_store_metrics(activity_id: int, uid: int, cfg: dict, stream: li
             DB_PATH, activity_id, uid,
             tss, np_w, trimp, peak_json,
             hr_zone_json, power_zone_json,
+            hr_tss=hr_tss,
         )
     except Exception as e:
         print(f"[metrics] Failed for {activity_id}: {e}")
@@ -214,8 +221,8 @@ from charts import generate_charts
 from map_renderer import render_activity_map
 from strava import StravaClient, exchange_code, strava_auth_url
 from training_load import (
-    aggregate_power_curve, compute_np, compute_peak_powers, compute_pmc,
-    compute_trimp, compute_tss, compute_wbal, compute_zone_times,
+    aggregate_power_curve, compute_hr_tss, compute_np, compute_peak_powers,
+    compute_pmc, compute_trimp, compute_tss, compute_wbal, compute_zone_times,
     fit_critical_power, weekly_load,
 )
 from inference import infer_training_params
@@ -508,6 +515,9 @@ def activity(activity_id):
         "avg_speed":  f"{(row['max_speed'] or 0) * 3.6:.1f} km/h" if row["max_speed"] else None,
         "avg_hr":     f"{row['average_heartrate']:.0f}" if row["average_heartrate"] else None,
         "avg_watts":  f"{row['average_watts']:.0f}" if row["average_watts"] else None,
+        "tss":        round(row["tss"])    if row["tss"]    is not None else None,
+        "hr_tss":     round(row["hr_tss"]) if row["hr_tss"] is not None else None,
+        "np_watts":   round(row["np_watts"]) if row["np_watts"] is not None else None,
         "strava_url":    row["strava_url"] or "",
         "post_url":      row["mastodon_post_url"] or "",
         "scheduled":     bool(row["scheduled_for_post"]),
@@ -920,6 +930,9 @@ def settings():
     ]
     inferred_ftp    = get_setting(DB_PATH, uid, "inference", "ftp")
     inferred_max_hr = get_setting(DB_PATH, uid, "inference", "max_hr")
+    # Suggest LTHR as 88% of max HR if not explicitly set
+    _hr_max_v = cfg["charts"]["heart_rate"]["max_hr"] or (float(inferred_max_hr) if inferred_max_hr else None)
+    inferred_lthr = round(_hr_max_v * 0.88) if _hr_max_v else None
     return render_template(
         "settings.html",
         cfg=cfg,
@@ -931,6 +944,7 @@ def settings():
         strava_configured=strava_configured,
         inferred_ftp=float(inferred_ftp) if inferred_ftp else None,
         inferred_max_hr=float(inferred_max_hr) if inferred_max_hr else None,
+        inferred_lthr=inferred_lthr,
         section=section,
     )
 
@@ -995,7 +1009,7 @@ def save_charts():
 @login_required
 def save_training():
     uid = int(current_user.id)
-    for key in ("body_weight_kg", "hr_rest"):
+    for key in ("body_weight_kg", "hr_rest", "lthr"):
         val = request.form.get(key, "").strip()
         set_setting(DB_PATH, uid, "training", key, val)
     flash("Training settings saved.", "success")

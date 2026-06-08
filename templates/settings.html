@@ -87,6 +87,16 @@
                min="30" max="100" placeholder="e.g. 50">
         <small>Used for TRIMP computation. Measure first thing in the morning.</small>
       </label>
+      <label>Lactate threshold HR (bpm)
+        <input type="number" name="lthr"
+               value="{{ cfg.get('training', {}).get('lthr') or '' }}"
+               min="80" max="220" placeholder="{% if inferred_lthr %}auto: {{ inferred_lthr }}{% else %}e.g. 160{% endif %}">
+        {% if not cfg.get('training', {}).get('lthr') and inferred_lthr %}
+        <small>Estimated as 88% of your max HR: <strong>{{ inferred_lthr }} bpm</strong>. Set explicitly after a threshold test for better accuracy.</small>
+        {% else %}
+        <small>Heart rate you can sustain for ~60 min. Used to compute hrTSS for rides without a power meter.</small>
+        {% endif %}
+      </label>
     </div>
     <button type="submit">Save training settings</button>
   </form>

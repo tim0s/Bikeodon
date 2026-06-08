@@ -51,6 +51,7 @@ _DEFAULT_SETTINGS = [
     ("charts",         "power_enabled",           "true"),
     ("training",       "body_weight_kg",           ""),
     ("training",       "hr_rest",                 ""),
+    ("training",       "lthr",                    ""),
     ("stats",          "fields",                  "distance,elevation_gain"),
     ("stats_overlay",  "enabled",                 "true"),
     ("stats_overlay",  "background_color",        "#000000"),
@@ -195,6 +196,7 @@ def init_db(db_path):
         ("hr_zone_secs_json",    "TEXT"),
         ("power_zone_secs_json", "TEXT"),
         ("metrics_computed_at",  "TEXT"),
+        ("hr_tss",               "REAL"),
     ]:
         try:
             conn.execute(f"ALTER TABLE activities ADD COLUMN {col} {typedef}")
@@ -926,27 +928,34 @@ def update_activity_metrics(
     trimp: float | None, peak_power_json: str | None,
     hr_zone_secs_json: str | None = None,
     power_zone_secs_json: str | None = None,
+    hr_tss: float | None = None,
 ):
     now = datetime.now(timezone.utc).isoformat()
     conn = _conn(db_path)
     conn.execute(
         "UPDATE activities"
         " SET tss=?, np_watts=?, trimp=?, peak_power_json=?,"
-        "     hr_zone_secs_json=?, power_zone_secs_json=?, metrics_computed_at=?"
+        "     hr_zone_secs_json=?, power_zone_secs_json=?, metrics_computed_at=?,"
+        "     hr_tss=?"
         " WHERE id=? AND user_id=?",
         (tss, np_watts, trimp, peak_power_json,
-         hr_zone_secs_json, power_zone_secs_json, now, activity_id, user_id),
+         hr_zone_secs_json, power_zone_secs_json, now,
+         hr_tss, activity_id, user_id),
     )
     conn.commit()
     conn.close()
 
 
 def get_daily_loads(db_path, user_id: int) -> dict:
-    """Return {ISO-date: tss} for all activities with a TSS value."""
+    """
+    Return {ISO-date: tss} using power TSS where available, hr_tss otherwise.
+    Activities with neither contribute nothing to the PMC.
+    """
     conn = _conn(db_path)
     rows = conn.execute(
-        "SELECT start_date, tss FROM activities"
-        " WHERE user_id=? AND tss IS NOT NULL AND start_date IS NOT NULL",
+        "SELECT start_date, tss, hr_tss FROM activities"
+        " WHERE user_id=? AND (tss IS NOT NULL OR hr_tss IS NOT NULL)"
+        " AND start_date IS NOT NULL",
         (user_id,),
     ).fetchall()
     conn.close()
@@ -954,7 +963,8 @@ def get_daily_loads(db_path, user_id: int) -> dict:
     for r in rows:
         ds = (r["start_date"] or "")[:10]
         if ds:
-            result[ds] = result.get(ds, 0.0) + (r["tss"] or 0.0)
+            load = r["tss"] if r["tss"] is not None else r["hr_tss"]
+            result[ds] = result.get(ds, 0.0) + (load or 0.0)
     return result
 
 

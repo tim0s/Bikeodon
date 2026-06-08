@@ -59,6 +59,23 @@
     <span class="stat-value">{{ activity.avg_watts }} W</span>
   </div>
   {% endif %}
+  {% if activity.np_watts %}
+  <div class="stat-chip" title="Normalized Power — power-weighted average that accounts for variability">
+    <span class="stat-label">NP</span>
+    <span class="stat-value">{{ activity.np_watts }} W</span>
+  </div>
+  {% endif %}
+  {% if activity.tss is not none %}
+  <div class="stat-chip" title="Training Stress Score — effort based on power data">
+    <span class="stat-label">TSS</span>
+    <span class="stat-value">{{ activity.tss }}</span>
+  </div>
+  {% elif activity.hr_tss is not none %}
+  <div class="stat-chip" title="Heart Rate TSS — effort estimated from HR data (no power meter)">
+    <span class="stat-label">hrTSS</span>
+    <span class="stat-value">{{ activity.hr_tss }}</span>
+  </div>
+  {% endif %}
 </div>
 
 {% if map_url %}

@@ -45,8 +45,8 @@ from database import (
 )
 from inference import infer_training_params
 from training_load import (
-    aggregate_power_curve, compute_np, compute_peak_powers, compute_pmc,
-    compute_trimp, compute_tss, compute_zone_times, fit_critical_power,
+    aggregate_power_curve, compute_hr_tss, compute_np, compute_peak_powers,
+    compute_pmc, compute_trimp, compute_tss, compute_zone_times, fit_critical_power,
 )
 
 STRAVA_CLIENT_ID     = os.environ.get("STRAVA_CLIENT_ID", "")
@@ -445,6 +445,7 @@ def cmd_metrics(args, cfg):
                 print(f"  Inferred max HR: {hr_max:.0f} bpm")
 
         hr_rest     = float(get_setting(db_path, uid, "training", "hr_rest") or 0) or None
+        lthr        = float(get_setting(db_path, uid, "training", "lthr")     or 0) or None
         hr_zones    = get_zones(db_path, uid, "hr")
         power_zones = get_zones(db_path, uid, "power")
 
@@ -462,6 +463,10 @@ def cmd_metrics(args, cfg):
                 trimp = compute_trimp(hr_list, elapsed_list, hr_max, hr_rest) if hr_max and hr_rest else None
                 peaks = compute_peak_powers(stream)
 
+                hr_tss = None
+                if tss is None and hr_max and hr_rest and lthr:
+                    hr_tss = compute_hr_tss(hr_list, elapsed_list, hr_max, hr_rest, lthr)
+
                 hr_zone_secs, power_zone_secs = compute_zone_times(
                     stream, hr_zones, power_zones, hr_max, ftp
                 )
@@ -472,10 +477,12 @@ def cmd_metrics(args, cfg):
                     _json.dumps(peaks) if peaks else None,
                     _json.dumps(hr_zone_secs)    if hr_zone_secs    else None,
                     _json.dumps(power_zone_secs) if power_zone_secs else None,
+                    hr_tss=hr_tss,
                 )
                 done += 1
                 print(f"  [{i}/{len(pending)}] {row['name'] or row['id']}"
                       + (f"  TSS={tss:.0f}" if tss else "")
+                      + (f"  hrTSS={hr_tss:.0f}" if hr_tss else "")
                       + (f"  NP={np_w:.0f}W" if np_w else ""))
             except Exception as e:
                 errors += 1
