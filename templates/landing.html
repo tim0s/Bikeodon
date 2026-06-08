@@ -1,0 +1,197 @@
+{% extends "base.html" %}
+{% block title %}Bikeodon – Bike rides on Mastodon{% endblock %}
+{% block content %}
+
+{# ── Hero ─────────────────────────────────────────────────────────────────── #}
+<section style="text-align:center;padding:2.5rem 1rem 2rem">
+  <h1 style="font-size:clamp(1.6rem,4vw,2.4rem);margin-bottom:.5rem">
+    Your bike rides on Mastodon — beautifully.
+  </h1>
+  <p style="font-size:1.1rem;color:#555;max-width:560px;margin:.5rem auto 1.5rem">
+    Connect Strava or upload a FIT/GPX file. Bikeodon generates a route map,
+    heart rate chart, and power analysis, then posts everything to your Mastodon
+    account with one click. A private training dashboard is included.
+  </p>
+  <div style="display:flex;gap:.75rem;justify-content:center;flex-wrap:wrap">
+    <a href="{{ url_for('register') }}" role="button">Get started</a>
+    <a href="{{ url_for('login') }}" role="button" class="secondary outline">Log in</a>
+  </div>
+</section>
+
+{# ── Screenshot carousel ──────────────────────────────────────────────────── #}
+<section style="margin-bottom:3rem">
+  <div class="carousel" id="carousel">
+    <div class="carousel-track" id="carouselTrack">
+      {% set slides = [
+        ("activity-list",      "All your rides in one place — distance, elevation, moving time, and post status at a glance"),
+        ("activity-detail",    "Activity detail — route map with stats overlay and HR chart; post to Mastodon in one click"),
+        ("dashboard-overview", "Training dashboard — weekly load, zone distribution, and all-time totals by sport"),
+        ("dashboard-fitness",  "Performance Management Chart — Fitness (CTL), Fatigue (ATL), Form (TSB) over 6 months"),
+        ("dashboard-power",    "Mean maximal power curve with Critical Power model overlay, all-time vs. last 90 days"),
+        ("settings",           "Fully customisable — zones, map style, chart colours, and Mastodon post template"),
+      ] %}
+      {% for name, caption in slides %}
+      <div class="carousel-slide">
+        <img src="{{ url_for('screenshot', filename=name + '.png') }}" alt="{{ caption }}" class="carousel-img">
+        <p class="carousel-caption">{{ caption }}</p>
+      </div>
+      {% endfor %}
+    </div>
+    <button class="carousel-btn carousel-prev" id="carouselPrev" aria-label="Previous">&#8592;</button>
+    <button class="carousel-btn carousel-next" id="carouselNext" aria-label="Next">&#8594;</button>
+  </div>
+  <div class="carousel-dots" id="carouselDots">
+    {% for name, _ in slides %}
+    <button class="carousel-dot{% if loop.first %} active{% endif %}"
+            data-index="{{ loop.index0 }}" aria-label="Slide {{ loop.index }}"></button>
+    {% endfor %}
+  </div>
+</section>
+
+{# ── Concept ──────────────────────────────────────────────────────────────── #}
+<section style="max-width:700px;margin:0 auto 3rem">
+  <h2>What is Mastodon?</h2>
+  <p>
+    <a href="https://joinmastodon.org" target="_blank" rel="noopener">Mastodon</a> is a
+    free, open-source social network — like Twitter/X but decentralised.
+    Instead of one company controlling everything, thousands of independent servers
+    (<em>instances</em>) run the same software and talk to each other.
+    You own your account and your data. No algorithm, no ads, no engagement bait.
+  </p>
+  <p>
+    Communities form around shared interests — cycling, running, photography, tech.
+    Posting your rides there means your followers see exactly what you share,
+    nothing more, nothing less.
+  </p>
+
+  <h2 style="margin-top:2rem">How Bikeodon fits in</h2>
+  <p>
+    Bikeodon is a self-hosted bridge between your training data and your Mastodon account.
+    Bring activities in via <strong>Strava</strong> (automatic webhook) or by uploading
+    <strong>FIT, GPX, or TCX files</strong> directly. Bikeodon then:
+  </p>
+  <ul>
+    <li>Renders a <strong>route map</strong> from the GPS track</li>
+    <li>Generates <strong>HR and power zone charts</strong> where the data exists</li>
+    <li>Computes <strong>TSS / hrTSS</strong> and tracks fitness (CTL / ATL / TSB)</li>
+    <li>Builds a <strong>Critical Power model</strong> from your mean maximal power curve</li>
+    <li>Posts to Mastodon with a fully customisable text template</li>
+  </ul>
+  <p>
+    Everything runs on your own server — a single Oracle Cloud free-tier VM handles it
+    comfortably. See
+    <a href="https://github.com/tim0s/Bikeodon/blob/main/DEPLOY.md"
+       target="_blank" rel="noopener">DEPLOY.md</a> for step-by-step instructions.
+  </p>
+
+  <p style="margin-top:1.5rem">
+    <a href="https://github.com/tim0s/Bikeodon" target="_blank" rel="noopener"
+       role="button" class="secondary outline">
+      View on GitHub
+    </a>
+  </p>
+</section>
+
+{# ── Carousel styles & script ─────────────────────────────────────────────── #}
+<style>
+.carousel {
+  position: relative;
+  overflow: hidden;
+  border-radius: 10px;
+  background: #111;
+  max-width: 520px;
+  margin: 0 auto;
+  user-select: none;
+}
+.carousel-track {
+  display: flex;
+  transition: transform .35s ease;
+}
+.carousel-slide {
+  min-width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.carousel-img {
+  width: 100%;
+  display: block;
+}
+.carousel-caption {
+  font-size: .82rem;
+  color: #ccc;
+  padding: .6rem 1rem .7rem;
+  text-align: center;
+  margin: 0;
+}
+.carousel-btn {
+  position: absolute;
+  top: calc(50% - 1.5rem);
+  background: rgba(0,0,0,.55);
+  color: #fff;
+  border: none;
+  border-radius: 50%;
+  width: 2.2rem;
+  height: 2.2rem;
+  font-size: 1.1rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background .15s;
+  padding: 0;
+  line-height: 1;
+  z-index: 2;
+}
+.carousel-btn:hover { background: rgba(252,76,2,.8); }
+.carousel-prev { left: .5rem; }
+.carousel-next { right: .5rem; }
+.carousel-dots {
+  display: flex;
+  justify-content: center;
+  gap: .4rem;
+  margin-top: .75rem;
+}
+.carousel-dot {
+  width: .55rem;
+  height: .55rem;
+  border-radius: 50%;
+  border: none;
+  background: #ccc;
+  cursor: pointer;
+  padding: 0;
+  transition: background .15s, transform .15s;
+}
+.carousel-dot.active {
+  background: var(--orange);
+  transform: scale(1.3);
+}
+</style>
+<script>
+(function () {
+  const track = document.getElementById('carouselTrack');
+  const dots  = Array.from(document.querySelectorAll('.carousel-dot'));
+  const total = dots.length;
+  let cur = 0, startX = 0, dragging = false;
+
+  function go(n) {
+    cur = (n + total) % total;
+    track.style.transform = 'translateX(-' + (cur * 100) + '%)';
+    dots.forEach(function(d, i) { d.classList.toggle('active', i === cur); });
+  }
+
+  document.getElementById('carouselPrev').addEventListener('click', function() { go(cur - 1); });
+  document.getElementById('carouselNext').addEventListener('click', function() { go(cur + 1); });
+  dots.forEach(function(d) { d.addEventListener('click', function() { go(+d.dataset.index); }); });
+
+  track.addEventListener('touchstart', function(e) { startX = e.touches[0].clientX; dragging = true; }, {passive: true});
+  track.addEventListener('touchend',   function(e) {
+    if (!dragging) return;
+    var dx = e.changedTouches[0].clientX - startX;
+    if (Math.abs(dx) > 40) go(dx < 0 ? cur + 1 : cur - 1);
+    dragging = false;
+  }, {passive: true});
+})();
+</script>
+
+{% endblock %}

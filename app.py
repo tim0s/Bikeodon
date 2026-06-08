@@ -366,8 +366,9 @@ def logout():
 PER_PAGE = 20
 
 @app.route("/")
-@login_required
 def index():
+    if not current_user.is_authenticated:
+        return render_template("landing.html")
     uid  = int(current_user.id)
     sort = request.args.get("sort", "date")
     dir_ = request.args.get("dir", "desc")
@@ -602,6 +603,12 @@ def schedule_activity(activity_id):
         threading.Thread(target=_do_post_activity, args=(activity_id, uid), daemon=True).start()
 
     return redirect(request.referrer or url_for("activity", activity_id=activity_id))
+
+
+@app.route("/screenshots/<path:filename>")
+def screenshot(filename):
+    docs_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "docs", "screenshots")
+    return send_from_directory(docs_dir, filename)
 
 
 @app.route("/output/<path:filename>")
