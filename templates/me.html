@@ -122,7 +122,10 @@
       plugins: { legend: { display: false } },
       scales: {
         x: { ticks: { maxTicksLimit: 8, color: '#aaa' }, grid: { color: '#2a2a35' } },
-        y: { ticks: { color: '#aaa' }, grid: { color: '#2a2a35' }, beginAtZero: true },
+        y: {
+          ticks: { color: '#aaa' }, grid: { color: '#2a2a35' }, beginAtZero: true,
+          suggestedMax: Math.max(...weekly.map(w => w.tss)) * 1.25 || 10,
+        },
       },
     },
   });
@@ -575,6 +578,9 @@
           ticks: { color: '#aaa', callback: v => v + ' W' },
           grid: { color: '#2a2a35' },
           beginAtZero: false,
+          suggestedMax: Math.max(
+            ...[...allData, ...recentData].filter(v => v !== null)
+          ) * 1.15 || undefined,
         },
       },
     },
