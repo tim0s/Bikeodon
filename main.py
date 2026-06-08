@@ -446,6 +446,8 @@ def cmd_metrics(args, cfg):
 
         hr_rest     = float(get_setting(db_path, uid, "training", "hr_rest") or 0) or None
         lthr        = float(get_setting(db_path, uid, "training", "lthr")     or 0) or None
+        if not lthr and hr_max:
+            lthr = hr_max * 0.88
         hr_zones    = get_zones(db_path, uid, "hr")
         power_zones = get_zones(db_path, uid, "power")
 

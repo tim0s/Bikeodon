@@ -117,6 +117,9 @@ def _compute_and_store_metrics(activity_id: int, uid: int, cfg: dict, stream: li
 
         hr_rest  = float(get_setting(DB_PATH, uid, "training", "hr_rest") or 0) or None
         lthr     = float(get_setting(DB_PATH, uid, "training", "lthr")     or 0) or None
+        # Fall back to 88% of max HR if LTHR not explicitly set
+        if not lthr and hr_max:
+            lthr = hr_max * 0.88
         duration = row["moving_time"] or row["elapsed_time"]
 
         np_w     = compute_np(watts_list)
