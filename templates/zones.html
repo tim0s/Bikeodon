@@ -12,6 +12,23 @@
 </div>
 
 {% set zones = hr_zones if active_type == 'hr' else power_zones %}
+{% set presets = hr_presets if active_type == 'hr' else power_presets %}
+{% set current_count = zones | length %}
+
+<form method="post" action="{{ url_for('apply_preset') }}" style="margin-bottom:1rem">
+  <input type="hidden" name="zone_type" value="{{ active_type }}">
+  <div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap">
+    <span style="font-size:.9rem">Preset:</span>
+    {% for p in presets %}
+    {% set label = p.replace('zone', ' zones').replace('3 ', '3-').replace('5 ', '5-').replace('7 ', '7-') %}
+    <button type="submit" name="preset" value="{{ p }}"
+            class="{% if loop.first %}primary{% else %}secondary{% endif %} outline"
+            style="padding:.25rem .75rem;font-size:.85rem;{% if (p == '3zone' and current_count == 3) or (p == '5zone' and current_count == 5) or (p == '7zone' and current_count == 7) %}font-weight:bold;{% endif %}">
+      {{ p | replace('zone', '') }}-zone
+    </button>
+    {% endfor %}
+  </div>
+</form>
 
 <form method="post">
   <input type="hidden" name="zone_type" value="{{ active_type }}">

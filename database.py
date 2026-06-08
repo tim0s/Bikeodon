@@ -63,23 +63,47 @@ _DEFAULT_SETTINGS = [
     ("stats_overlay",  "icon_size",               "48"),
 ]
 
-_DEFAULT_HR_ZONES = [
-    (0, "Z1 Recovery",   60,  "#5b9bd5"),
-    (1, "Z2 Endurance",  70,  "#70ad47"),
-    (2, "Z3 Tempo",      80,  "#ffc000"),
-    (3, "Z4 Threshold",  90,  "#ff7043"),
-    (4, "Z5 VO2 Max",    100, "#d32f2f"),
-]
+HR_ZONE_PRESETS = {
+    "3zone": [
+        (0, "Z1 Endurance",  75,  "#70ad47"),
+        (1, "Z2 Tempo",      90,  "#ffc000"),
+        (2, "Z3 Hard",       100, "#d32f2f"),
+    ],
+    "5zone": [
+        (0, "Z1 Recovery",   60,  "#5b9bd5"),
+        (1, "Z2 Endurance",  70,  "#70ad47"),
+        (2, "Z3 Tempo",      80,  "#ffc000"),
+        (3, "Z4 Threshold",  90,  "#ff7043"),
+        (4, "Z5 VO2 Max",    100, "#d32f2f"),
+    ],
+}
 
-_DEFAULT_POWER_ZONES = [
-    (0, "Z1 Recovery",       55,  "#5b9bd5"),
-    (1, "Z2 Endurance",      75,  "#70ad47"),
-    (2, "Z3 Tempo",          90,  "#ffc000"),
-    (3, "Z4 Threshold",      105, "#ff7043"),
-    (4, "Z5 VO2 Max",        120, "#d32f2f"),
-    (5, "Z6 Anaerobic",      150, "#9c27b0"),
-    (6, "Z7 Neuromuscular",  999, "#424242"),
-]
+POWER_ZONE_PRESETS = {
+    "3zone": [
+        (0, "Z1 Endurance",  75,  "#70ad47"),
+        (1, "Z2 Tempo",      105, "#ffc000"),
+        (2, "Z3 Hard",       999, "#d32f2f"),
+    ],
+    "5zone": [
+        (0, "Z1 Recovery",   55,  "#5b9bd5"),
+        (1, "Z2 Endurance",  75,  "#70ad47"),
+        (2, "Z3 Tempo",      90,  "#ffc000"),
+        (3, "Z4 Threshold",  105, "#ff7043"),
+        (4, "Z5 VO2 Max",    999, "#d32f2f"),
+    ],
+    "7zone": [
+        (0, "Z1 Recovery",       55,  "#5b9bd5"),
+        (1, "Z2 Endurance",      75,  "#70ad47"),
+        (2, "Z3 Tempo",          90,  "#ffc000"),
+        (3, "Z4 Threshold",      105, "#ff7043"),
+        (4, "Z5 VO2 Max",        120, "#d32f2f"),
+        (5, "Z6 Anaerobic",      150, "#9c27b0"),
+        (6, "Z7 Neuromuscular",  999, "#424242"),
+    ],
+}
+
+_DEFAULT_HR_ZONES    = HR_ZONE_PRESETS["5zone"]
+_DEFAULT_POWER_ZONES = POWER_ZONE_PRESETS["7zone"]
 
 
 # ---------------------------------------------------------------------------
@@ -322,6 +346,22 @@ def get_zones(db_path, user_id: int, zone_type: str) -> list[dict]:
     ).fetchall()
     conn.close()
     return [{"name": r["name"], "max_pct": r["max_pct"], "color": r["color"]} for r in rows]
+
+
+def apply_zone_preset(db_path, user_id: int, zone_type: str, preset_key: str):
+    presets = HR_ZONE_PRESETS if zone_type == "hr" else POWER_ZONE_PRESETS
+    rows = presets.get(preset_key)
+    if not rows:
+        raise ValueError(f"Unknown preset {preset_key!r} for zone_type {zone_type!r}")
+    conn = _conn(db_path)
+    conn.execute("DELETE FROM zones WHERE user_id=? AND type=?", (user_id, zone_type))
+    for idx, name, max_pct, color in rows:
+        conn.execute(
+            "INSERT INTO zones (user_id, type, zone_index, name, max_pct, color) VALUES (?,?,?,?,?,?)",
+            (user_id, zone_type, idx, name, float(max_pct), color),
+        )
+    conn.commit()
+    conn.close()
 
 
 # ---------------------------------------------------------------------------

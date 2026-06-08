@@ -29,6 +29,7 @@ from database import (
     get_activities_without_metrics, get_daily_loads, get_error_activities,
     get_setting, get_site_setting, get_stream, get_user_by_athlete_id, get_user_by_id,
     get_user_by_username, get_user_stats, get_zone_totals, get_zones, init_db,
+    apply_zone_preset, HR_ZONE_PRESETS, POWER_ZONE_PRESETS,
     job_finish, job_start, get_recent_jobs,
     list_activities, list_settings, load_user_config, mark_posted, mark_rendered,
     reset_metrics_computed, set_activity_error, set_scheduled, set_setting,
@@ -1070,8 +1071,27 @@ def zones():
     zone_type   = request.args.get("type", "hr")
     hr_zones    = get_zones(DB_PATH, uid, "hr")
     power_zones = get_zones(DB_PATH, uid, "power")
-    return render_template("zones.html", hr_zones=hr_zones, power_zones=power_zones,
-                           active_type=zone_type)
+    return render_template(
+        "zones.html",
+        hr_zones=hr_zones, power_zones=power_zones,
+        active_type=zone_type,
+        hr_presets=list(HR_ZONE_PRESETS.keys()),
+        power_presets=list(POWER_ZONE_PRESETS.keys()),
+    )
+
+
+@app.route("/settings/zones/preset", methods=["POST"])
+@login_required
+def apply_preset():
+    uid       = int(current_user.id)
+    zone_type = request.form.get("zone_type", "hr")
+    preset    = request.form.get("preset", "")
+    try:
+        apply_zone_preset(DB_PATH, uid, zone_type, preset)
+        flash(f"Applied {preset} {zone_type.upper()} zone preset.", "success")
+    except ValueError as e:
+        flash(str(e), "error")
+    return redirect(url_for("zones") + f"?type={zone_type}")
 
 
 # ---------------------------------------------------------------------------
