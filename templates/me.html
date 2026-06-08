@@ -578,9 +578,11 @@
           ticks: { color: '#aaa', callback: v => v + ' W' },
           grid: { color: '#2a2a35' },
           beginAtZero: false,
-          suggestedMax: Math.max(
-            ...[...allData, ...recentData].filter(v => v !== null)
-          ) * 1.15 || undefined,
+          max: (function() {
+            const vals = [...allData, ...recentData].filter(v => v !== null);
+            if (!vals.length) return undefined;
+            return Math.ceil(Math.max(...vals) * 1.2 / 25) * 25;
+          })(),
         },
       },
     },
