@@ -203,13 +203,6 @@
 </script>
 {% endif %}
 
-{% if has_avg_watts and not has_power_chart %}
-<p class="config-warning" style="margin-bottom:1rem">
-  Power chart unavailable — this activity has average power ({{ activity.avg_watts }} W) but
-  the per-second stream isn't shared with Strava (common with TrainerRoad virtual rides).
-  <a href="{{ url_for('upload') }}">Upload the original .fit file</a> to generate the power chart.
-</p>
-{% endif %}
 
 {% if activity.render_error %}
 <p class="flash flash-error" style="margin-bottom:1rem">
