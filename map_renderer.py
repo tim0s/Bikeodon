@@ -465,10 +465,10 @@ def draw_stats_overlay(img: Image.Image, activity: dict, cfg: dict) -> Image.Ima
 # Watopia static-map renderer
 # ---------------------------------------------------------------------------
 
-_WATOPIA_LAT_MIN = -11.74191
-_WATOPIA_LAT_MAX = -11.62572
-_WATOPIA_LON_MIN = 166.87780
-_WATOPIA_LON_MAX = 167.03194
+_WATOPIA_LAT_MIN = -11.74086
+_WATOPIA_LAT_MAX = -11.62593
+_WATOPIA_LON_MIN = 166.87745
+_WATOPIA_LON_MAX = 167.03256
 _WATOPIA_IMG_W   = 8192
 _WATOPIA_IMG_H   = 6144
 
