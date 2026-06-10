@@ -729,7 +729,7 @@ def get_points(row) -> list[tuple[float, float]]:
     raw = row["points_json"]
     if not raw:
         return []
-    return [(p[0], p[1]) for p in json.loads(raw)]
+    return [(p[0], p[1]) for p in json.loads(raw) if p[0] is not None and p[1] is not None]
 
 
 def get_all_users(db_path) -> list:

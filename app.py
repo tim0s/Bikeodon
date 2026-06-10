@@ -101,6 +101,7 @@ def _render_and_track(activity_id: int, uid: int, cfg: dict, out_dir: str, row=N
 def _compute_and_store_metrics(activity_id: int, uid: int, cfg: dict, stream: list, row):
     """Compute NP, TSS, TRIMP, peak powers, and zone times from stream data and store them."""
     try:
+        row = dict(row)
         watts_list   = [p.get("power")        for p in stream]
         hr_list      = [p.get("hr")           for p in stream]
         elapsed_list = [p.get("elapsed_secs") for p in stream]
