@@ -55,7 +55,7 @@
   <canvas id="weeklyChart"></canvas>
 </div>
 <small class="muted">
-  Training Stress Score (TSS) per week. Activities without power data do not contribute TSS.
+  Training Stress Score per week. Power TSS is used when available; hrTSS is the fallback for rides without a power meter.
   Set your FTP in <a href="{{ url_for('settings', section='charts') }}">Settings → Charts</a> and re-render older activities to backfill.
 </small>
 
@@ -165,9 +165,11 @@
         Coggan's TSS formulation is the de-facto standard in cycling; see
         <a href="https://www.trainingpeaks.com/blog/normalized-power-intensity-factor-training-stress/" target="_blank" rel="noopener">TrainingPeaks: NP, IF, TSS</a>.
       </p>
-      <p><strong>Note:</strong> TSS is only computed for activities with power data and a set FTP.
-        Activities without TSS contribute 0 to the chart.
-        Set your FTP in <a href="{{ url_for('settings') }}#charts">Settings → Charts</a>.</p>
+      <p><strong>Note:</strong> Power TSS requires a set FTP. For activities without power data,
+        hrTSS is used as a fallback (requires resting HR, max HR, and LTHR in
+        <a href="{{ url_for('settings', section='training') }}">Settings → Training</a> and
+        <a href="{{ url_for('settings', section='charts') }}">Settings → Charts</a>).
+        Activities with neither TSS nor hrTSS contribute 0 to the chart.</p>
     </details>
   </footer>
 </article>
@@ -446,7 +448,14 @@
 {% else %}
 
 <article>
-  <header><strong>Mean maximal power curve</strong></header>
+  <header>
+    <strong>Mean maximal power curve</strong>
+    {% if body_weight %}
+    <span style="float:right">
+      <button id="wpkToggle" class="outline" style="padding:.2rem .7rem;font-size:.8rem" onclick="toggleWpk()">Show W/kg</button>
+    </span>
+    {% endif %}
+  </header>
   <div style="position:relative;height:280px">
     <canvas id="powerCurveChart"></canvas>
   </div>
@@ -503,15 +512,21 @@
 
   const allData    = labels.map(l => curveAll[l]    ?? null);
   const recentData = labels.map(l => curveRecent[l] ?? null);
+  const wpkAllData    = labels.map(l => wpkAll[l]    ?? null);
+  const wpkRecentData = labels.map(l => wpkRecent[l] ?? null);
 
-  // CP model overlay: P(t) = W'/t + CP
-  // Only draw for durations ≥ 1 min (the domain the model was fitted on).
-  // At 5s/30s the hyperbola diverges to unrealistic wattages and skews the axis.
   const cp      = {{ cp if cp else 'null' }};
   const wPrime  = {{ w_prime if w_prime else 'null' }};
-  const cpCurve = (cp && wPrime)
+  const bodyWeight = {{ body_weight if body_weight else 'null' }};
+
+  const cpCurveW = (cp && wPrime)
     ? durations.map(t => t >= 60 ? Math.round(wPrime / t + cp) : null)
     : labels.map(() => null);
+  const cpCurveWpk = (cp && wPrime && bodyWeight)
+    ? cpCurveW.map(v => v !== null ? Math.round(v / bodyWeight * 100) / 100 : null)
+    : labels.map(() => null);
+
+  let showWpk = false;
 
   const datasets = [
     {
@@ -538,7 +553,7 @@
   if (cp && wPrime) {
     datasets.push({
       label: `CP model (CP=${cp}W, W'=${Math.round(wPrime/1000*10)/10}kJ)`,
-      data: cpCurve,
+      data: cpCurveW,
       borderColor: '#a259ff',
       backgroundColor: 'transparent',
       borderWidth: 1.5,
@@ -549,8 +564,17 @@
     });
   }
 
+  function computeMax(d0, d1) {
+    const vals = [...d0, ...d1].filter(v => v !== null);
+    if (!vals.length) return undefined;
+    const top = Math.max(...vals);
+    return showWpk
+      ? Math.ceil(top * 1.2 * 10) / 10
+      : Math.ceil(top * 1.2 / 25) * 25;
+  }
+
   const ctx = document.getElementById('powerCurveChart').getContext('2d');
-  new Chart(ctx, {
+  const chart = new Chart(ctx, {
     type: 'line',
     data: { labels, datasets },
     options: {
@@ -561,12 +585,17 @@
         tooltip: {
           callbacks: {
             label: item => {
-              const w = item.raw;
-              if (w === null) return null;
-              if (item.datasetIndex === 2) return ` CP model: ${w} W`;
+              const v = item.raw;
+              if (v === null) return null;
+              if (item.datasetIndex === 2) {
+                return showWpk ? ` CP model: ${v.toFixed(2)} W/kg` : ` CP model: ${v} W`;
+              }
               const isAll = item.datasetIndex === 0;
+              if (showWpk) {
+                return ` ${item.dataset.label.split(' (')[0]}: ${v.toFixed(2)} W/kg`;
+              }
               const wpk = isAll ? wpkAll[item.label] : wpkRecent[item.label];
-              return ` ${item.dataset.label.split(' (')[0]}: ${w.toFixed(0)} W` +
+              return ` ${item.dataset.label.split(' (')[0]}: ${v.toFixed(0)} W` +
                 (wpk ? `  (${wpk.toFixed(2)} W/kg)` : '');
             },
           },
@@ -575,18 +604,37 @@
       scales: {
         x: { ticks: { color: '#aaa' }, grid: { color: '#2a2a35' } },
         y: {
-          ticks: { color: '#aaa', callback: v => v + ' W' },
+          ticks: { color: '#aaa', callback: v => showWpk ? v + ' W/kg' : v + ' W' },
           grid: { color: '#2a2a35' },
           beginAtZero: false,
-          max: (function() {
-            const vals = [...allData, ...recentData].filter(v => v !== null);
-            if (!vals.length) return undefined;
-            return Math.ceil(Math.max(...vals) * 1.2 / 25) * 25;
-          })(),
+          max: computeMax(allData, recentData),
         },
       },
     },
   });
+
+  window.toggleWpk = function() {
+    showWpk = !showWpk;
+    const btn = document.getElementById('wpkToggle');
+    if (btn) btn.textContent = showWpk ? 'Show W' : 'Show W/kg';
+
+    chart.data.datasets[0].data = showWpk ? wpkAllData    : allData;
+    chart.data.datasets[0].label = showWpk ? 'All-time best (W/kg)' : 'All-time best (W)';
+    chart.data.datasets[1].data = showWpk ? wpkRecentData : recentData;
+    chart.data.datasets[1].label = showWpk ? 'Last 90 days (W/kg)' : 'Last 90 days (W)';
+    if (chart.data.datasets[2]) {
+      chart.data.datasets[2].data = showWpk ? cpCurveWpk : cpCurveW;
+      const cpLabel = showWpk
+        ? `CP model (CP=${bodyWeight ? (cp/bodyWeight).toFixed(2) : '?'} W/kg)`
+        : `CP model (CP=${cp}W, W'=${Math.round(wPrime/1000*10)/10}kJ)`;
+      chart.data.datasets[2].label = cpLabel;
+    }
+    chart.options.scales.y.ticks.callback = v => showWpk ? v + ' W/kg' : v + ' W';
+    const d0 = showWpk ? wpkAllData    : allData;
+    const d1 = showWpk ? wpkRecentData : recentData;
+    chart.options.scales.y.max = computeMax(d0, d1);
+    chart.update();
+  };
 })();
 </script>
 {% endif %}

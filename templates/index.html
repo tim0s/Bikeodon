@@ -50,6 +50,7 @@
         <td><small>{{ a.sport_type }}</small></td>
         <td>
           <a href="{{ url_for('activity', activity_id=a.id) }}">{{ a.name }}</a>
+          {% if a.has_breakthrough %}<span title="New records on this ride" style="margin-left:.3rem">🏆</span>{% endif %}
           {% if a.strava_url %}
           <a href="{{ a.strava_url }}" class="brand-icon-link" target="_blank" rel="noopener" title="View on Strava">
             <img src="{{ url_for('static', filename='icon-strava.svg') }}" class="brand-icon strava-icon" alt="Strava">

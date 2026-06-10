@@ -208,6 +208,7 @@ def _build_activity(detail: dict, streams: dict) -> dict:
 
     return {
         "id":                   detail["id"],
+        "source_url":           f"https://www.strava.com/activities/{detail['id']}",
         "name":                 detail.get("name"),
         "sport_type":           detail.get("sport_type") or detail.get("type", "Ride"),
         "start_date":           detail.get("start_date"),

@@ -129,6 +129,37 @@ def _compute_and_store_metrics(activity_id: int, uid: int, cfg: dict, stream: li
         peaks    = compute_peak_powers(stream)
         peak_json = json.dumps(peaks) if peaks else None
 
+        # Breakthrough detection — only on first-time metrics computation
+        breakthroughs_json = None
+        is_first_time = not row.get("peak_power_json") and not row.get("metrics_computed_at")
+        if is_first_time:
+            breakthrus = []
+            if peaks:
+                hist_peaks = get_all_peak_powers(DB_PATH, uid, exclude_id=activity_id)
+                hist_mmp   = aggregate_power_curve(hist_peaks)
+                for label, val in peaks.items():
+                    prev = hist_mmp.get(label)
+                    if prev is None or val > prev:
+                        breakthrus.append({
+                            "type": "mmp", "label": label,
+                            "watts": round(val), "prev": round(prev) if prev else None,
+                        })
+            if row.get("max_heartrate"):
+                conn_b = _conn(DB_PATH)
+                prev_hr = conn_b.execute(
+                    "SELECT MAX(max_heartrate) FROM activities"
+                    " WHERE user_id=? AND id != ? AND max_heartrate IS NOT NULL",
+                    (uid, activity_id),
+                ).fetchone()[0]
+                conn_b.close()
+                if prev_hr is None or row["max_heartrate"] > prev_hr:
+                    breakthrus.append({
+                        "type": "hr",
+                        "bpm": round(row["max_heartrate"]),
+                        "prev": round(prev_hr) if prev_hr else None,
+                    })
+            breakthroughs_json = json.dumps(breakthrus)
+
         # hrTSS as fallback when power TSS is unavailable
         hr_tss = None
         if tss is None and hr_max and hr_rest and lthr:
@@ -147,6 +178,7 @@ def _compute_and_store_metrics(activity_id: int, uid: int, cfg: dict, stream: li
             tss, np_w, trimp, peak_json,
             hr_zone_json, power_zone_json,
             hr_tss=hr_tss,
+            breakthroughs_json=breakthroughs_json,
         )
     except Exception as e:
         print(f"[metrics] Failed for {activity_id}: {e}")
@@ -396,6 +428,8 @@ def index():
             "scheduled":     bool(r["scheduled_for_post"]),
             "post_url":      r["mastodon_post_url"] or "",
             "strava_url":    r["strava_url"] or "",
+            "has_breakthrough": bool(r["breakthroughs_json"] and
+                                     r["breakthroughs_json"] != "[]"),
         })
     strava_connected  = bool(get_setting(DB_PATH, uid, "strava", "access_token"))
     sync_remaining    = _sync_cooldown_remaining(uid) if strava_connected else 0
@@ -528,6 +562,8 @@ def activity(activity_id):
         "scheduled":     bool(row["scheduled_for_post"]),
         "render_error":  row["render_error"] or "",
         "post_error":    row["post_error"] or "",
+        "breakthroughs": json.loads(row["breakthroughs_json"])
+                         if row["breakthroughs_json"] else [],
     }
 
     mastodon_configured = bool(get_setting(DB_PATH, uid, "mastodon", "token"))

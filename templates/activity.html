@@ -22,6 +22,25 @@
   </p>
 </hgroup>
 
+{% if activity.breakthroughs %}
+<div class="breakthrough-banner">
+  <span class="breakthrough-title">🏆 New records this ride</span>
+  <ul class="breakthrough-list">
+    {% for b in activity.breakthroughs %}
+    <li>
+      {% if b.type == 'mmp' %}
+        <strong>{{ b.label }} power:</strong> {{ b.watts }} W
+        {% if b.prev %}<span class="muted"> (↑ from {{ b.prev }} W)</span>{% else %}<span class="muted"> (first recorded)</span>{% endif %}
+      {% elif b.type == 'hr' %}
+        <strong>Max heart rate:</strong> {{ b.bpm }} bpm
+        {% if b.prev %}<span class="muted"> (↑ from {{ b.prev }} bpm)</span>{% else %}<span class="muted"> (first recorded)</span>{% endif %}
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
 <div class="activity-stats">
   {% if activity.distance %}
   <div class="stat-chip">

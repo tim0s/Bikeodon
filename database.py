@@ -222,6 +222,7 @@ def init_db(db_path):
         ("power_zone_secs_json", "TEXT"),
         ("metrics_computed_at",  "TEXT"),
         ("hr_tss",               "REAL"),
+        ("breakthroughs_json",   "TEXT"),
     ]:
         try:
             conn.execute(f"ALTER TABLE activities ADD COLUMN {col} {typedef}")
@@ -971,6 +972,7 @@ def update_activity_metrics(
     hr_zone_secs_json: str | None = None,
     power_zone_secs_json: str | None = None,
     hr_tss: float | None = None,
+    breakthroughs_json: str | None = None,
 ):
     now = datetime.now(timezone.utc).isoformat()
     conn = _conn(db_path)
@@ -984,6 +986,11 @@ def update_activity_metrics(
          hr_zone_secs_json, power_zone_secs_json, now,
          hr_tss, activity_id, user_id),
     )
+    if breakthroughs_json is not None:
+        conn.execute(
+            "UPDATE activities SET breakthroughs_json=? WHERE id=? AND user_id=?",
+            (breakthroughs_json, activity_id, user_id),
+        )
     conn.commit()
     conn.close()
 
@@ -1010,23 +1017,26 @@ def get_daily_loads(db_path, user_id: int) -> dict:
     return result
 
 
-def get_all_peak_powers(db_path, user_id: int, days: int | None = None) -> list:
+def get_all_peak_powers(db_path, user_id: int, days: int | None = None,
+                        exclude_id: int | None = None) -> list:
     """
     Return list of parsed peak_power dicts for all activities (or last `days` days).
+    exclude_id: omit a specific activity (used for breakthrough detection).
     """
     conn = _conn(db_path)
+    excl = f" AND id != {int(exclude_id)}" if exclude_id is not None else ""
     if days is not None:
         from datetime import datetime, timedelta, timezone
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
         rows = conn.execute(
-            "SELECT peak_power_json FROM activities"
-            " WHERE user_id=? AND peak_power_json IS NOT NULL AND start_date >= ?",
+            f"SELECT peak_power_json FROM activities"
+            f" WHERE user_id=? AND peak_power_json IS NOT NULL AND start_date >= ?{excl}",
             (user_id, cutoff),
         ).fetchall()
     else:
         rows = conn.execute(
-            "SELECT peak_power_json FROM activities"
-            " WHERE user_id=? AND peak_power_json IS NOT NULL",
+            f"SELECT peak_power_json FROM activities"
+            f" WHERE user_id=? AND peak_power_json IS NOT NULL{excl}",
             (user_id,),
         ).fetchall()
     conn.close()

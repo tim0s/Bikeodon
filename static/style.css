@@ -120,6 +120,28 @@ article footer {
 .flash-success { background: #edfaed; border-left: 4px solid #4caf50; color: #1a4d1a; }
 .flash-error   { background: #fdecea; border-left: 4px solid #f44336; color: #4d1a1a; }
 
+.breakthrough-banner {
+  background: #1a1f12;
+  border-left: 4px solid #ffc107;
+  padding: .75rem 1rem;
+  border-radius: 4px;
+  margin-bottom: 1rem;
+}
+.breakthrough-title {
+  font-weight: 600;
+  color: #ffc107;
+  display: block;
+  margin-bottom: .4rem;
+}
+.breakthrough-list {
+  margin: 0;
+  padding-left: 1.2rem;
+  color: #e0e0e0;
+}
+.breakthrough-list li {
+  margin-bottom: .2rem;
+}
+
 .config-warning {
   background: #fff8e1;
   border-left: 4px solid #ffc107;
