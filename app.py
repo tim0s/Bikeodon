@@ -992,7 +992,7 @@ def save_map():
         val = request.form.get(key, "").strip()
         if val:
             set_setting(DB_PATH, uid, "map", key, val)
-    for key in ("start_marker_enabled", "end_marker_enabled"):
+    for key in ("start_marker_enabled", "end_marker_enabled", "watopia_enabled"):
         set_setting(DB_PATH, uid, "map", key, "true" if request.form.get(key) else "false")
     flash("Map settings saved.", "success")
     return redirect(url_for("settings", section="map"))

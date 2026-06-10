@@ -1,5 +1,6 @@
 .env
 .venv/
+maps/*.db
 __pycache__/
 *.pyc
 bikeodon.db

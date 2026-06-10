@@ -133,10 +133,11 @@ def _parse_color(color, opacity: float = 1.0) -> tuple[int, int, int, int]:
     return r, g, b, int(opacity * 255)
 
 
-def _draw_route(img: Image.Image, origin: tuple[int, int],
-                points: list, zoom: int, cfg: dict) -> Image.Image:
+def _draw_route(img: Image.Image, points: list,
+                to_px, cfg: dict) -> Image.Image:
     """
     Draw the route polyline onto a transparent overlay, then composite.
+    to_px(lat, lon) → (x, y) in image-pixel space (pre-antialias).
     Renders at antialias_scale× resolution for smooth edges.
     """
     route_cfg = cfg["map"]["route"]
@@ -146,11 +147,8 @@ def _draw_route(img: Image.Image, origin: tuple[int, int],
     overlay_big = Image.new("RGBA", (w * scale, h * scale), (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay_big)
 
-    def to_px(lat, lon):
-        gx, gy = _latlon_to_global_px(lat, lon, zoom)
-        return ((gx - origin[0]) * scale, (gy - origin[1]) * scale)
-
-    px_points = [to_px(lat, lon) for lat, lon in points]
+    px_points = [(to_px(lat, lon)[0] * scale, to_px(lat, lon)[1] * scale)
+                 for lat, lon in points]
 
     route_color = _parse_color(route_cfg.get("color", "#FC4C02"),
                                 route_cfg.get("opacity", 0.9))
@@ -160,11 +158,9 @@ def _draw_route(img: Image.Image, origin: tuple[int, int],
 
     def draw_polyline(color, width):
         half_r = width / 2
-        # Round joins: circle at each vertex
         for pt in px_points:
             draw.ellipse([pt[0] - half_r, pt[1] - half_r,
                           pt[0] + half_r, pt[1] + half_r], fill=color)
-        # Segments
         for i in range(len(px_points) - 1):
             draw.line([px_points[i], px_points[i + 1]], fill=color, width=int(width))
 
@@ -178,17 +174,13 @@ def _draw_route(img: Image.Image, origin: tuple[int, int],
     return Image.alpha_composite(img, overlay)
 
 
-def _draw_markers(img: Image.Image, origin: tuple[int, int],
-                  points: list, zoom: int, cfg: dict) -> Image.Image:
+def _draw_markers(img: Image.Image, points: list,
+                  to_px, cfg: dict) -> Image.Image:
     if not points:
         return img
 
     overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
-
-    def to_px(lat, lon):
-        gx, gy = _latlon_to_global_px(lat, lon, zoom)
-        return (gx - origin[0], gy - origin[1])
 
     def draw_dot(latlon, marker_cfg):
         if not marker_cfg.get("enabled", True):
@@ -470,6 +462,116 @@ def draw_stats_overlay(img: Image.Image, activity: dict, cfg: dict) -> Image.Ima
 
 
 # ---------------------------------------------------------------------------
+# Watopia static-map renderer
+# ---------------------------------------------------------------------------
+
+_WATOPIA_LAT_MIN = -11.74191
+_WATOPIA_LAT_MAX = -11.62572
+_WATOPIA_LON_MIN = 166.87780
+_WATOPIA_LON_MAX = 167.03194
+_WATOPIA_IMG_W   = 8192
+_WATOPIA_IMG_H   = 6144
+
+
+def _is_watopia(lats: list, lons: list) -> bool:
+    lat_c = sum(lats) / len(lats)
+    lon_c = sum(lons) / len(lons)
+    return (_WATOPIA_LAT_MIN <= lat_c <= _WATOPIA_LAT_MAX and
+            _WATOPIA_LON_MIN <= lon_c <= _WATOPIA_LON_MAX)
+
+
+def _watopia_img_px(lat: float, lon: float) -> tuple[float, float]:
+    x = (lon - _WATOPIA_LON_MIN) / (_WATOPIA_LON_MAX - _WATOPIA_LON_MIN) * _WATOPIA_IMG_W
+    y = (_WATOPIA_LAT_MAX - lat) / (_WATOPIA_LAT_MAX - _WATOPIA_LAT_MIN) * _WATOPIA_IMG_H
+    return x, y
+
+
+def _render_watopia_map(points: list, activity: dict, cfg: dict,
+                        maps_dir: str) -> Image.Image | None:
+    map_path = os.path.join(maps_dir, "watopia.png")
+    if not os.path.exists(map_path):
+        print(f"    Watopia map not found at {map_path}, falling back to OSM")
+        return None
+
+    lats = [p[0] for p in points]
+    lons = [p[1] for p in points]
+    min_lat, max_lat = min(lats), max(lats)
+    min_lon, max_lon = min(lons), max(lons)
+
+    lat_span = max(max_lat - min_lat, 0.001)
+    lon_span = max(max_lon - min_lon, 0.001)
+    min_lat -= lat_span * 0.005
+    max_lat += lat_span * 0.005
+    min_lon -= lon_span * 0.005
+    max_lon += lon_span * 0.005
+
+    out_w = cfg["map"]["width"]
+    out_h = cfg["map"]["height"]
+
+    raw = cfg["map"].get("padding", 0.05)
+    if isinstance(raw, dict):
+        pad_top    = float(raw.get("top",    0.05))
+        pad_bottom = float(raw.get("bottom", 0.12))
+        pad_left   = float(raw.get("left",   0.05))
+        pad_right  = float(raw.get("right",  0.05))
+    else:
+        f = float(raw)
+        pad_top = pad_bottom = pad_left = pad_right = f
+
+    pad_left_px   = pad_left   * out_w
+    pad_right_px  = pad_right  * out_w
+    pad_top_px    = pad_top    * out_h
+    pad_bottom_px = pad_bottom * out_h
+    route_area_w  = out_w - pad_left_px  - pad_right_px
+    route_area_h  = out_h - pad_top_px   - pad_bottom_px
+
+    # Route bounding box in Watopia image pixels
+    px0, py0 = _watopia_img_px(max_lat, min_lon)  # top-left
+    px1, py1 = _watopia_img_px(min_lat, max_lon)  # bottom-right
+    route_px_w = px1 - px0
+    route_px_h = py1 - py0
+
+    # Scale factor to fit route into the route area (maintain aspect ratio)
+    scale = min(route_area_w / route_px_w if route_px_w > 0 else 1,
+                route_area_h / route_px_h if route_px_h > 0 else 1)
+
+    # Source region in Watopia image pixels
+    src_w = out_w / scale
+    src_h = out_h / scale
+    center_off_x = (route_area_w / scale - route_px_w) / 2
+    center_off_y = (route_area_h / scale - route_px_h) / 2
+    src_left = px0 - pad_left_px / scale - center_off_x
+    src_top  = py0 - pad_top_px  / scale - center_off_y
+
+    # Load + crop
+    watopia = Image.open(map_path).convert("RGBA")
+    W, H = watopia.size
+    sl, st = int(src_left), int(src_top)
+    sr, sb = sl + int(src_w), st + int(src_h)
+
+    if sl < 0 or st < 0 or sr > W or sb > H:
+        bg = Image.new("RGBA", (int(src_w), int(src_h)), (200, 200, 200, 255))
+        cl, ct = max(0, sl), max(0, st)
+        cr, cb = min(W, sr), min(H, sb)
+        if cr > cl and cb > ct:
+            bg.paste(watopia.crop((cl, ct, cr, cb)), (cl - sl, ct - st))
+        cropped = bg
+    else:
+        cropped = watopia.crop((sl, st, sr, sb))
+
+    canvas = cropped.resize((out_w, out_h), Image.LANCZOS)
+
+    def _watopia_to_px(lat, lon):
+        wx, wy = _watopia_img_px(lat, lon)
+        return ((wx - src_left) * scale, (wy - src_top) * scale)
+
+    canvas = _draw_route(canvas, points, _watopia_to_px, cfg)
+    canvas = _draw_markers(canvas, points, _watopia_to_px, cfg)
+    canvas = draw_stats_overlay(canvas, activity, cfg)
+    return canvas
+
+
+# ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
 
@@ -485,6 +587,21 @@ def render_activity_map(points: list[tuple[float, float]], activity: dict,
     """
     if not points:
         return None
+
+    lats = [p[0] for p in points]
+    lons = [p[1] for p in points]
+
+    # Use Watopia static map when enabled and activity is a Zwift ride in Watopia
+    watopia_enabled = cfg["map"].get("watopia_enabled", True)
+    maps_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "maps")
+    if (watopia_enabled
+            and activity.get("sport_type") == "VirtualRide"
+            and _is_watopia(lats, lons)):
+        print("    Using Watopia static map…")
+        result = _render_watopia_map(points, activity, cfg, maps_dir)
+        if result is not None:
+            return result
+        # Falls through to OSM on failure
 
     lats = [p[0] for p in points]
     lons = [p[1] for p in points]
@@ -533,8 +650,12 @@ def render_activity_map(points: list[tuple[float, float]], activity: dict,
     canvas, origin = _stitch_tiles(min_lat, min_lon, max_lat, max_lon, zoom, cfg)
 
     print(f"    Drawing route…")
-    canvas = _draw_route(canvas, origin, points, zoom, cfg)
-    canvas = _draw_markers(canvas, origin, points, zoom, cfg)
+    def _osm_to_px(lat, lon):
+        gx, gy = _latlon_to_global_px(lat, lon, zoom)
+        return (gx - origin[0], gy - origin[1])
+
+    canvas = _draw_route(canvas, points, _osm_to_px, cfg)
+    canvas = _draw_markers(canvas, points, _osm_to_px, cfg)
 
     print(f"    Cropping to {out_w}×{out_h}…")
     canvas = _crop_to_output(canvas, origin, min_lat, min_lon, max_lat, max_lon,

@@ -223,6 +223,11 @@
         <input type="number" name="max_tiles" value="{{ cfg.map.max_tiles }}" min="10" max="500">
       </label>
     </div>
+    <label>
+      <input type="checkbox" name="watopia_enabled" {% if cfg.map.watopia_enabled %}checked{% endif %}>
+      Use Watopia map for Zwift rides in Watopia
+      <small>When enabled, VirtualRide activities with GPS coordinates inside Watopia use a local map image instead of OpenStreetMap tiles.</small>
+    </label>
     <label>Tile URL
       <input type="url" name="tiles_url" value="{{ cfg.map.tiles.url }}">
     </label>

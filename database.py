@@ -52,6 +52,7 @@ _DEFAULT_SETTINGS = [
     ("training",       "body_weight_kg",           ""),
     ("training",       "hr_rest",                 ""),
     ("training",       "lthr",                    ""),
+    ("map",            "watopia_enabled",          "true"),
     ("stats",          "fields",                  "distance,elevation_gain"),
     ("stats_overlay",  "enabled",                 "true"),
     ("stats_overlay",  "background_color",        "#000000"),
@@ -462,6 +463,7 @@ def load_user_config(db_path: str, user_id: int, base_cfg: dict) -> dict:
                 "outline_color": txt("map", "end_marker_outline_color", "#ffffff"),
                 "outline_width": num("map", "end_marker_outline_width", 2),
             },
+            "watopia_enabled": flag("map", "watopia_enabled", True),
         },
         "charts": {
             "style": {
