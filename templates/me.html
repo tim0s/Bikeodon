@@ -450,12 +450,13 @@
 <article>
   <header>
     <strong>Mean maximal power curve</strong>
-    {% if body_weight %}
     <span style="float:right">
       <button id="wpkToggle" class="outline" style="padding:.2rem .7rem;font-size:.8rem" onclick="toggleWpk()">Show W/kg</button>
     </span>
-    {% endif %}
   </header>
+  <div id="wpkWarning" style="display:none;margin:.5rem 0 0" class="config-warning">
+    Set your body weight in <a href="{{ url_for('settings', section='training') }}">Settings → Training</a> to use the W/kg view.
+  </div>
   <div style="position:relative;height:280px">
     <canvas id="powerCurveChart"></canvas>
   </div>
@@ -614,6 +615,10 @@
   });
 
   window.toggleWpk = function() {
+    if (!bodyWeight) {
+      document.getElementById('wpkWarning').style.display = 'block';
+      return;
+    }
     showWpk = !showWpk;
     const btn = document.getElementById('wpkToggle');
     if (btn) btn.textContent = showWpk ? 'Show W' : 'Show W/kg';
