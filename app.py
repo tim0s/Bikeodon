@@ -900,7 +900,7 @@ def me():
         set_setting(DB_PATH, uid, "inference", "w_prime", str(w_prime))
 
     # W/kg variants
-    if body_weight and ftp:
+    if body_weight:
         wpk_all    = {k: round(v / body_weight, 2) for k, v in curve_all.items()}
         wpk_recent = {k: round(v / body_weight, 2) for k, v in curve_recent.items()}
     else:
