@@ -333,15 +333,21 @@ def _load_font(size: int) -> "ImageFont.FreeTypeFont":
     return ImageFont.load_default()
 
 
-def _load_emoji_font(size: int) -> "ImageFont.FreeTypeFont | None":
+_EMOJI_FONT_NATIVE_SIZE = 109  # NotoColorEmoji only loads at this size
+
+def _load_emoji_font(size: int) -> "tuple[ImageFont.FreeTypeFont, int] | tuple[None, int]":
+    """Return (font, native_size). native_size may differ from size if the font
+    only loads at a fixed pixel size (e.g. NotoColorEmoji at 109 px)."""
     from PIL import ImageFont
     for path in _EMOJI_FONT_CANDIDATES:
-        if os.path.exists(path):
+        if not os.path.exists(path):
+            continue
+        for attempt in (size, _EMOJI_FONT_NATIVE_SIZE):
             try:
-                return ImageFont.truetype(path, size)
+                return ImageFont.truetype(path, attempt), attempt
             except Exception:
                 continue
-    return None
+    return None, size
 
 
 def _format_stat(key: str, activity: dict) -> tuple[str, str] | None:
@@ -376,25 +382,40 @@ def _format_stat(key: str, activity: dict) -> tuple[str, str] | None:
     return ("", str(v))
 
 
-def _mixed_width(probe, emoji: str, text: str, ef, tf) -> int:
+def _emoji_scale(ef_native: int, target: int) -> float:
+    return target / ef_native if ef_native else 1.0
+
+
+def _mixed_width(probe, emoji: str, text: str, ef, ef_native: int, target_size: int, tf) -> int:
     """Measure total pixel width of an (emoji, text) pair."""
     w = 0
     if emoji and ef:
         bb = probe.textbbox((0, 0), emoji, font=ef)
-        w += bb[2] - bb[0]
+        raw_w = bb[2] - bb[0]
+        w += int(raw_w * _emoji_scale(ef_native, target_size))
     if text:
         bb = probe.textbbox((0, 0), text, font=tf)
         w += bb[2] - bb[0]
     return w
 
 
-def _draw_mixed(draw, x: int, y: int, emoji: str, text: str,
-                ef, tf, color) -> int:
-    """Draw (emoji, text) pair, return new x position."""
+def _draw_mixed(img: "Image.Image", draw, x: int, y: int, emoji: str, text: str,
+                ef, ef_native: int, target_size: int, tf, color) -> int:
+    """Draw (emoji, text) pair onto img, return new x position."""
     if emoji and ef:
-        draw.text((x, y), emoji, font=ef, fill=color, embedded_color=True)
-        bb = draw.textbbox((x, y), emoji, font=ef)
-        x += bb[2] - bb[0]
+        # Render emoji to a small RGBA canvas at native size, then scale to target
+        bb = draw.textbbox((0, 0), emoji, font=ef)
+        ew, eh = bb[2] - bb[0], bb[3] - bb[1]
+        if ew > 0 and eh > 0:
+            scale = _emoji_scale(ef_native, target_size)
+            tmp = Image.new("RGBA", (ew, eh), (0, 0, 0, 0))
+            ImageDraw.Draw(tmp).text((-bb[0], -bb[1]), emoji, font=ef,
+                                     embedded_color=True)
+            scaled_w = max(1, int(ew * scale))
+            scaled_h = max(1, int(eh * scale))
+            tmp = tmp.resize((scaled_w, scaled_h), Image.LANCZOS)
+            img.alpha_composite(tmp, (int(x), int(y)))
+            x += scaled_w
     if text:
         draw.text((x, y), text, font=tf, fill=color)
         bb = draw.textbbox((x, y), text, font=tf)
@@ -414,8 +435,9 @@ def draw_stats_overlay(img: Image.Image, activity: dict, cfg: dict) -> Image.Ima
     gap       = ov.get("gap", 40)
     padding   = ov.get("padding", 24)
 
-    tf = _load_font(font_size)                       # text font (Helvetica)
-    ef = _load_emoji_font(icon_cfg.get("size", font_size))  # emoji font
+    target_emoji_size = icon_cfg.get("size", font_size)
+    tf = _load_font(font_size)
+    ef, ef_native = _load_emoji_font(target_emoji_size)
 
     sport     = activity.get("sport_type", "Ride")
     icons_map = {**_ACTIVITY_ICONS, **icon_cfg.get("activity_icons", {})}
@@ -428,8 +450,8 @@ def draw_stats_overlay(img: Image.Image, activity: dict, cfg: dict) -> Image.Ima
     sep    = "   •   "
     sep_w  = probe.textbbox((0, 0), sep, font=tf)[2]
 
-    icon_w  = _mixed_width(probe, icon_char, "", ef, tf)
-    stats_w = sum(_mixed_width(probe, e, t, ef, tf) for e, t in stats)
+    icon_w  = _mixed_width(probe, icon_char, "", ef, ef_native, target_emoji_size, tf)
+    stats_w = sum(_mixed_width(probe, e, t, ef, ef_native, target_emoji_size, tf) for e, t in stats)
     total_w = icon_w + gap + stats_w + sep_w * max(0, len(stats) - 1)
 
     img_w, img_h = img.size
@@ -448,7 +470,7 @@ def draw_stats_overlay(img: Image.Image, activity: dict, cfg: dict) -> Image.Ima
     y     = img_h - bar_h + padding
 
     # ── activity icon ──
-    x = _draw_mixed(draw, x, y, icon_char, "", ef, tf, color)
+    x = _draw_mixed(result, draw, x, y, icon_char, "", ef, ef_native, target_emoji_size, tf, color)
     x += gap
 
     # ── stat fields ──
@@ -456,7 +478,7 @@ def draw_stats_overlay(img: Image.Image, activity: dict, cfg: dict) -> Image.Ima
         if i > 0:
             draw.text((x, y), sep, font=tf, fill=_parse_color("#888888"))
             x += sep_w
-        x = _draw_mixed(draw, x, y, emoji, text, ef, tf, color)
+        x = _draw_mixed(result, draw, x, y, emoji, text, ef, ef_native, target_emoji_size, tf, color)
 
     return result
 
