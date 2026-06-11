@@ -16,7 +16,8 @@ from flask import (
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives import serialization
 
-from database import get_setting, get_user_by_username, set_setting
+from database import get_user_by_username
+from database import _conn as _db_conn
 
 bp = Blueprint("activitypub", __name__)
 
@@ -35,10 +36,13 @@ _AP_CONTEXT = [
 
 def get_or_create_keypair(db_path: str, user_id: int) -> tuple[str, str]:
     """Return (public_pem, private_pem) for a user, generating if absent."""
-    pub  = get_setting(db_path, user_id, "activitypub", "public_key_pem")
-    priv = get_setting(db_path, user_id, "activitypub", "private_key_pem")
-    if pub and priv:
-        return pub, priv
+    conn = _db_conn(db_path)
+    row  = conn.execute(
+        "SELECT public_key_pem, private_key_pem FROM users WHERE id=?", (user_id,)
+    ).fetchone()
+
+    if row and row["public_key_pem"] and row["private_key_pem"]:
+        return row["public_key_pem"], row["private_key_pem"]
 
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     priv_pem = private_key.private_bytes(
@@ -50,8 +54,11 @@ def get_or_create_keypair(db_path: str, user_id: int) -> tuple[str, str]:
         encoding=serialization.Encoding.PEM,
         format=serialization.PublicFormat.SubjectPublicKeyInfo,
     ).decode()
-    set_setting(db_path, user_id, "activitypub", "public_key_pem", pub_pem)
-    set_setting(db_path, user_id, "activitypub", "private_key_pem", priv_pem)
+    conn.execute(
+        "UPDATE users SET public_key_pem=?, private_key_pem=? WHERE id=?",
+        (pub_pem, priv_pem, user_id),
+    )
+    conn.commit()
     return pub_pem, priv_pem
 
 

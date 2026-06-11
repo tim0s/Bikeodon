@@ -133,9 +133,11 @@ def init_db(db_path):
         )
     """)
     for col, typedef in [
-        ("username",      "TEXT"),
-        ("password_hash", "TEXT"),
-        ("is_admin",      "INTEGER NOT NULL DEFAULT 0"),
+        ("username",        "TEXT"),
+        ("password_hash",   "TEXT"),
+        ("is_admin",        "INTEGER NOT NULL DEFAULT 0"),
+        ("public_key_pem",  "TEXT"),
+        ("private_key_pem", "TEXT"),
     ]:
         try:
             conn.execute(f"ALTER TABLE users ADD COLUMN {col} {typedef}")
