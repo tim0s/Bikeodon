@@ -1200,3 +1200,154 @@ class TestUnfollow:
         assert r.status_code in (200, 302)
         rows = get_following(app_module.DB_PATH, username)
         assert not any(r["actor_url"] == self.REMOTE_ACTOR for r in rows)
+
+
+# ---------------------------------------------------------------------------
+# Home Feed
+# ---------------------------------------------------------------------------
+
+class TestHomeFeed:
+
+    REMOTE_ACTOR = "https://mastodon.social/users/bob"
+    REMOTE_INBOX = "https://mastodon.social/users/bob/inbox"
+    NOTE_ID      = "https://mastodon.social/users/bob/statuses/1"
+
+    def _add_following(self, db_path, username):
+        from database import add_following, accept_following
+        add_following(db_path, username, self.REMOTE_ACTOR, self.REMOTE_INBOX,
+                      display_name="Bob", avatar_url=None)
+        accept_following(db_path, username, self.REMOTE_ACTOR)
+
+    def _create_note_activity(self, extra_note=None):
+        note = {
+            "id": self.NOTE_ID,
+            "type": "Note",
+            "attributedTo": self.REMOTE_ACTOR,
+            "content": "<p>Hello from Bob!</p>",
+            "published": "2026-06-11T12:00:00Z",
+            "url": self.NOTE_ID,
+        }
+        if extra_note:
+            note.update(extra_note)
+        return {
+            "@context": "https://www.w3.org/ns/activitystreams",
+            "id": f"{self.NOTE_ID}/activity",
+            "type": "Create",
+            "actor": self.REMOTE_ACTOR,
+            "object": note,
+        }
+
+    @pytest.fixture(autouse=True)
+    def bypass_sig(self):
+        with patch("activitypub._verify_http_signature", return_value=(True, "ok")):
+            yield
+
+    def test_create_note_from_followed_stored(self, app, user):
+        import app as app_module
+        from activitypub import _handle_create_note
+        from database import get_feed_items
+        username, _ = user
+        self._add_following(app_module.DB_PATH, username)
+
+        activity = self._create_note_activity()
+        _handle_create_note(username, activity, activity["object"], app_module.DB_PATH)
+
+        items = get_feed_items(app_module.DB_PATH, username)
+        assert len(items) == 1
+        assert items[0]["object_id"] == self.NOTE_ID
+        assert items[0]["content"] == "<p>Hello from Bob!</p>"
+
+    def test_create_note_from_stranger_ignored(self, app, user):
+        import app as app_module
+        from activitypub import _handle_create_note
+        from database import get_feed_items
+        username, _ = user
+
+        activity = self._create_note_activity()
+        activity["actor"] = "https://evil.example/users/spam"
+        activity["object"]["attributedTo"] = "https://evil.example/users/spam"
+        _handle_create_note(username, activity, activity["object"], app_module.DB_PATH)
+
+        items = get_feed_items(app_module.DB_PATH, username)
+        assert len(items) == 0
+
+    def test_create_note_stores_actor_name(self, app, user):
+        import app as app_module
+        from activitypub import _handle_create_note
+        from database import get_feed_items
+        username, _ = user
+        self._add_following(app_module.DB_PATH, username)
+
+        activity = self._create_note_activity()
+        _handle_create_note(username, activity, activity["object"], app_module.DB_PATH)
+
+        items = get_feed_items(app_module.DB_PATH, username)
+        assert items[0]["actor_name"] == "Bob"
+
+    def test_create_note_with_attachment_stored(self, app, user):
+        import app as app_module
+        from activitypub import _handle_create_note
+        from database import get_feed_items
+        username, _ = user
+        self._add_following(app_module.DB_PATH, username)
+
+        note_extra = {"attachment": [{"type": "Document", "mediaType": "image/png",
+                                       "url": "https://example.com/map.png"}]}
+        activity = self._create_note_activity(extra_note=note_extra)
+        _handle_create_note(username, activity, activity["object"], app_module.DB_PATH)
+
+        items = get_feed_items(app_module.DB_PATH, username)
+        atts = json.loads(items[0]["attachments_json"])
+        assert len(atts) == 1
+        assert atts[0]["url"] == "https://example.com/map.png"
+
+    def test_duplicate_note_ignored(self, app, user):
+        import app as app_module
+        from activitypub import _handle_create_note
+        from database import get_feed_items
+        username, _ = user
+        self._add_following(app_module.DB_PATH, username)
+
+        activity = self._create_note_activity()
+        _handle_create_note(username, activity, activity["object"], app_module.DB_PATH)
+        _handle_create_note(username, activity, activity["object"], app_module.DB_PATH)
+
+        items = get_feed_items(app_module.DB_PATH, username)
+        assert len(items) == 1
+
+    def test_inbox_create_note_endpoint(self, client, user, app):
+        import app as app_module
+        from database import get_feed_items
+        username, uid = user
+        self._add_following(app_module.DB_PATH, username)
+
+        activity = self._create_note_activity()
+        r = client.post(
+            f"/users/{username}/inbox",
+            data=json.dumps(activity),
+            content_type="application/activity+json",
+        )
+        assert r.status_code == 202
+        items = get_feed_items(app_module.DB_PATH, username)
+        assert len(items) == 1
+
+    def test_feed_route_returns_200(self, client, user):
+        username, uid = user
+        with client.session_transaction() as sess:
+            sess["_user_id"] = str(uid)
+        r = client.get("/feed")
+        assert r.status_code == 200
+
+    def test_feed_shows_items(self, client, user, app):
+        import app as app_module
+        from activitypub import _handle_create_note
+        username, uid = user
+        self._add_following(app_module.DB_PATH, username)
+
+        activity = self._create_note_activity()
+        _handle_create_note(username, activity, activity["object"], app_module.DB_PATH)
+
+        with client.session_transaction() as sess:
+            sess["_user_id"] = str(uid)
+        r = client.get("/feed")
+        assert b"Hello from Bob!" in r.data

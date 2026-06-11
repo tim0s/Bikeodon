@@ -36,6 +36,8 @@ from database import (
     mark_delivery_sent, update_delivery_attempt, mark_delivery_failed,
     count_activities, list_activities,
     get_nodeinfo_stats,
+    add_feed_item,
+    get_following as _db_get_following,
 )
 from database import _conn as _db_conn
 
@@ -340,6 +342,10 @@ def inbox(username):
         obj = activity.get("object", {})
         if isinstance(obj, dict) and obj.get("type") == "Follow":
             _handle_undo_follow(username, activity, db_path)
+    elif activity_type == "Create":
+        obj = activity.get("object", {})
+        if isinstance(obj, dict) and obj.get("type") == "Note":
+            _handle_create_note(username, activity, obj, db_path)
 
     return "", 202
 
@@ -392,6 +398,40 @@ def _handle_undo_follow(local_username, activity, db_path):
     actor_url = activity.get("actor")
     if actor_url:
         remove_follower(db_path, local_username, actor_url)
+
+
+def _handle_create_note(local_username, activity, note_obj, db_path):
+    actor_url = activity.get("actor", "")
+    if not actor_url:
+        return
+
+    following = _db_get_following(db_path, local_username)
+    known_actors = {f["actor_url"] for f in following}
+    if actor_url not in known_actors:
+        return
+
+    actor_info = next((f for f in following if f["actor_url"] == actor_url), {})
+    actor_name   = actor_info.get("display_name") or actor_info.get("actor_url", "")
+    actor_avatar = actor_info.get("avatar_url") or ""
+
+    object_id  = note_obj.get("id", "")
+    object_url = note_obj.get("url") or object_id
+    content    = note_obj.get("content", "")
+    published  = note_obj.get("published", "")
+
+    raw_attachments = note_obj.get("attachment") or []
+    if isinstance(raw_attachments, dict):
+        raw_attachments = [raw_attachments]
+    attachments = [
+        {"url": a.get("url", ""), "mediaType": a.get("mediaType", ""), "type": a.get("type", "")}
+        for a in raw_attachments if isinstance(a, dict) and a.get("url")
+    ]
+
+    add_feed_item(
+        db_path, local_username, actor_url, actor_name, actor_avatar,
+        object_id, object_url, content, published,
+        json.dumps(attachments) if attachments else None,
+    )
 
 
 def webfinger_lookup(handle: str) -> dict | None:

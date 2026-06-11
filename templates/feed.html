@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Feed – Bikeodon{% endblock %}
+{% block content %}
+
+<h2>Home Feed</h2>
+
+{% if not items %}
+<p style="color:var(--pico-muted-color)">
+  No posts yet. Follow people on the Fediverse to see their activities here.
+</p>
+{% else %}
+
+{% for item in items %}
+<article style="margin-bottom:1.5rem">
+  <header style="display:flex;align-items:center;gap:.75rem;margin-bottom:.5rem">
+    {% if item.actor_avatar %}
+    <img src="{{ item.actor_avatar }}" alt=""
+         style="width:42px;height:42px;border-radius:50%;object-fit:cover;flex-shrink:0">
+    {% else %}
+    <div style="width:42px;height:42px;border-radius:50%;background:var(--pico-secondary-background);flex-shrink:0"></div>
+    {% endif %}
+    <div>
+      <strong>{{ item.actor_name or item.actor_url }}</strong><br>
+      <small style="color:var(--pico-muted-color)">
+        {% if item.object_url %}
+        <a href="{{ item.object_url }}" target="_blank" rel="noopener">{{ item.published[:10] if item.published else "" }}</a>
+        {% else %}
+        {{ item.published[:10] if item.published else "" }}
+        {% endif %}
+      </small>
+    </div>
+  </header>
+
+  {% if item.content %}
+  <div style="margin-bottom:.5rem">{{ item.content | safe }}</div>
+  {% endif %}
+
+  {% if item.attachments %}
+  <div style="display:flex;flex-wrap:wrap;gap:.5rem;margin-top:.5rem">
+    {% for att in item.attachments %}
+    {% if att.mediaType and att.mediaType.startswith("image/") %}
+    <img src="{{ att.url }}" alt="" style="max-width:100%;max-height:300px;border-radius:4px;object-fit:cover">
+    {% endif %}
+    {% endfor %}
+  </div>
+  {% endif %}
+</article>
+{% endfor %}
+
+{% if has_prev or has_next %}
+<nav style="display:flex;justify-content:space-between;margin-top:1rem">
+  {% if has_prev %}
+  <a href="{{ url_for('feed', page=page-1) }}" role="button" class="outline secondary">← Newer</a>
+  {% else %}
+  <span></span>
+  {% endif %}
+  {% if has_next %}
+  <a href="{{ url_for('feed', page=page+1) }}" role="button" class="outline secondary">Older →</a>
+  {% endif %}
+</nav>
+{% endif %}
+
+{% endif %}
+
+{% endblock %}

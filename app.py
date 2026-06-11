@@ -828,6 +828,35 @@ def ap_unfollow():
     return redirect(request.referrer or url_for("me", tab="following"))
 
 
+@app.route("/feed")
+@login_required
+def feed():
+    from database import get_feed_items, count_feed_items
+    uid = int(current_user.id)
+    page     = max(1, request.args.get("page", 1, type=int))
+    per_page = 20
+    offset   = (page - 1) * per_page
+    items    = get_feed_items(DB_PATH, current_user.username, limit=per_page, offset=offset)
+    total    = count_feed_items(DB_PATH, current_user.username)
+    parsed_items = []
+    for item in items:
+        row = dict(item)
+        try:
+            row["attachments"] = json.loads(row.get("attachments_json") or "[]")
+        except Exception:
+            row["attachments"] = []
+        parsed_items.append(row)
+    return render_template(
+        "feed.html",
+        items=parsed_items,
+        page=page,
+        total=total,
+        per_page=per_page,
+        has_prev=page > 1,
+        has_next=(offset + per_page) < total,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Upload
 # ---------------------------------------------------------------------------

@@ -289,6 +289,23 @@ def init_db(db_path):
     """)
 
     conn.execute("""
+        CREATE TABLE IF NOT EXISTS feed_items (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            local_username   TEXT NOT NULL,
+            actor_url        TEXT NOT NULL,
+            actor_name       TEXT,
+            actor_avatar     TEXT,
+            object_id        TEXT NOT NULL,
+            object_url       TEXT,
+            content          TEXT,
+            published        TEXT,
+            received_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            attachments_json TEXT,
+            UNIQUE(local_username, object_id)
+        )
+    """)
+
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS delivery_queue (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
             inbox_url       TEXT NOT NULL,
@@ -1226,6 +1243,42 @@ def accept_following(db_path, local_username: str, actor_url: str):
     )
     conn.commit()
     conn.close()
+
+
+def add_feed_item(db_path, local_username: str, actor_url: str, actor_name: str | None,
+                  actor_avatar: str | None, object_id: str, object_url: str | None,
+                  content: str | None, published: str | None, attachments_json: str | None):
+    conn = _conn(db_path)
+    conn.execute(
+        "INSERT OR IGNORE INTO feed_items"
+        " (local_username, actor_url, actor_name, actor_avatar, object_id, object_url,"
+        "  content, published, attachments_json)"
+        " VALUES (?,?,?,?,?,?,?,?,?)",
+        (local_username, actor_url, actor_name, actor_avatar, object_id, object_url,
+         content, published, attachments_json),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_feed_items(db_path, local_username: str, limit: int = 20, offset: int = 0) -> list[dict]:
+    conn = _conn(db_path)
+    rows = conn.execute(
+        "SELECT * FROM feed_items WHERE local_username=?"
+        " ORDER BY published DESC, received_at DESC LIMIT ? OFFSET ?",
+        (local_username, limit, offset),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def count_feed_items(db_path, local_username: str) -> int:
+    conn = _conn(db_path)
+    n = conn.execute(
+        "SELECT COUNT(*) FROM feed_items WHERE local_username=?", (local_username,)
+    ).fetchone()[0]
+    conn.close()
+    return n
 
 
 def remove_following(db_path, local_username: str, actor_url: str):
