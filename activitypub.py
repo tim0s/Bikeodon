@@ -607,7 +607,8 @@ def followers(username):
 _OUTBOX_PAGE_SIZE = 20
 
 
-def _activity_row_to_ap(row, actor_url: str, outbox_url: str) -> dict:
+def _activity_row_to_ap(row, actor_url: str, outbox_url: str,
+                        image_urls: list[str] | None = None) -> dict:
     """Convert a DB activity row to an ActivityPub Create{Note} activity."""
     row = dict(row)
     note_id = f"{actor_url}/activities/{row['id']}"
@@ -622,6 +623,22 @@ def _activity_row_to_ap(row, actor_url: str, outbox_url: str) -> dict:
     if published and not published.endswith("Z") and "+" not in published:
         published = published.replace(" ", "T") + "Z"
 
+    attachments = [
+        {"type": "Document", "mediaType": "image/png", "url": u}
+        for u in (image_urls or [])
+    ]
+
+    note = {
+        "id": note_id,
+        "type": "Note",
+        "attributedTo": actor_url,
+        "content": content,
+        "published": published,
+        "to": ["https://www.w3.org/ns/activitystreams#Public"],
+    }
+    if attachments:
+        note["attachment"] = attachments
+
     return {
         "@context": "https://www.w3.org/ns/activitystreams",
         "id": f"{note_id}/create",
@@ -629,14 +646,7 @@ def _activity_row_to_ap(row, actor_url: str, outbox_url: str) -> dict:
         "actor": actor_url,
         "published": published,
         "to": ["https://www.w3.org/ns/activitystreams#Public"],
-        "object": {
-            "id": note_id,
-            "type": "Note",
-            "attributedTo": actor_url,
-            "content": content,
-            "published": published,
-            "to": ["https://www.w3.org/ns/activitystreams#Public"],
-        },
+        "object": note,
     }
 
 

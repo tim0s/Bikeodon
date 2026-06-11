@@ -234,6 +234,22 @@ def _build_post_text(activity: dict, template: str) -> str:
     )
 
 
+def _collect_activity_images(activity_id: int, uid: int, cfg: dict, out_dir: str,
+                              row) -> list[str]:
+    """Return up to 4 image paths (map + charts) for an activity, generating them if needed."""
+    img_path = os.path.join(out_dir, f"{activity_id}.png")
+    if not os.path.exists(img_path):
+        _render_and_track(activity_id, uid, cfg, out_dir, row=row)
+        img_path_exists = os.path.exists(img_path)
+    else:
+        img_path_exists = True
+
+    stream      = get_stream(row)
+    chart_paths = generate_charts(activity_id, stream, cfg, out_dir, db_path=DB_PATH)
+    images      = ([img_path] if img_path_exists else []) + chart_paths
+    return images[:4]
+
+
 def _do_post_activity(activity_id: int, uid: int):
     """Post an activity to Mastodon. Meant to run in a background thread."""
     row = get_activity(DB_PATH, activity_id, user_id=uid)
@@ -245,7 +261,7 @@ def _do_post_activity(activity_id: int, uid: int):
     os.makedirs(out_dir, exist_ok=True)
     img_path = os.path.join(out_dir, f"{activity_id}.png")
 
-    # Ensure map exists
+    # Ensure map exists before posting
     if not os.path.exists(img_path):
         _render_and_track(activity_id, uid, cfg, out_dir, row=row)
         row = get_activity(DB_PATH, activity_id, user_id=uid)
@@ -256,11 +272,8 @@ def _do_post_activity(activity_id: int, uid: int):
             return
 
     try:
-        text        = _build_post_text(dict(row), cfg["mastodon"].get("post_template", "{name}\n#cycling"))
-        stream      = get_stream(row)
-        chart_paths = generate_charts(activity_id, stream, cfg, out_dir, db_path=DB_PATH)
-        images      = ([img_path] if os.path.exists(img_path) else []) + chart_paths
-        images      = images[:4]
+        text   = _build_post_text(dict(row), cfg["mastodon"].get("post_template", "{name}\n#cycling"))
+        images = _collect_activity_images(activity_id, uid, cfg, out_dir, row)
 
         client    = MastodonClient.from_cfg(cfg)
         media_ids = [client.upload_image(p) for p in images]
@@ -697,7 +710,15 @@ def ap_post_activity(activity_id):
     actor_url  = url_for("activitypub.actor",  username=username, _external=True)
     outbox_url = url_for("activitypub.outbox", username=username, _external=True)
 
-    create_activity = _activity_row_to_ap(row, actor_url, outbox_url)
+    cfg     = load_user_config(DB_PATH, uid, _base_cfg)
+    out_dir = _base_cfg["map"].get("output_dir", "output")
+    image_paths = _collect_activity_images(activity_id, uid, cfg, out_dir, row)
+    image_urls  = [
+        url_for("output_file", filename=os.path.basename(p), _external=True)
+        for p in image_paths
+    ]
+
+    create_activity = _activity_row_to_ap(row, actor_url, outbox_url, image_urls=image_urls)
     _, priv_pem = get_or_create_keypair(DB_PATH, uid)
     key_id = f"{actor_url}#main-key"
 
