@@ -1,13 +1,19 @@
 {% extends "base.html" %}
-{% block title %}{{ profile_user.username }} – Bikeodon{% endblock %}
+{% block title %}{{ profile_user.display_name or profile_user.username }} – Bikeodon{% endblock %}
 {% block content %}
-<hgroup>
-  <h2>{{ profile_user.username }}</h2>
-  <p><small>Bikeodon rider</small></p>
-</hgroup>
-<p>
-  <a href="{{ url_for('activitypub.actor', username=profile_user.username) }}">
-    @{{ profile_user.username }}@{{ request.host }}
-  </a>
-</p>
+<div style="display:flex;align-items:center;gap:1.2rem;margin-bottom:1rem">
+  <img src="{{ url_for('user_avatar', username=profile_user.username) }}"
+       alt="Avatar"
+       style="width:72px;height:72px;border-radius:50%;object-fit:cover;flex-shrink:0">
+  <hgroup style="margin:0">
+    <h2 style="margin:0">{{ profile_user.display_name or profile_user.username }}</h2>
+    <p style="margin:0">
+      <small class="muted">@{{ profile_user.username }}@{{ request.host }}</small>
+    </p>
+  </hgroup>
+</div>
+
+{% if profile_user.summary %}
+<p>{{ profile_user.summary }}</p>
+{% endif %}
 {% endblock %}
