@@ -662,7 +662,19 @@
     {% for f in followers %}
     <tr>
       <td>
-        <a href="{{ f.actor_url }}" target="_blank" rel="noopener">{{ f.actor_url }}</a>
+        <a href="{{ f.actor_url }}" target="_blank" rel="noopener"
+           style="display:flex;align-items:center;gap:.6rem;text-decoration:none;color:inherit">
+          {% if f.avatar_url %}
+          <img src="{{ f.avatar_url }}" alt=""
+               style="width:36px;height:36px;border-radius:50%;object-fit:cover;flex-shrink:0">
+          {% else %}
+          <span style="width:36px;height:36px;border-radius:50%;background:#333;flex-shrink:0;display:inline-block"></span>
+          {% endif %}
+          <span>
+            <strong>{{ f.display_name or f.actor_url }}</strong><br>
+            <small class="muted">{{ f.actor_url }}</small>
+          </span>
+        </a>
       </td>
       <td><small class="muted">{{ f.followed_at[:10] }}</small></td>
     </tr>

@@ -217,19 +217,27 @@ def _handle_follow(local_username, local_user, activity, db_path):
     if not actor_url:
         return
 
-    # Fetch remote actor to discover their inbox URL
+    # Fetch remote actor to discover inbox URL and profile info
     inbox_url = ""
+    display_name = None
+    avatar_url = None
     try:
         resp = requests.get(
             actor_url,
             headers={"Accept": _AP_MIME},
             timeout=10,
         )
-        inbox_url = resp.json().get("inbox", "")
+        actor_doc = resp.json()
+        inbox_url    = actor_doc.get("inbox", "")
+        display_name = actor_doc.get("name") or actor_doc.get("preferredUsername")
+        icon = actor_doc.get("icon", {})
+        if isinstance(icon, dict):
+            avatar_url = icon.get("url")
     except Exception as exc:
         _log.warning("Could not fetch remote actor %s: %s", actor_url, exc)
 
-    add_follower(db_path, local_username, actor_url, inbox_url)
+    add_follower(db_path, local_username, actor_url, inbox_url,
+                 display_name=display_name, avatar_url=avatar_url)
 
     if not inbox_url:
         return

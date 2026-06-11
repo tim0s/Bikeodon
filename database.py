@@ -259,9 +259,19 @@ def init_db(db_path):
             actor_url       TEXT NOT NULL,
             inbox_url       TEXT NOT NULL DEFAULT '',
             followed_at     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            display_name    TEXT,
+            avatar_url      TEXT,
             UNIQUE(local_username, actor_url)
         )
     """)
+    for col, typedef in [
+        ("display_name", "TEXT"),
+        ("avatar_url",   "TEXT"),
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE followers ADD COLUMN {col} {typedef}")
+        except sqlite3.OperationalError:
+            pass
 
     conn.commit()
 
@@ -1126,11 +1136,17 @@ def get_recent_jobs(db_path, limit: int = 30) -> list:
     return [dict(r) for r in rows]
 
 
-def add_follower(db_path, local_username: str, actor_url: str, inbox_url: str):
+def add_follower(db_path, local_username: str, actor_url: str, inbox_url: str,
+                 display_name: str = None, avatar_url: str = None):
     conn = _conn(db_path)
     conn.execute(
-        "INSERT OR IGNORE INTO followers (local_username, actor_url, inbox_url) VALUES (?,?,?)",
-        (local_username, actor_url, inbox_url),
+        "INSERT INTO followers (local_username, actor_url, inbox_url, display_name, avatar_url)"
+        " VALUES (?,?,?,?,?)"
+        " ON CONFLICT(local_username, actor_url) DO UPDATE SET"
+        "   inbox_url=excluded.inbox_url,"
+        "   display_name=excluded.display_name,"
+        "   avatar_url=excluded.avatar_url",
+        (local_username, actor_url, inbox_url, display_name, avatar_url),
     )
     conn.commit()
     conn.close()
