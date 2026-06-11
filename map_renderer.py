@@ -593,16 +593,18 @@ def _render_watopia_map(points: list, activity: dict, cfg: dict,
     sr, sb = sl + int(src_w), st + int(src_h)
 
     if sl < 0 or st < 0 or sr > W or sb > H:
+        # Route extends outside the map image — pad with grey, then resize
         bg = Image.new("RGBA", (int(src_w), int(src_h)), (200, 200, 200, 255))
         cl, ct = max(0, sl), max(0, st)
         cr, cb = min(W, sr), min(H, sb)
         if cr > cl and cb > ct:
             bg.paste(watopia.crop((cl, ct, cr, cb)), (cl - sl, ct - st))
-        cropped = bg
+        canvas = bg.resize((out_w, out_h), Image.BICUBIC)
     else:
-        cropped = watopia.crop((sl, st, sr, sb))
-
-    canvas = cropped.resize((out_w, out_h), Image.LANCZOS)
+        # Single-pass crop+resize — avoids copying the full crop region into
+        # an intermediate image before downsampling (critical for large crops)
+        canvas = watopia.resize((out_w, out_h), Image.BICUBIC,
+                                box=(sl, st, sr, sb))
 
     def _watopia_to_px(lat, lon):
         wx, wy = _watopia_img_px(lat, lon)
