@@ -231,6 +231,14 @@
   {% endif %}
 {% endif %}
 
+{% if activity.ap_posted_at %}
+<p style="margin-bottom:1rem;color:var(--pico-muted-color)">✓ Posted to your feed on {{ activity.ap_posted_at }}</p>
+{% else %}
+<form method="post" action="{{ url_for('ap_post_activity', activity_id=activity.id) }}" style="margin-bottom:1rem">
+  <button type="submit" class="secondary">Post in my Feed</button>
+</form>
+{% endif %}
+
 <form method="post" action="{{ url_for('rerender_activity', activity_id=activity.id) }}" style="margin-bottom:1rem">
   <button type="submit" class="secondary outline">Re-render map &amp; charts</button>
 </form>

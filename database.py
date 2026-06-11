@@ -219,6 +219,7 @@ def init_db(db_path):
         ("source",               "TEXT NOT NULL DEFAULT 'strava'"),
         ("render_error",         "TEXT"),
         ("post_error",           "TEXT"),
+        ("ap_posted_at",         "TEXT"),
         ("tss",                  "REAL"),
         ("np_watts",             "REAL"),
         ("trimp",                "REAL"),
@@ -1276,6 +1277,16 @@ def update_delivery_attempt(db_path, delivery_id: int, next_attempt_at: str,
     conn.execute(
         "UPDATE delivery_queue SET attempts=?, next_attempt_at=?, last_error=? WHERE id=?",
         (attempts, next_attempt_at, error, delivery_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def mark_ap_posted(db_path, activity_id: int, user_id: int):
+    conn = _conn(db_path)
+    conn.execute(
+        "UPDATE activities SET ap_posted_at=? WHERE id=? AND user_id=?",
+        (datetime.now(timezone.utc).isoformat(), activity_id, user_id),
     )
     conn.commit()
     conn.close()

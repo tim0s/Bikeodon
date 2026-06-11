@@ -31,9 +31,9 @@ from database import (
     get_user_by_username, get_user_stats, get_zone_totals, get_zones, init_db,
     apply_zone_preset, HR_ZONE_PRESETS, POWER_ZONE_PRESETS,
     job_finish, job_start, get_recent_jobs,
-    list_activities, list_settings, load_user_config, mark_posted, mark_rendered,
-    reset_metrics_computed, set_activity_error, set_scheduled, set_setting,
-    update_activity_metrics, upsert_activity,
+    list_activities, list_settings, load_user_config, mark_ap_posted, mark_posted,
+    mark_rendered, reset_metrics_computed, set_activity_error, set_scheduled,
+    set_setting, update_activity_metrics, upsert_activity,
 )
 from mastodon_client import MastodonClient
 
@@ -597,6 +597,7 @@ def activity(activity_id):
         "scheduled":     bool(row["scheduled_for_post"]),
         "render_error":  row["render_error"] or "",
         "post_error":    row["post_error"] or "",
+        "ap_posted_at":  (row["ap_posted_at"] or "")[:10],
         "breakthroughs": json.loads(row["breakthroughs_json"])
                          if row["breakthroughs_json"] else [],
     }
@@ -673,6 +674,40 @@ def schedule_activity(activity_id):
         set_scheduled(DB_PATH, activity_id, uid, True)
         threading.Thread(target=_do_post_activity, args=(activity_id, uid), daemon=True).start()
 
+    return redirect(request.referrer or url_for("activity", activity_id=activity_id))
+
+
+@app.route("/activity/<int:activity_id>/ap_post", methods=["POST"])
+@login_required
+def ap_post_activity(activity_id):
+    uid = int(current_user.id)
+    row = get_activity(DB_PATH, activity_id, user_id=uid)
+    if not row:
+        flash("Activity not found.", "error")
+        return redirect(url_for("index"))
+
+    user = get_user_by_id(DB_PATH, uid)
+    username = user["username"]
+    followers = get_followers(DB_PATH, username)
+    if not followers:
+        flash("No followers to post to.", "info")
+        return redirect(request.referrer or url_for("activity", activity_id=activity_id))
+
+    from activitypub import _activity_row_to_ap, _deliver_activity, get_or_create_keypair
+    actor_url  = url_for("activitypub.actor",  username=username, _external=True)
+    outbox_url = url_for("activitypub.outbox", username=username, _external=True)
+
+    create_activity = _activity_row_to_ap(row, actor_url, outbox_url)
+    _, priv_pem = get_or_create_keypair(DB_PATH, uid)
+    key_id = f"{actor_url}#main-key"
+
+    for follower in followers:
+        inbox_url = follower.get("inbox_url")
+        if inbox_url:
+            _deliver_activity(inbox_url, create_activity, key_id, DB_PATH)
+
+    mark_ap_posted(DB_PATH, activity_id, uid)
+    flash(f"Activity queued for delivery to {len(followers)} follower(s).", "success")
     return redirect(request.referrer or url_for("activity", activity_id=activity_id))
 
 
