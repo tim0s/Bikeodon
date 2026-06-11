@@ -785,7 +785,7 @@ def get_user_by_username(db_path, username: str):
 def get_user_by_id(db_path, user_id: int):
     conn = _conn(db_path)
     row = conn.execute(
-        "SELECT id, username, is_admin FROM users WHERE id=?", (user_id,)
+        "SELECT * FROM users WHERE id=?", (user_id,)
     ).fetchone()
     conn.close()
     return row
