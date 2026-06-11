@@ -1228,6 +1228,16 @@ def accept_following(db_path, local_username: str, actor_url: str):
     conn.close()
 
 
+def remove_following(db_path, local_username: str, actor_url: str):
+    conn = _conn(db_path)
+    conn.execute(
+        "DELETE FROM following WHERE local_username=? AND actor_url=?",
+        (local_username, actor_url),
+    )
+    conn.commit()
+    conn.close()
+
+
 def get_following(db_path, local_username: str) -> list[dict]:
     conn = _conn(db_path)
     rows = conn.execute(

@@ -31,7 +31,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from database import (
     get_user_by_username,
     add_follower, remove_follower, get_followers,
-    add_following, accept_following,
+    add_following, accept_following, remove_following,
     enqueue_delivery, get_due_deliveries,
     mark_delivery_sent, update_delivery_attempt, mark_delivery_failed,
     count_activities, list_activities,
@@ -464,6 +464,39 @@ def send_follow(local_username, local_user, remote_actor_url, db_path):
 
     if inbox_url:
         _deliver_activity(inbox_url, follow_activity, key_id, db_path)
+
+
+def send_unfollow(local_username: str, local_user, remote_actor_url: str, db_path: str):
+    """Send Undo{Follow} to the remote actor and remove from the following table."""
+    from database import get_following as _get_following
+    rows = _get_following(db_path, local_username)
+    row  = next((r for r in rows if r["actor_url"] == remote_actor_url), None)
+    if not row:
+        return
+
+    actor_ap_url = url_for("activitypub.actor", username=local_username, _external=True)
+    _, priv_pem  = get_or_create_keypair(db_path, local_user["id"])
+    key_id       = f"{actor_ap_url}#main-key"
+
+    follow_id = f"{actor_ap_url}#follow/{abs(hash(remote_actor_url)):08x}"
+    undo = {
+        "@context": "https://www.w3.org/ns/activitystreams",
+        "id":       f"{follow_id}/undo",
+        "type":     "Undo",
+        "actor":    actor_ap_url,
+        "object": {
+            "id":     follow_id,
+            "type":   "Follow",
+            "actor":  actor_ap_url,
+            "object": remote_actor_url,
+        },
+    }
+
+    inbox_url = row.get("inbox_url")
+    if inbox_url:
+        _deliver_activity(inbox_url, undo, key_id, db_path)
+
+    remove_following(db_path, local_username, remote_actor_url)
 
 
 def send_profile_update(local_username: str, local_user, db_path: str):

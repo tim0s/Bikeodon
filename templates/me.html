@@ -738,7 +738,7 @@
 {% if following %}
 <table>
   <thead>
-    <tr><th>Account</th><th>Since</th><th>Status</th></tr>
+    <tr><th>Account</th><th>Since</th><th>Status</th><th></th></tr>
   </thead>
   <tbody>
     {% for f in following %}
@@ -765,6 +765,15 @@
         {% else %}
         <small class="muted">pending…</small>
         {% endif %}
+      </td>
+      <td>
+        <form method="post" action="{{ url_for('ap_unfollow') }}" style="margin:0">
+          <input type="hidden" name="actor_url" value="{{ f.actor_url }}">
+          <button type="submit" class="outline secondary"
+                  style="padding:.25rem .75rem;font-size:.8rem">
+            Unfollow
+          </button>
+        </form>
       </td>
     </tr>
     {% endfor %}

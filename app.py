@@ -815,6 +815,19 @@ def ap_follow():
     return redirect(request.referrer or url_for("me", tab="followers"))
 
 
+@app.route("/ap/unfollow", methods=["POST"])
+@login_required
+def ap_unfollow():
+    from activitypub import send_unfollow
+    actor_url = request.form.get("actor_url", "").strip()
+    if not actor_url:
+        abort(400)
+    uid  = int(current_user.id)
+    user = get_user_by_id(DB_PATH, uid)
+    send_unfollow(current_user.username, user, actor_url, DB_PATH)
+    return redirect(request.referrer or url_for("me", tab="following"))
+
+
 # ---------------------------------------------------------------------------
 # Upload
 # ---------------------------------------------------------------------------

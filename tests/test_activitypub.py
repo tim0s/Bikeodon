@@ -1107,7 +1107,7 @@ class TestProfileUpdate:
         assert activity["object"]["type"] == "Person"
         assert activity["object"]["id"] == f"https://bikeodon.org/users/{username}"
 
-    def test_save_profile_triggers_update(self, client, user, app):
+    def test_save_profile_triggers_update(self, client, user, app):  # noqa: E301
         """Saving a profile via the HTTP route must fan out an Update."""
         import app as app_module
         from werkzeug.security import generate_password_hash
@@ -1127,3 +1127,76 @@ class TestProfileUpdate:
         assert mock_deliver.called
         _, activity, _, _ = mock_deliver.call_args[0]
         assert activity["type"] == "Update"
+
+
+# ---------------------------------------------------------------------------
+# Unfollow
+# ---------------------------------------------------------------------------
+
+class TestUnfollow:
+
+    REMOTE_ACTOR = "https://mastodon.social/users/alice"
+    REMOTE_INBOX = "https://mastodon.social/users/alice/inbox"
+
+    def _add_following(self, db_path, username):
+        from database import add_following
+        add_following(db_path, username, self.REMOTE_ACTOR, self.REMOTE_INBOX,
+                      display_name="Alice", avatar_url=None)
+
+    @pytest.fixture(autouse=True)
+    def bypass_sig_verification(self):
+        with patch("activitypub._verify_http_signature", return_value=(True, "ok")):
+            yield
+
+    def test_unfollow_removes_from_db(self, app, user):
+        import app as app_module
+        from activitypub import send_unfollow
+        from database import get_following
+        username, uid = user
+        self._add_following(app_module.DB_PATH, username)
+        user_row = __import__("database").get_user_by_id(app_module.DB_PATH, uid)
+        with app.app_context(), patch("activitypub._deliver_activity"):
+            send_unfollow(username, user_row, self.REMOTE_ACTOR, app_module.DB_PATH)
+        rows = get_following(app_module.DB_PATH, username)
+        assert not any(r["actor_url"] == self.REMOTE_ACTOR for r in rows)
+
+    def test_unfollow_sends_undo_follow(self, app, user):
+        import app as app_module
+        from activitypub import send_unfollow
+        username, uid = user
+        self._add_following(app_module.DB_PATH, username)
+        user_row = __import__("database").get_user_by_id(app_module.DB_PATH, uid)
+        with app.app_context(), patch("activitypub._deliver_activity") as mock_deliver:
+            send_unfollow(username, user_row, self.REMOTE_ACTOR, app_module.DB_PATH)
+        assert mock_deliver.called
+        inbox_url, activity, _, _ = mock_deliver.call_args[0]
+        assert inbox_url == self.REMOTE_INBOX
+        assert activity["type"] == "Undo"
+        assert activity["object"]["type"] == "Follow"
+        assert activity["object"]["object"] == self.REMOTE_ACTOR
+
+    def test_unfollow_noop_if_not_following(self, app, user):
+        import app as app_module
+        from activitypub import send_unfollow
+        username, uid = user
+        user_row = __import__("database").get_user_by_id(app_module.DB_PATH, uid)
+        with app.app_context(), patch("activitypub._deliver_activity") as mock_deliver:
+            send_unfollow(username, user_row, self.REMOTE_ACTOR, app_module.DB_PATH)
+        mock_deliver.assert_not_called()
+
+    def test_unfollow_route_removes_and_redirects(self, client, user, app):
+        import app as app_module
+        from database import get_following
+        username, uid = user
+        self._add_following(app_module.DB_PATH, username)
+
+        with client.session_transaction() as sess:
+            sess["_user_id"] = str(uid)
+
+        with patch("activitypub._deliver_activity"):
+            r = client.post("/ap/unfollow",
+                            data={"actor_url": self.REMOTE_ACTOR})
+
+        assert r.status_code in (200, 302)
+        rows = get_following(app_module.DB_PATH, username)
+        assert not any(r["actor_url"] == self.REMOTE_ACTOR for r in rows)
