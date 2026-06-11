@@ -514,24 +514,35 @@ def _watopia_img_px(lat: float, lon: float) -> tuple[float, float]:
     return x, y
 
 
-_watopia_cache: tuple[str, "Image.Image"] | None = None  # (path, image)
+# Cache holds (path, pre-scaled image, scale_factor) where scale_factor is
+# pre_scaled_dim / original_dim.  A 4× reduction (2048×1536 from 8192×6144)
+# cuts source pixels from ~25 M to ~1.6 M for a typical crop, making the
+# final resize ~16× faster on constrained hardware.
+_WATOPIA_PRESCALE = 0.25   # 8192→2048, 6144→1536
+_watopia_cache: tuple[str, "Image.Image", float] | None = None
 
 
-def _load_watopia(map_path: str) -> "Image.Image | None":
+def _load_watopia(map_path: str) -> "tuple[Image.Image, float] | tuple[None, None]":
     global _watopia_cache
     if _watopia_cache and _watopia_cache[0] == map_path:
-        return _watopia_cache[1]
+        return _watopia_cache[1], _watopia_cache[2]
     if not os.path.exists(map_path):
-        return None
-    img = Image.open(map_path).convert("RGBA")
-    _watopia_cache = (map_path, img)
-    return img
+        return None, None
+    full = Image.open(map_path).convert("RGBA")
+    fw, fh = full.size
+    pw = round(fw * _WATOPIA_PRESCALE)
+    ph = round(fh * _WATOPIA_PRESCALE)
+    print(f"    Pre-scaling Watopia {fw}×{fh} → {pw}×{ph}…")
+    img = full.resize((pw, ph), Image.BILINEAR)
+    del full
+    _watopia_cache = (map_path, img, _WATOPIA_PRESCALE)
+    return img, _WATOPIA_PRESCALE
 
 
 def _render_watopia_map(points: list, activity: dict, cfg: dict,
                         maps_dir: str) -> Image.Image | None:
     map_path = os.path.join(maps_dir, "watopia.png")
-    watopia_base = _load_watopia(map_path)
+    watopia_base, ps = _load_watopia(map_path)
     if watopia_base is None:
         print(f"    Watopia map not found at {map_path}, falling back to OSM")
         return None
@@ -568,7 +579,7 @@ def _render_watopia_map(points: list, activity: dict, cfg: dict,
     route_area_w  = out_w - pad_left_px  - pad_right_px
     route_area_h  = out_h - pad_top_px   - pad_bottom_px
 
-    # Route bounding box in Watopia image pixels
+    # Route bounding box in full-resolution Watopia image pixels
     px0, py0 = _watopia_img_px(max_lat, min_lon)  # top-left
     px1, py1 = _watopia_img_px(min_lat, max_lon)  # bottom-right
     route_px_w = px1 - px0
@@ -578,7 +589,7 @@ def _render_watopia_map(points: list, activity: dict, cfg: dict,
     scale = min(route_area_w / route_px_w if route_px_w > 0 else 1,
                 route_area_h / route_px_h if route_px_h > 0 else 1)
 
-    # Source region in Watopia image pixels
+    # Source region in full-resolution Watopia pixels, then mapped to pre-scaled image
     src_w = out_w / scale
     src_h = out_h / scale
     center_off_x = (route_area_w / scale - route_px_w) / 2
@@ -586,24 +597,27 @@ def _render_watopia_map(points: list, activity: dict, cfg: dict,
     src_left = px0 - pad_left_px / scale - center_off_x
     src_top  = py0 - pad_top_px  / scale - center_off_y
 
-    # Crop from cached image (no disk load after first render)
+    # Translate to pre-scaled image coordinates
+    sl = int(src_left * ps)
+    st = int(src_top  * ps)
+    sr = sl + int(src_w * ps)
+    sb = st + int(src_h * ps)
+
     watopia = watopia_base
     W, H = watopia.size
-    sl, st = int(src_left), int(src_top)
-    sr, sb = sl + int(src_w), st + int(src_h)
 
     if sl < 0 or st < 0 or sr > W or sb > H:
         # Route extends outside the map image — pad with grey, then resize
-        bg = Image.new("RGBA", (int(src_w), int(src_h)), (200, 200, 200, 255))
+        bg = Image.new("RGBA", (sr - sl, sb - st), (200, 200, 200, 255))
         cl, ct = max(0, sl), max(0, st)
         cr, cb = min(W, sr), min(H, sb)
         if cr > cl and cb > ct:
             bg.paste(watopia.crop((cl, ct, cr, cb)), (cl - sl, ct - st))
-        canvas = bg.resize((out_w, out_h), Image.BICUBIC)
+        canvas = bg.resize((out_w, out_h), Image.BILINEAR)
     else:
-        # Single-pass crop+resize — avoids copying the full crop region into
-        # an intermediate image before downsampling (critical for large crops)
-        canvas = watopia.resize((out_w, out_h), Image.BICUBIC,
+        # Single-pass crop+resize from pre-scaled image — source region is
+        # ~16× smaller than the full-res original, so this is fast on ARM
+        canvas = watopia.resize((out_w, out_h), Image.BILINEAR,
                                 box=(sl, st, sr, sb))
 
     def _watopia_to_px(lat, lon):
