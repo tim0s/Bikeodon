@@ -1165,7 +1165,7 @@ def remove_follower(db_path, local_username: str, actor_url: str):
 def get_followers(db_path, local_username: str) -> list[dict]:
     conn = _conn(db_path)
     rows = conn.execute(
-        "SELECT actor_url, inbox_url, followed_at FROM followers"
+        "SELECT actor_url, inbox_url, display_name, avatar_url, followed_at FROM followers"
         " WHERE local_username=? ORDER BY followed_at DESC",
         (local_username,),
     ).fetchall()
