@@ -252,6 +252,17 @@ def init_db(db_path):
         )
     """)
 
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS followers (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            local_username  TEXT NOT NULL,
+            actor_url       TEXT NOT NULL,
+            inbox_url       TEXT NOT NULL DEFAULT '',
+            followed_at     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(local_username, actor_url)
+        )
+    """)
+
     conn.commit()
 
     # Seed default user if none exists
@@ -1110,6 +1121,37 @@ def get_recent_jobs(db_path, limit: int = 30) -> list:
         "SELECT id, started_at, finished_at, job_type, status, details"
         " FROM job_log ORDER BY id DESC LIMIT ?",
         (limit,),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def add_follower(db_path, local_username: str, actor_url: str, inbox_url: str):
+    conn = _conn(db_path)
+    conn.execute(
+        "INSERT OR IGNORE INTO followers (local_username, actor_url, inbox_url) VALUES (?,?,?)",
+        (local_username, actor_url, inbox_url),
+    )
+    conn.commit()
+    conn.close()
+
+
+def remove_follower(db_path, local_username: str, actor_url: str):
+    conn = _conn(db_path)
+    conn.execute(
+        "DELETE FROM followers WHERE local_username=? AND actor_url=?",
+        (local_username, actor_url),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_followers(db_path, local_username: str) -> list[dict]:
+    conn = _conn(db_path)
+    rows = conn.execute(
+        "SELECT actor_url, inbox_url, followed_at FROM followers"
+        " WHERE local_username=? ORDER BY followed_at DESC",
+        (local_username,),
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]

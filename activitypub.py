@@ -9,15 +9,25 @@ Registered as a Flask Blueprint in app.py.  Implements:
 Subsequent layers (inbox, outbox, delivery) will live here too.
 """
 
+import base64
+import hashlib
+import json
+import logging
+import requests
+from email.utils import formatdate
+from urllib.parse import urlparse
+
 from flask import (
     Blueprint, abort, current_app, jsonify, redirect,
     render_template, request, url_for,
 )
-from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa, padding as asym_padding
+from cryptography.hazmat.primitives import hashes, serialization
 
-from database import get_user_by_username
+from database import get_user_by_username, add_follower, remove_follower, get_followers
 from database import _conn as _db_conn
+
+_log = logging.getLogger(__name__)
 
 bp = Blueprint("activitypub", __name__)
 
@@ -172,21 +182,155 @@ def _avatar_media_type(filename: str | None) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Stub endpoints — needed for url_for() in the actor document
+# Inbox  POST /users/<username>/inbox
 # ---------------------------------------------------------------------------
 
-@bp.route("/users/<username>/inbox", methods=["GET", "POST"])
+@bp.route("/users/<username>/inbox", methods=["POST"])
 def inbox(username):
-    abort(501)  # Not Implemented yet
+    db_path = current_app.config["DB_PATH"]
+    user = get_user_by_username(db_path, username)
+    if not user:
+        abort(404)
+
+    raw = request.get_data()
+    try:
+        activity = json.loads(raw)
+        if not isinstance(activity, dict):
+            abort(400)
+    except (ValueError, TypeError):
+        abort(400)
+
+    activity_type = activity.get("type")
+
+    if activity_type == "Follow":
+        _handle_follow(username, user, activity, db_path)
+    elif activity_type == "Undo":
+        obj = activity.get("object", {})
+        if isinstance(obj, dict) and obj.get("type") == "Follow":
+            _handle_undo_follow(username, activity, db_path)
+
+    return "", 202
 
 
-@bp.route("/users/<username>/outbox")
-def outbox(username):
-    abort(501)
+def _handle_follow(local_username, local_user, activity, db_path):
+    actor_url = activity.get("actor")
+    if not actor_url:
+        return
 
+    # Fetch remote actor to discover their inbox URL
+    inbox_url = ""
+    try:
+        resp = requests.get(
+            actor_url,
+            headers={"Accept": _AP_MIME},
+            timeout=10,
+        )
+        inbox_url = resp.json().get("inbox", "")
+    except Exception as exc:
+        _log.warning("Could not fetch remote actor %s: %s", actor_url, exc)
+
+    add_follower(db_path, local_username, actor_url, inbox_url)
+
+    if not inbox_url:
+        return
+
+    actor_ap_url = url_for("activitypub.actor", username=local_username, _external=True)
+    _, priv_pem = get_or_create_keypair(db_path, local_user["id"])
+    key_id = f"{actor_ap_url}#main-key"
+
+    accept = {
+        "@context": "https://www.w3.org/ns/activitystreams",
+        "id": f"{actor_ap_url}#accept/{abs(hash(activity.get('id', actor_url))):08x}",
+        "type": "Accept",
+        "actor": actor_ap_url,
+        "object": activity,
+    }
+    _deliver_activity(inbox_url, accept, priv_pem, key_id)
+
+
+def _handle_undo_follow(local_username, activity, db_path):
+    actor_url = activity.get("actor")
+    if actor_url:
+        remove_follower(db_path, local_username, actor_url)
+
+
+def _deliver_activity(inbox_url, activity_doc, private_pem, key_id):
+    body = json.dumps(activity_doc).encode()
+    headers = _sign_headers("POST", inbox_url, body, private_pem, key_id)
+    try:
+        requests.post(inbox_url, data=body, headers=headers, timeout=10)
+    except Exception as exc:
+        _log.warning("Delivery to %s failed: %s", inbox_url, exc)
+
+
+def _sign_headers(method, url, body_bytes, private_pem, key_id):
+    parsed = urlparse(url)
+    host = parsed.netloc
+    path = parsed.path or "/"
+    if parsed.query:
+        path += "?" + parsed.query
+
+    date = formatdate(usegmt=True)
+    digest = "SHA-256=" + base64.b64encode(hashlib.sha256(body_bytes).digest()).decode()
+
+    signing_string = "\n".join([
+        f"(request-target): {method.lower()} {path}",
+        f"host: {host}",
+        f"date: {date}",
+        f"digest: {digest}",
+    ])
+
+    private_key = serialization.load_pem_private_key(
+        private_pem.encode() if isinstance(private_pem, str) else private_pem,
+        password=None,
+    )
+    sig_b64 = base64.b64encode(
+        private_key.sign(signing_string.encode(), asym_padding.PKCS1v15(), hashes.SHA256())
+    ).decode()
+
+    return {
+        "Host": host,
+        "Date": date,
+        "Digest": digest,
+        "Content-Type": _AP_MIME,
+        "Signature": (
+            f'keyId="{key_id}",algorithm="rsa-sha256",'
+            f'headers="(request-target) host date digest",'
+            f'signature="{sig_b64}"'
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Followers  GET /users/<username>/followers
+# ---------------------------------------------------------------------------
 
 @bp.route("/users/<username>/followers")
 def followers(username):
+    db_path = current_app.config["DB_PATH"]
+    user = get_user_by_username(db_path, username)
+    if not user:
+        abort(404)
+
+    items = get_followers(db_path, username)
+    doc = {
+        "@context": "https://www.w3.org/ns/activitystreams",
+        "id": url_for("activitypub.followers", username=username, _external=True),
+        "type": "OrderedCollection",
+        "totalItems": len(items),
+        "orderedItems": [f["actor_url"] for f in items],
+    }
+    resp = jsonify(doc)
+    resp.content_type = _AP_MIME
+    return resp
+
+
+# ---------------------------------------------------------------------------
+# Stub endpoints
+# ---------------------------------------------------------------------------
+
+@bp.route("/users/<username>/outbox")
+def outbox(username):
     abort(501)
 
 

@@ -1,6 +1,8 @@
 """
 Tests for ActivityPub federation endpoints.
 
+  Layer 3 — Inbox + Followers  (added below)
+
 Covers the two layers needed before any federation can work:
 
   Layer 1 — WebFinger  (/.well-known/webfinger)
@@ -21,6 +23,7 @@ Run with:
 import json
 import os
 import tempfile
+from unittest.mock import patch, MagicMock
 import pytest
 
 # ---------------------------------------------------------------------------
@@ -329,3 +332,203 @@ class TestActorProfile:
         r = client.get(f"/users/{username}/avatar")
         assert r.status_code == 200
         assert r.content_type.startswith("image/")
+
+
+# ---------------------------------------------------------------------------
+# Layer 3 — Inbox (Follow / Undo) + Followers collection
+# ---------------------------------------------------------------------------
+
+class TestInboxFollow:
+    """
+    POST /users/{username}/inbox   — remote servers push Follow/Undo activities
+    GET  /users/{username}/followers — public OrderedCollection of follower URLs
+
+    Outgoing network calls (actor fetch + Accept delivery) are mocked so these
+    tests run entirely in-process with no real HTTP traffic.
+    """
+
+    AP           = "application/activity+json"
+    REMOTE_ACTOR = "https://mastodon.social/users/alice"
+    REMOTE_INBOX = "https://mastodon.social/users/alice/inbox"
+
+    # ---- activity builders ----
+
+    def _follow(self, username):
+        return {
+            "@context": "https://www.w3.org/ns/activitystreams",
+            "id": f"{self.REMOTE_ACTOR}#follows/1",
+            "type": "Follow",
+            "actor": self.REMOTE_ACTOR,
+            "object": f"https://bikeodon.org/users/{username}",
+        }
+
+    def _undo(self, username):
+        return {
+            "@context": "https://www.w3.org/ns/activitystreams",
+            "id": f"{self.REMOTE_ACTOR}#follows/1/undo",
+            "type": "Undo",
+            "actor": self.REMOTE_ACTOR,
+            "object": self._follow(username),
+        }
+
+    def _remote_actor_mock(self):
+        """Mock for requests.get that returns a minimal remote actor document."""
+        m = MagicMock()
+        m.json.return_value = {
+            "id": self.REMOTE_ACTOR,
+            "type": "Person",
+            "inbox": self.REMOTE_INBOX,
+        }
+        m.ok = True
+        return m
+
+    # ---- inbox basic behaviour ----
+
+    def test_inbox_route_exists(self, client, user):
+        username, _ = user
+        r = client.post(f"/users/{username}/inbox", data="{}", content_type=self.AP)
+        assert r.status_code != 405
+
+    def test_inbox_unknown_user_returns_404(self, client):
+        r = client.post("/users/nobody/inbox", data="{}", content_type=self.AP)
+        assert r.status_code == 404
+
+    def test_inbox_non_json_returns_400(self, client, user):
+        username, _ = user
+        r = client.post(
+            f"/users/{username}/inbox",
+            data="not json at all",
+            content_type="text/plain",
+        )
+        assert r.status_code == 400
+
+    # ---- Follow handling ----
+
+    def test_follow_returns_202(self, client, user):
+        username, _ = user
+        with patch("activitypub.requests") as mock_req, \
+             patch("activitypub._deliver_activity"):
+            mock_req.get.return_value = self._remote_actor_mock()
+            r = client.post(
+                f"/users/{username}/inbox",
+                json=self._follow(username),
+                content_type=self.AP,
+            )
+        assert r.status_code == 202
+
+    def test_follow_stores_actor_in_followers_table(self, client, user, app):
+        import app as app_module
+        from database import get_followers
+        username, _ = user
+        with patch("activitypub.requests") as mock_req, \
+             patch("activitypub._deliver_activity"):
+            mock_req.get.return_value = self._remote_actor_mock()
+            client.post(
+                f"/users/{username}/inbox",
+                json=self._follow(username),
+                content_type=self.AP,
+            )
+        followers = get_followers(app_module.DB_PATH, username)
+        assert any(f["actor_url"] == self.REMOTE_ACTOR for f in followers)
+
+    def test_follow_triggers_accept_delivery(self, client, user):
+        username, _ = user
+        with patch("activitypub.requests") as mock_req, \
+             patch("activitypub._deliver_activity") as mock_deliver:
+            mock_req.get.return_value = self._remote_actor_mock()
+            client.post(
+                f"/users/{username}/inbox",
+                json=self._follow(username),
+                content_type=self.AP,
+            )
+        assert mock_deliver.called
+        inbox_url, accept_doc, _priv, _key_id = mock_deliver.call_args[0]
+        assert inbox_url == self.REMOTE_INBOX
+        assert accept_doc["type"] == "Accept"
+        assert accept_doc["object"]["type"] == "Follow"
+
+    def test_accept_actor_is_local_user(self, client, user):
+        username, _ = user
+        with patch("activitypub.requests") as mock_req, \
+             patch("activitypub._deliver_activity") as mock_deliver:
+            mock_req.get.return_value = self._remote_actor_mock()
+            client.post(
+                f"/users/{username}/inbox",
+                json=self._follow(username),
+                content_type=self.AP,
+            )
+        _, accept_doc, _, _ = mock_deliver.call_args[0]
+        assert accept_doc["actor"] == f"https://bikeodon.org/users/{username}"
+
+    def test_duplicate_follow_is_idempotent(self, client, user, app):
+        import app as app_module
+        from database import get_followers
+        username, _ = user
+        with patch("activitypub.requests") as mock_req, \
+             patch("activitypub._deliver_activity"):
+            mock_req.get.return_value = self._remote_actor_mock()
+            for _ in range(2):
+                client.post(
+                    f"/users/{username}/inbox",
+                    json=self._follow(username),
+                    content_type=self.AP,
+                )
+        followers = get_followers(app_module.DB_PATH, username)
+        assert len([f for f in followers if f["actor_url"] == self.REMOTE_ACTOR]) == 1
+
+    # ---- Undo{Follow} handling ----
+
+    def test_undo_follow_returns_202(self, client, user):
+        username, _ = user
+        with patch("activitypub.requests") as mock_req, \
+             patch("activitypub._deliver_activity"):
+            mock_req.get.return_value = self._remote_actor_mock()
+            client.post(f"/users/{username}/inbox", json=self._follow(username), content_type=self.AP)
+        r = client.post(f"/users/{username}/inbox", json=self._undo(username), content_type=self.AP)
+        assert r.status_code == 202
+
+    def test_undo_follow_removes_follower(self, client, user, app):
+        import app as app_module
+        from database import get_followers
+        username, _ = user
+        with patch("activitypub.requests") as mock_req, \
+             patch("activitypub._deliver_activity"):
+            mock_req.get.return_value = self._remote_actor_mock()
+            client.post(f"/users/{username}/inbox", json=self._follow(username), content_type=self.AP)
+        client.post(f"/users/{username}/inbox", json=self._undo(username), content_type=self.AP)
+        followers = get_followers(app_module.DB_PATH, username)
+        assert not any(f["actor_url"] == self.REMOTE_ACTOR for f in followers)
+
+    # ---- Followers collection ----
+
+    def test_followers_returns_200(self, client, user):
+        username, _ = user
+        r = client.get(f"/users/{username}/followers", headers={"Accept": self.AP})
+        assert r.status_code == 200
+
+    def test_followers_is_ordered_collection(self, client, user):
+        username, _ = user
+        r = client.get(f"/users/{username}/followers", headers={"Accept": self.AP})
+        assert r.get_json()["type"] == "OrderedCollection"
+
+    def test_followers_empty_by_default(self, client, user):
+        username, _ = user
+        r = client.get(f"/users/{username}/followers", headers={"Accept": self.AP})
+        data = r.get_json()
+        assert data["totalItems"] == 0
+        assert data["orderedItems"] == []
+
+    def test_followers_count_after_follow(self, client, user):
+        username, _ = user
+        with patch("activitypub.requests") as mock_req, \
+             patch("activitypub._deliver_activity"):
+            mock_req.get.return_value = self._remote_actor_mock()
+            client.post(f"/users/{username}/inbox", json=self._follow(username), content_type=self.AP)
+        r = client.get(f"/users/{username}/followers", headers={"Accept": self.AP})
+        data = r.get_json()
+        assert data["totalItems"] == 1
+        assert self.REMOTE_ACTOR in data["orderedItems"]
+
+    def test_followers_unknown_user_returns_404(self, client):
+        r = client.get("/users/nobody/followers", headers={"Accept": "application/activity+json"})
+        assert r.status_code == 404
