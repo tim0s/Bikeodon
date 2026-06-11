@@ -71,15 +71,22 @@ def infer_ftp(db_path: str) -> float | None:
         if effective_window < 60:
             continue
 
-        # Sliding window: for each start point find all points within the window
+        # O(n) two-pointer sliding window
         best_this = 0.0
+        j = 0
+        win_sum = 0.0
+        win_n   = 0
         for i in range(len(times)):
-            mask = (times >= times[i]) & (times <= times[i] + effective_window)
-            if mask.sum() < 10:
-                continue
-            avg = float(powers[mask].mean())
-            if avg > best_this:
-                best_this = avg
+            while j < len(times) and times[j] <= times[i] + effective_window:
+                win_sum += powers[j]
+                win_n   += 1
+                j       += 1
+            if win_n >= 10:
+                avg = win_sum / win_n
+                if avg > best_this:
+                    best_this = avg
+            win_sum -= powers[i]
+            win_n   -= 1
 
         if best_this > best_20min:
             best_20min = best_this

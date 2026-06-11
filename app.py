@@ -84,6 +84,15 @@ def _render_and_track(activity_id: int, uid: int, cfg: dict, out_dir: str, row=N
     else:
         mark_rendered(DB_PATH, activity_id, uid, map=True)
 
+    if not cfg["charts"]["power"]["ftp"]:
+        v = get_setting(DB_PATH, uid, "inference", "ftp")
+        if v:
+            cfg["charts"]["power"]["ftp"] = float(v)
+    if not cfg["charts"]["heart_rate"]["max_hr"]:
+        v = get_setting(DB_PATH, uid, "inference", "max_hr")
+        if v:
+            cfg["charts"]["heart_rate"]["max_hr"] = float(v)
+
     stream = get_stream(row)
     try:
         generate_charts(activity_id, stream, cfg, out_dir, db_path=DB_PATH)
@@ -181,6 +190,25 @@ def _compute_and_store_metrics(activity_id: int, uid: int, cfg: dict, stream: li
             hr_tss=hr_tss,
             breakthroughs_json=breakthroughs_json,
         )
+
+        # Update inference cache if this activity sets new bests
+        if not cfg["charts"]["power"]["ftp"] and peaks and peaks.get("20min"):
+            new_ftp = peaks["20min"] * 0.95
+            cached  = get_setting(DB_PATH, uid, "inference", "ftp")
+            if not cached or new_ftp > float(cached):
+                set_setting(DB_PATH, uid, "inference", "ftp", str(round(new_ftp, 1)))
+                print(f"[metrics] Updated inferred FTP: {new_ftp:.0f} W")
+
+        if not cfg["charts"]["heart_rate"]["max_hr"] and row.get("max_heartrate"):
+            new_hr = row["max_heartrate"]
+            cached = get_setting(DB_PATH, uid, "inference", "max_hr")
+            cached_f = float(cached) if cached else 0
+            # Guard against sensor spikes: only accept if plausible (≤220) and
+            # not more than 10 bpm above the current cached value
+            if new_hr <= 220 and new_hr > cached_f and (not cached_f or new_hr <= cached_f + 10):
+                set_setting(DB_PATH, uid, "inference", "max_hr", str(round(new_hr, 1)))
+                print(f"[metrics] Updated inferred max HR: {new_hr:.0f} bpm")
+
     except Exception as e:
         print(f"[metrics] Failed for {activity_id}: {e}")
 
