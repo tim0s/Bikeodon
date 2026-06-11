@@ -305,9 +305,13 @@ STRAVA_CLIENT_SECRET = os.environ.get("STRAVA_CLIENT_SECRET", "")
 
 app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
-app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-key-change-me-in-production")
+app.secret_key     = os.environ.get("FLASK_SECRET_KEY", "dev-key-change-me-in-production")
+app.config["DB_PATH"] = DB_PATH
 
 init_db(DB_PATH)
+
+from activitypub import bp as _ap_bp
+app.register_blueprint(_ap_bp)
 
 # Log unhandled exceptions to a file so they're visible without a debugger attached.
 import logging
