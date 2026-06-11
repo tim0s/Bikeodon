@@ -690,6 +690,56 @@ def output_file(filename):
     return response
 
 
+@app.route("/users/<username>/avatar")
+def user_avatar(username):
+    """Serve a user's avatar image publicly (needed for ActivityPub icon URL)."""
+    user = get_user_by_username(DB_PATH, username)
+    avatar = dict(user).get("avatar_filename") if user else None
+    if not avatar:
+        return app.send_static_file("default_avatar.png")
+    avatars_dir = os.path.abspath(os.path.join(
+        _base_cfg["map"].get("output_dir", "output"), "avatars"
+    ))
+    return send_from_directory(avatars_dir, avatar)
+
+
+@app.route("/me/profile", methods=["POST"])
+@login_required
+def save_profile():
+    uid  = int(current_user.id)
+    conn = _conn(DB_PATH)
+
+    display_name = request.form.get("display_name", "").strip()
+    summary      = request.form.get("summary", "").strip()
+
+    avatar_filename = None
+    f = request.files.get("avatar")
+    if f and f.filename:
+        ext = os.path.splitext(f.filename)[1].lower()
+        if ext not in (".jpg", ".jpeg", ".png", ".gif", ".webp"):
+            flash("Avatar must be a JPG, PNG, GIF or WebP image.", "error")
+            return redirect(url_for("me", tab="profile"))
+        avatars_dir = os.path.abspath(os.path.join(
+            _base_cfg["map"].get("output_dir", "output"), "avatars"
+        ))
+        os.makedirs(avatars_dir, exist_ok=True)
+        avatar_filename = f"{uid}{ext}"
+        f.save(os.path.join(avatars_dir, avatar_filename))
+
+    updates = {"display_name": display_name or None, "summary": summary or None}
+    if avatar_filename:
+        updates["avatar_filename"] = avatar_filename
+
+    set_clause = ", ".join(f"{k}=?" for k in updates)
+    conn.execute(
+        f"UPDATE users SET {set_clause} WHERE id=?",
+        (*updates.values(), uid),
+    )
+    conn.commit()
+    flash("Profile updated.", "success")
+    return redirect(url_for("me", tab="profile"))
+
+
 # ---------------------------------------------------------------------------
 # Upload
 # ---------------------------------------------------------------------------
@@ -958,6 +1008,9 @@ def me():
     hr_zone_chart_json    = _zone_chart_data(hr_zones,    hr_totals)
     power_zone_chart_json = _zone_chart_data(power_zones, power_totals)
 
+    # Profile fields for the Profile tab
+    profile_row = get_user_by_id(DB_PATH, uid)
+
     return render_template(
         "me.html",
         username=current_user.username,
@@ -967,6 +1020,7 @@ def me():
         weekly_json=json.dumps(weekly_rows),
         pmc_latest=pmc_latest,
         ftp=ftp,
+        profile=dict(profile_row) if profile_row else {},
         hr_max=hr_max,
         hr_rest=hr_rest,
         body_weight=body_weight,

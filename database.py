@@ -133,11 +133,14 @@ def init_db(db_path):
         )
     """)
     for col, typedef in [
-        ("username",        "TEXT"),
-        ("password_hash",   "TEXT"),
-        ("is_admin",        "INTEGER NOT NULL DEFAULT 0"),
-        ("public_key_pem",  "TEXT"),
-        ("private_key_pem", "TEXT"),
+        ("username",          "TEXT"),
+        ("password_hash",     "TEXT"),
+        ("is_admin",          "INTEGER NOT NULL DEFAULT 0"),
+        ("public_key_pem",    "TEXT"),
+        ("private_key_pem",   "TEXT"),
+        ("display_name",      "TEXT"),
+        ("summary",           "TEXT"),
+        ("avatar_filename",   "TEXT"),
     ]:
         try:
             conn.execute(f"ALTER TABLE users ADD COLUMN {col} {typedef}")
@@ -773,7 +776,7 @@ def get_user_by_athlete_id(db_path, athlete_id: str):
 def get_user_by_username(db_path, username: str):
     conn = _conn(db_path)
     row = conn.execute(
-        "SELECT id, username, password_hash FROM users WHERE username=?", (username,)
+        "SELECT * FROM users WHERE username=?", (username,)
     ).fetchone()
     conn.close()
     return row

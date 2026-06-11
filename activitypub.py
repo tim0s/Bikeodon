@@ -128,8 +128,9 @@ def actor(username):
     outbox_url = url_for("activitypub.outbox",     username=username, _external=True)
     foll_url   = url_for("activitypub.followers",  username=username, _external=True)
     fing_url   = url_for("activitypub.following",  username=username, _external=True)
+    avatar_url = url_for("user_avatar", username=username, _external=True)
 
-    resp = jsonify({
+    doc = {
         "@context":          _AP_CONTEXT,
         "id":                actor_url,
         "type":              "Person",
@@ -143,9 +144,31 @@ def actor(username):
             "owner":        actor_url,
             "publicKeyPem": pub_pem,
         },
-    })
+        "icon": {
+            "type":      "Image",
+            "mediaType": _avatar_media_type(dict(user).get("avatar_filename")),
+            "url":       avatar_url,
+        },
+    }
+
+    u = dict(user)
+    if u.get("display_name"):
+        doc["name"] = u["display_name"]
+    if u.get("summary"):
+        doc["summary"] = u["summary"]
+
+    resp = jsonify(doc)
     resp.content_type = _AP_MIME
     return resp
+
+
+def _avatar_media_type(filename: str | None) -> str:
+    if not filename:
+        return "image/png"
+    ext = filename.rsplit(".", 1)[-1].lower()
+    return {"jpg": "image/jpeg", "jpeg": "image/jpeg",
+            "png": "image/png", "gif": "image/gif",
+            "webp": "image/webp"}.get(ext, "image/png")
 
 
 # ---------------------------------------------------------------------------

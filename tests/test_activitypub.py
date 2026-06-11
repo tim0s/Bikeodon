@@ -263,3 +263,69 @@ class TestActor:
         r = client.get(f"/users/{username}", headers={"Accept": "text/html"})
         assert r.status_code == 200
         assert "text/html" in r.content_type
+
+
+# ---------------------------------------------------------------------------
+# Layer 2b — Actor profile fields
+# ---------------------------------------------------------------------------
+
+class TestActorProfile:
+    """
+    Actor document must expose display_name, summary, and avatar icon
+    when set, and omit name/summary when not set.
+    """
+
+    AP_ACCEPT = "application/activity+json"
+
+    def _set_profile(self, db_path, user_id, **kwargs):
+        from database import _conn
+        conn = _conn(db_path)
+        sets = ", ".join(f"{k}=?" for k in kwargs)
+        conn.execute(f"UPDATE users SET {sets} WHERE id=?", (*kwargs.values(), user_id))
+        conn.commit()
+
+    def test_actor_has_icon_always(self, client, user):
+        """icon is always present — falls back to the default avatar."""
+        username, _ = user
+        r = client.get(f"/users/{username}", headers={"Accept": self.AP_ACCEPT})
+        data = r.get_json()
+        assert "icon" in data
+        assert data["icon"]["type"] == "Image"
+        assert "url" in data["icon"]
+        assert "mediaType" in data["icon"]
+
+    def test_actor_name_absent_when_not_set(self, client, user):
+        username, _ = user
+        r = client.get(f"/users/{username}", headers={"Accept": self.AP_ACCEPT})
+        assert "name" not in r.get_json()
+
+    def test_actor_summary_absent_when_not_set(self, client, user):
+        username, _ = user
+        r = client.get(f"/users/{username}", headers={"Accept": self.AP_ACCEPT})
+        assert "summary" not in r.get_json()
+
+    def test_actor_name_present_when_set(self, client, user, app):
+        import app as app_module
+        username, uid = user
+        self._set_profile(app_module.DB_PATH, uid, display_name="Tim Schneider")
+        r = client.get(f"/users/{username}", headers={"Accept": self.AP_ACCEPT})
+        assert r.get_json()["name"] == "Tim Schneider"
+
+    def test_actor_summary_present_when_set(self, client, user, app):
+        import app as app_module
+        username, uid = user
+        self._set_profile(app_module.DB_PATH, uid, summary="Cycling enthusiast")
+        r = client.get(f"/users/{username}", headers={"Accept": self.AP_ACCEPT})
+        assert r.get_json()["summary"] == "Cycling enthusiast"
+
+    def test_actor_icon_url_points_to_avatar_route(self, client, user):
+        username, _ = user
+        r = client.get(f"/users/{username}", headers={"Accept": self.AP_ACCEPT})
+        icon_url = r.get_json()["icon"]["url"]
+        assert f"/users/{username}/avatar" in icon_url
+
+    def test_avatar_route_returns_image(self, client, user):
+        username, _ = user
+        r = client.get(f"/users/{username}/avatar")
+        assert r.status_code == 200
+        assert r.content_type.startswith("image/")
