@@ -311,8 +311,9 @@ app.config["PREFERRED_URL_SCHEME"]  = "https"
 
 init_db(DB_PATH)
 
-from activitypub import bp as _ap_bp
+from activitypub import bp as _ap_bp, start_delivery_worker
 app.register_blueprint(_ap_bp)
+start_delivery_worker(DB_PATH)
 
 # Log unhandled exceptions to a file so they're visible without a debugger attached.
 import logging

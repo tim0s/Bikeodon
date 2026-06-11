@@ -15,7 +15,9 @@ import json
 import logging
 import re
 import requests
-from datetime import datetime, timezone
+import threading
+import time
+from datetime import datetime, timezone, timedelta
 from email.utils import formatdate, parsedate_to_datetime
 from urllib.parse import urlparse
 
@@ -30,6 +32,9 @@ from database import (
     get_user_by_username,
     add_follower, remove_follower, get_followers,
     add_following, accept_following,
+    enqueue_delivery, get_due_deliveries,
+    mark_delivery_sent, update_delivery_attempt, mark_delivery_failed,
+    count_activities, list_activities,
 )
 from database import _conn as _db_conn
 
@@ -373,7 +378,7 @@ def _handle_follow(local_username, local_user, activity, db_path):
         "actor": actor_ap_url,
         "object": activity,
     }
-    _deliver_activity(inbox_url, accept, priv_pem, key_id)
+    _deliver_activity(inbox_url, accept, key_id, db_path)
 
 
 def _handle_undo_follow(local_username, activity, db_path):
@@ -451,16 +456,86 @@ def send_follow(local_username, local_user, remote_actor_url, db_path):
                   display_name=display_name, avatar_url=avatar_url)
 
     if inbox_url:
-        _deliver_activity(inbox_url, follow_activity, priv_pem, key_id)
+        _deliver_activity(inbox_url, follow_activity, key_id, db_path)
 
 
-def _deliver_activity(inbox_url, activity_doc, private_pem, key_id):
-    body = json.dumps(activity_doc).encode()
-    headers = _sign_headers("POST", inbox_url, body, private_pem, key_id)
-    try:
-        requests.post(inbox_url, data=body, headers=headers, timeout=10)
-    except Exception as exc:
-        _log.warning("Delivery to %s failed: %s", inbox_url, exc)
+def _deliver_activity(inbox_url, activity_doc, key_id, db_path):
+    """Enqueue an activity for async delivery. Returns immediately."""
+    enqueue_delivery(db_path, inbox_url, json.dumps(activity_doc), key_id)
+
+
+def _do_http_post(inbox_url, body_bytes, priv_pem, key_id):
+    """Attempt a single signed HTTP POST. Raises on non-2xx (except 410)."""
+    hdrs = _sign_headers("POST", inbox_url, body_bytes, priv_pem, key_id)
+    r = requests.post(inbox_url, data=body_bytes, headers=hdrs, timeout=15)
+    if r.status_code == 410:
+        return  # Gone — treat as success, stop retrying
+    if not r.ok:
+        raise Exception(f"HTTP {r.status_code}: {r.text[:200]}")
+
+
+_BACKOFF_INITIAL = 5 * 60       # 5 minutes
+_BACKOFF_MAX     = 6 * 3600     # 6 hours
+_DELIVERY_TTL    = 3 * 24 * 3600  # 3 days
+
+
+def _process_due_deliveries(db_path):
+    """Deliver all due queue items. Called by the worker thread."""
+    rows = get_due_deliveries(db_path)
+    for row in rows:
+        delivery_id = row["id"]
+        attempts    = row["attempts"]
+        created_at  = row["created_at"]
+        key_id      = row["key_id"]
+        inbox_url   = row["inbox_url"]
+        body_bytes  = row["activity_json"].encode()
+
+        # Check if this delivery has aged out (> 3 days old)
+        try:
+            age = (datetime.now(timezone.utc) -
+                   datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                   ).total_seconds()
+        except Exception:
+            age = 0
+
+        # Extract username from key_id to look up the private key
+        try:
+            username = key_id.split("/users/")[1].split("#")[0]
+            user = get_user_by_username(db_path, username)
+            if not user:
+                raise Exception(f"user {username!r} not found")
+            _, priv_pem = get_or_create_keypair(db_path, user["id"])
+            _do_http_post(inbox_url, body_bytes, priv_pem, key_id)
+            mark_delivery_sent(db_path, delivery_id)
+            _log.info("Delivered to %s (attempt %d)", inbox_url, attempts + 1)
+        except Exception as exc:
+            error = str(exc)
+            new_attempts = attempts + 1
+            if age > _DELIVERY_TTL:
+                mark_delivery_failed(db_path, delivery_id, error)
+                _log.warning("Giving up on %s after %d attempts (%.0fh old): %s",
+                             inbox_url, new_attempts, age / 3600, error)
+            else:
+                backoff = min(_BACKOFF_INITIAL * (2 ** attempts), _BACKOFF_MAX)
+                next_at = (datetime.now(timezone.utc) + timedelta(seconds=backoff)).isoformat()
+                update_delivery_attempt(db_path, delivery_id, next_at, new_attempts, error)
+                _log.warning("Delivery to %s failed (attempt %d, retry in %ds): %s",
+                             inbox_url, new_attempts, backoff, error)
+
+
+def start_delivery_worker(db_path):
+    """Start the background delivery thread. Safe to call multiple times."""
+    def _loop():
+        while True:
+            try:
+                _process_due_deliveries(db_path)
+            except Exception as exc:
+                _log.error("Delivery worker error: %s", exc)
+            time.sleep(30)
+
+    t = threading.Thread(target=_loop, daemon=True, name="delivery-worker")
+    t.start()
+    _log.info("Delivery worker started")
 
 
 def _sign_headers(method, url, body_bytes, private_pem, key_id):
@@ -526,14 +601,103 @@ def followers(username):
 
 
 # ---------------------------------------------------------------------------
-# Stub endpoints
+# Outbox  GET /users/<username>/outbox[?page=true]
 # ---------------------------------------------------------------------------
+
+_OUTBOX_PAGE_SIZE = 20
+
+
+def _activity_row_to_ap(row, actor_url: str, outbox_url: str) -> dict:
+    """Convert a DB activity row to an ActivityPub Create{Note} activity."""
+    row = dict(row)
+    note_id = f"{actor_url}/activities/{row['id']}"
+    content_parts = [f"<p>{row.get('name', 'Activity')}</p>"]
+    dist_m = row.get("distance") or 0
+    elev_m = row.get("total_elevation_gain") or 0
+    if dist_m:
+        content_parts.append(f"<p>📍 {dist_m/1000:.1f} km  🏔 {elev_m:.0f} m</p>")
+    content = "".join(content_parts)
+
+    published = row.get("start_date") or row.get("fetched_at") or ""
+    if published and not published.endswith("Z") and "+" not in published:
+        published = published.replace(" ", "T") + "Z"
+
+    return {
+        "@context": "https://www.w3.org/ns/activitystreams",
+        "id": f"{note_id}/create",
+        "type": "Create",
+        "actor": actor_url,
+        "published": published,
+        "to": ["https://www.w3.org/ns/activitystreams#Public"],
+        "object": {
+            "id": note_id,
+            "type": "Note",
+            "attributedTo": actor_url,
+            "content": content,
+            "published": published,
+            "to": ["https://www.w3.org/ns/activitystreams#Public"],
+        },
+    }
+
 
 @bp.route("/users/<username>/outbox")
 def outbox(username):
-    abort(501)
+    db_path = current_app.config["DB_PATH"]
+    user = get_user_by_username(db_path, username)
+    if not user:
+        abort(404)
 
+    actor_url  = url_for("activitypub.actor",  username=username, _external=True)
+    outbox_url = url_for("activitypub.outbox", username=username, _external=True)
+    total      = count_activities(db_path, user["id"])
+
+    if request.args.get("page") == "true":
+        offset = int(request.args.get("min_id", 0))
+        rows   = list_activities(db_path, user["id"], limit=_OUTBOX_PAGE_SIZE, offset=offset)
+        items  = [_activity_row_to_ap(r, actor_url, outbox_url) for r in rows]
+        doc = {
+            "@context": "https://www.w3.org/ns/activitystreams",
+            "id": f"{outbox_url}?page=true",
+            "type": "OrderedCollectionPage",
+            "partOf": outbox_url,
+            "totalItems": total,
+            "orderedItems": items,
+        }
+    else:
+        doc = {
+            "@context": "https://www.w3.org/ns/activitystreams",
+            "id": outbox_url,
+            "type": "OrderedCollection",
+            "totalItems": total,
+            "first": f"{outbox_url}?page=true",
+        }
+
+    resp = jsonify(doc)
+    resp.content_type = _AP_MIME
+    return resp
+
+
+# ---------------------------------------------------------------------------
+# Following  GET /users/<username>/following
+# ---------------------------------------------------------------------------
 
 @bp.route("/users/<username>/following")
 def following(username):
-    abort(501)
+    from database import get_following as _get_following
+    db_path = current_app.config["DB_PATH"]
+    user = get_user_by_username(db_path, username)
+    if not user:
+        abort(404)
+
+    items = _get_following(db_path, username)
+    accepted = [f["actor_url"] for f in items if f.get("status") == "accepted"]
+    doc = {
+        "@context": "https://www.w3.org/ns/activitystreams",
+        "id": url_for("activitypub.following", username=username, _external=True),
+        "type": "OrderedCollection",
+        "totalItems": len(accepted),
+        "orderedItems": accepted,
+    }
+    resp = jsonify(doc)
+    resp.content_type = _AP_MIME
+    return resp
