@@ -13,8 +13,10 @@ import base64
 import hashlib
 import json
 import logging
+import re
 import requests
-from email.utils import formatdate
+from datetime import datetime, timezone
+from email.utils import formatdate, parsedate_to_datetime
 from urllib.parse import urlparse
 
 from flask import (
@@ -42,6 +44,108 @@ _AP_CONTEXT = [
     "https://www.w3.org/ns/activitystreams",
     "https://w3id.org/security/v1",
 ]
+
+# In-memory cache for remote public keys: key_id -> PEM string.
+# Cleared on restart; keys rarely change so this is safe.
+_pubkey_cache: dict[str, str] = {}
+
+
+# ---------------------------------------------------------------------------
+# HTTP Signature verification (incoming requests)
+# ---------------------------------------------------------------------------
+
+def _parse_signature_header(header: str) -> dict:
+    """Parse 'keyId="...",algorithm="...",headers="...",signature="..."' into a dict."""
+    return {k: v for k, v in re.findall(r'(\w+)="([^"]*)"', header)}
+
+
+def _fetch_public_key_pem(key_id: str) -> str | None:
+    """Fetch the PEM public key for a keyId URL, with in-memory caching."""
+    if key_id in _pubkey_cache:
+        return _pubkey_cache[key_id]
+    actor_url = key_id.split("#")[0]
+    try:
+        r = requests.get(actor_url, headers={"Accept": _AP_MIME}, timeout=10)
+        if not r.ok:
+            return None
+        pk = r.json().get("publicKey", {})
+        if isinstance(pk, dict) and pk.get("id") == key_id:
+            pem = pk.get("publicKeyPem")
+            if pem:
+                _pubkey_cache[key_id] = pem
+            return pem
+    except Exception as exc:
+        _log.warning("Could not fetch public key %s: %s", key_id, exc)
+    return None
+
+
+def _verify_http_signature(req, body_bytes: bytes) -> tuple[bool, str]:
+    """
+    Verify the HTTP Signature on an incoming request.
+    Returns (ok, reason_string).
+    """
+    from cryptography.exceptions import InvalidSignature as _InvalidSig
+
+    sig_header = req.headers.get("Signature", "")
+    if not sig_header:
+        return False, "missing Signature header"
+
+    params   = _parse_signature_header(sig_header)
+    key_id   = params.get("keyId", "")
+    hdr_list = params.get("headers", "date").split()
+    sig_b64  = params.get("signature", "")
+
+    if not key_id or not sig_b64:
+        return False, "incomplete Signature header"
+
+    # 1. Verify Digest matches body
+    if "digest" in hdr_list:
+        digest_hdr = req.headers.get("Digest", "")
+        if not digest_hdr.startswith("SHA-256="):
+            return False, "unsupported or missing Digest"
+        expected = base64.b64encode(hashlib.sha256(body_bytes).digest()).decode()
+        if digest_hdr[8:] != expected:
+            return False, "digest mismatch"
+
+    # 2. Verify Date is fresh (±5 minutes)
+    if "date" in hdr_list:
+        date_hdr = req.headers.get("Date", "")
+        try:
+            req_time = parsedate_to_datetime(date_hdr)
+            delta = abs((datetime.now(timezone.utc) - req_time).total_seconds())
+            if delta > 300:
+                return False, f"request date too far from now ({delta:.0f}s)"
+        except Exception:
+            return False, "invalid or missing Date header"
+
+    # 3. Fetch sender's public key
+    pub_pem = _fetch_public_key_pem(key_id)
+    if not pub_pem:
+        return False, f"could not fetch public key for {key_id}"
+
+    # 4. Reconstruct signing string and verify RSA-SHA256
+    def _hdr_val(h):
+        if h == "(request-target)":
+            return f"post {req.path}"
+        return req.headers.get(h, "")
+
+    signing_string = "\n".join(f"{h}: {_hdr_val(h)}" for h in hdr_list)
+
+    try:
+        pub_key = serialization.load_pem_public_key(
+            pub_pem.encode() if isinstance(pub_pem, str) else pub_pem
+        )
+        pub_key.verify(
+            base64.b64decode(sig_b64),
+            signing_string.encode(),
+            asym_padding.PKCS1v15(),
+            hashes.SHA256(),
+        )
+        return True, "ok"
+    except _InvalidSig:
+        return False, "signature verification failed"
+    except Exception as exc:
+        return False, f"verification error: {exc}"
 
 
 # ---------------------------------------------------------------------------
@@ -197,6 +301,12 @@ def inbox(username):
         abort(404)
 
     raw = request.get_data()
+
+    ok, reason = _verify_http_signature(request, raw)
+    if not ok:
+        _log.warning("Inbox %s: rejected request — %s", username, reason)
+        abort(401)
+
     try:
         activity = json.loads(raw)
         if not isinstance(activity, dict):

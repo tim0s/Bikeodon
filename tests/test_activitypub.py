@@ -345,9 +345,16 @@ class TestInboxFollow:
 
     Outgoing network calls (actor fetch + Accept delivery) are mocked so these
     tests run entirely in-process with no real HTTP traffic.
+    Signature verification is bypassed via an autouse fixture; it is tested
+    separately in TestHttpSignatureVerification.
     """
 
     AP           = "application/activity+json"
+
+    @pytest.fixture(autouse=True)
+    def bypass_sig_verification(self):
+        with patch("activitypub._verify_http_signature", return_value=(True, "ok")):
+            yield
     REMOTE_ACTOR = "https://mastodon.social/users/alice"
     REMOTE_INBOX = "https://mastodon.social/users/alice/inbox"
 
@@ -532,3 +539,160 @@ class TestInboxFollow:
     def test_followers_unknown_user_returns_404(self, client):
         r = client.get("/users/nobody/followers", headers={"Accept": "application/activity+json"})
         assert r.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Layer 3b — HTTP Signature verification
+# ---------------------------------------------------------------------------
+
+class TestHttpSignatureVerification:
+    """
+    End-to-end: sign a request with a real RSA keypair using _sign_headers,
+    then POST it to the inbox.  Each test exercises one rejection path.
+    The valid-signature test is the only one that reaches _handle_follow.
+    """
+
+    AP           = "application/activity+json"
+    REMOTE_ACTOR = "https://mastodon.social/users/alice"
+    REMOTE_INBOX = "https://mastodon.social/users/alice/inbox"
+    KEY_ID       = "https://mastodon.social/users/alice#main-key"
+
+    # ---- fixtures ----
+
+    @pytest.fixture(autouse=True)
+    def clear_key_cache(self):
+        import activitypub
+        activitypub._pubkey_cache.clear()
+        yield
+        activitypub._pubkey_cache.clear()
+
+    @pytest.fixture
+    def keypair(self):
+        from cryptography.hazmat.primitives.asymmetric import rsa as _rsa
+        from cryptography.hazmat.primitives import serialization as _ser
+        priv = _rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        priv_pem = priv.private_bytes(
+            _ser.Encoding.PEM, _ser.PrivateFormat.PKCS8, _ser.NoEncryption()
+        ).decode()
+        pub_pem = priv.public_key().public_bytes(
+            _ser.Encoding.PEM, _ser.PublicFormat.SubjectPublicKeyInfo
+        ).decode()
+        return priv_pem, pub_pem
+
+    # ---- helpers ----
+
+    def _actor_mock(self, pub_pem):
+        m = MagicMock()
+        m.ok = True
+        m.json.return_value = {
+            "id":    self.REMOTE_ACTOR,
+            "type":  "Person",
+            "inbox": self.REMOTE_INBOX,
+            "publicKey": {
+                "id":           self.KEY_ID,
+                "owner":        self.REMOTE_ACTOR,
+                "publicKeyPem": pub_pem,
+            },
+        }
+        return m
+
+    def _signed_post(self, username, priv_pem, body=None):
+        """Return (body_bytes, headers) for a signed Follow POST."""
+        from activitypub import _sign_headers
+        if body is None:
+            body = json.dumps({
+                "@context": "https://www.w3.org/ns/activitystreams",
+                "id": f"{self.REMOTE_ACTOR}#follows/1",
+                "type": "Follow",
+                "actor": self.REMOTE_ACTOR,
+                "object": f"https://bikeodon.org/users/{username}",
+            }).encode()
+        headers = _sign_headers(
+            "POST",
+            f"https://bikeodon.org/users/{username}/inbox",
+            body, priv_pem, self.KEY_ID,
+        )
+        return body, headers
+
+    def _post(self, client, username, body, headers):
+        # Separate Content-Type so Flask test client handles it correctly
+        extra = {k: v for k, v in headers.items() if k != "Content-Type"}
+        return client.post(
+            f"/users/{username}/inbox",
+            data=body,
+            headers=extra,
+            content_type=self.AP,
+        )
+
+    # ---- tests ----
+
+    def test_valid_signature_accepted(self, client, user, keypair):
+        priv_pem, pub_pem = keypair
+        username, _ = user
+        body, hdrs = self._signed_post(username, priv_pem)
+        with patch("activitypub.requests") as mock_req, \
+             patch("activitypub._deliver_activity"):
+            mock_req.get.return_value = self._actor_mock(pub_pem)
+            r = self._post(client, username, body, hdrs)
+        assert r.status_code == 202
+
+    def test_missing_signature_returns_401(self, client, user):
+        username, _ = user
+        r = client.post(
+            f"/users/{username}/inbox",
+            data=json.dumps({"type": "Follow", "actor": self.REMOTE_ACTOR}).encode(),
+            content_type=self.AP,
+        )
+        assert r.status_code == 401
+
+    def test_wrong_key_returns_401(self, client, user, keypair):
+        """Signs with one key but presents a different public key — should fail."""
+        priv_pem, pub_pem = keypair
+        from cryptography.hazmat.primitives.asymmetric import rsa as _rsa
+        from cryptography.hazmat.primitives import serialization as _ser
+        other_priv = _rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        other_priv_pem = other_priv.private_bytes(
+            _ser.Encoding.PEM, _ser.PrivateFormat.PKCS8, _ser.NoEncryption()
+        ).decode()
+
+        username, _ = user
+        body, hdrs = self._signed_post(username, other_priv_pem)  # signed with wrong key
+        with patch("activitypub.requests") as mock_req:
+            mock_req.get.return_value = self._actor_mock(pub_pem)  # but we present original pub key
+            r = self._post(client, username, body, hdrs)
+        assert r.status_code == 401
+
+    def test_tampered_body_returns_401(self, client, user, keypair):
+        """Body changed after signing — digest mismatch."""
+        priv_pem, pub_pem = keypair
+        username, _ = user
+        body, hdrs = self._signed_post(username, priv_pem)
+        tampered = body + b" tampered"
+        with patch("activitypub.requests") as mock_req:
+            mock_req.get.return_value = self._actor_mock(pub_pem)
+            r = self._post(client, username, tampered, hdrs)
+        assert r.status_code == 401
+
+    def test_stale_date_returns_401(self, client, user, keypair):
+        """Request signed with a date one hour in the past."""
+        import time
+        from email.utils import formatdate
+        priv_pem, pub_pem = keypair
+        username, _ = user
+        stale = formatdate(timeval=time.time() - 3600, usegmt=True)
+        with patch("activitypub.formatdate", return_value=stale):
+            body, hdrs = self._signed_post(username, priv_pem)
+        with patch("activitypub.requests") as mock_req:
+            mock_req.get.return_value = self._actor_mock(pub_pem)
+            r = self._post(client, username, body, hdrs)
+        assert r.status_code == 401
+
+    def test_unreachable_key_returns_401(self, client, user, keypair):
+        """Remote server unavailable — can't fetch public key."""
+        priv_pem, _ = keypair
+        username, _ = user
+        body, hdrs = self._signed_post(username, priv_pem)
+        with patch("activitypub.requests") as mock_req:
+            mock_req.get.side_effect = Exception("connection refused")
+            r = self._post(client, username, body, hdrs)
+        assert r.status_code == 401
