@@ -111,3 +111,23 @@ class TestActorLive:
         pk = actor.json().get("publicKey", {})
         assert pk["publicKeyPem"].startswith("-----BEGIN PUBLIC KEY-----")
         assert pk["owner"] == f"{BASE}/users/{USERNAME}"
+
+    def test_has_display_name(self, actor):
+        assert "name" in actor.json()
+        assert len(actor.json()["name"]) > 0
+
+    def test_has_summary(self, actor):
+        assert "summary" in actor.json()
+        assert len(actor.json()["summary"]) > 0
+
+    def test_has_icon(self, actor):
+        icon = actor.json().get("icon", {})
+        assert icon.get("type") == "Image"
+        assert "mediaType" in icon
+        assert icon.get("url", "").startswith("https://bikeodon.org")
+
+    def test_avatar_is_reachable(self, actor):
+        url = actor.json()["icon"]["url"]
+        r = requests.get(url, timeout=10)
+        assert r.status_code == 200
+        assert r.headers["Content-Type"].startswith("image/")
