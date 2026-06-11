@@ -131,3 +131,95 @@ class TestActorLive:
         r = requests.get(url, timeout=10)
         assert r.status_code == 200
         assert r.headers["Content-Type"].startswith("image/")
+
+
+# ---------------------------------------------------------------------------
+# Followers collection
+# ---------------------------------------------------------------------------
+
+class TestFollowersLive:
+
+    def test_followers_status_200(self):
+        r = requests.get(
+            f"{BASE}/users/{USERNAME}/followers",
+            headers={"Accept": "application/activity+json"},
+            timeout=10,
+        )
+        assert r.status_code == 200
+
+    def test_followers_content_type(self):
+        r = requests.get(
+            f"{BASE}/users/{USERNAME}/followers",
+            headers={"Accept": "application/activity+json"},
+            timeout=10,
+        )
+        assert "application/activity+json" in r.headers["Content-Type"]
+
+    def test_followers_is_ordered_collection(self):
+        r = requests.get(
+            f"{BASE}/users/{USERNAME}/followers",
+            headers={"Accept": "application/activity+json"},
+            timeout=10,
+        )
+        data = r.json()
+        assert data["type"] == "OrderedCollection"
+
+    def test_followers_has_total_items(self):
+        r = requests.get(
+            f"{BASE}/users/{USERNAME}/followers",
+            headers={"Accept": "application/activity+json"},
+            timeout=10,
+        )
+        data = r.json()
+        assert "totalItems" in data
+        assert isinstance(data["totalItems"], int)
+
+    def test_followers_has_ordered_items(self):
+        r = requests.get(
+            f"{BASE}/users/{USERNAME}/followers",
+            headers={"Accept": "application/activity+json"},
+            timeout=10,
+        )
+        data = r.json()
+        assert "orderedItems" in data
+        assert isinstance(data["orderedItems"], list)
+
+    def test_followers_unknown_user_404(self):
+        r = requests.get(
+            f"{BASE}/users/nobody/followers",
+            headers={"Accept": "application/activity+json"},
+            timeout=10,
+        )
+        assert r.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Inbox
+# ---------------------------------------------------------------------------
+
+class TestInboxLive:
+
+    def test_inbox_rejects_get(self):
+        r = requests.get(
+            f"{BASE}/users/{USERNAME}/inbox",
+            headers={"Accept": "application/activity+json"},
+            timeout=10,
+        )
+        assert r.status_code == 405
+
+    def test_inbox_rejects_unsigned_request(self):
+        r = requests.post(
+            f"{BASE}/users/{USERNAME}/inbox",
+            data="not json",
+            headers={"Content-Type": "text/plain"},
+            timeout=10,
+        )
+        assert r.status_code == 401
+
+    def test_inbox_unknown_user_404(self):
+        r = requests.post(
+            f"{BASE}/users/nobody/inbox",
+            json={"type": "Follow", "actor": "https://example.com/users/test"},
+            timeout=10,
+        )
+        assert r.status_code == 404
