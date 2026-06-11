@@ -917,6 +917,65 @@ class TestOutbox:
         r = client.get("/users/nobody/outbox", headers={"Accept": self.AP})
         assert r.status_code == 404
 
+    def test_note_has_tag_array(self, client, user, app):
+        import app as app_module
+        username, uid = user
+        self._seed_activity(app_module.DB_PATH, uid)
+        r = client.get(f"/users/{username}/outbox?page=true", headers={"Accept": self.AP})
+        note = r.get_json()["orderedItems"][0]["object"]
+        assert "tag" in note
+        assert isinstance(note["tag"], list)
+        assert len(note["tag"]) > 0
+
+    def test_note_tags_are_hashtag_type(self, client, user, app):
+        import app as app_module
+        username, uid = user
+        self._seed_activity(app_module.DB_PATH, uid)
+        r = client.get(f"/users/{username}/outbox?page=true", headers={"Accept": self.AP})
+        note = r.get_json()["orderedItems"][0]["object"]
+        assert all(t["type"] == "Hashtag" for t in note["tag"])
+
+    def test_note_tags_have_name_and_href(self, client, user, app):
+        import app as app_module
+        username, uid = user
+        self._seed_activity(app_module.DB_PATH, uid)
+        r = client.get(f"/users/{username}/outbox?page=true", headers={"Accept": self.AP})
+        note = r.get_json()["orderedItems"][0]["object"]
+        for tag in note["tag"]:
+            assert tag["name"].startswith("#")
+            assert tag["href"].startswith("https://")
+
+    def test_note_sport_tag_included(self, client, user, app):
+        """A Ride activity must include #cycling in tags."""
+        import app as app_module
+        username, uid = user
+        self._seed_activity(app_module.DB_PATH, uid)  # sport_type="Ride"
+        r = client.get(f"/users/{username}/outbox?page=true", headers={"Accept": self.AP})
+        note = r.get_json()["orderedItems"][0]["object"]
+        names = [t["name"] for t in note["tag"]]
+        assert "#cycling" in names
+
+    def test_note_base_tags_always_present(self, client, user, app):
+        """#strava and #bikeodon appear on every activity regardless of sport."""
+        import app as app_module
+        username, uid = user
+        self._seed_activity(app_module.DB_PATH, uid)
+        r = client.get(f"/users/{username}/outbox?page=true", headers={"Accept": self.AP})
+        note = r.get_json()["orderedItems"][0]["object"]
+        names = [t["name"] for t in note["tag"]]
+        assert "#strava" in names
+        assert "#bikeodon" in names
+
+    def test_note_content_has_linked_hashtags(self, client, user, app):
+        """Hashtags in content must be <a> links, not plain text."""
+        import app as app_module
+        username, uid = user
+        self._seed_activity(app_module.DB_PATH, uid)
+        r = client.get(f"/users/{username}/outbox?page=true", headers={"Accept": self.AP})
+        content = r.get_json()["orderedItems"][0]["object"]["content"]
+        assert '<a href=' in content
+        assert 'rel="tag"' in content
+
 
 # ---------------------------------------------------------------------------
 # NodeInfo

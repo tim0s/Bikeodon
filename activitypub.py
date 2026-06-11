@@ -641,18 +641,63 @@ def followers(username):
 
 _OUTBOX_PAGE_SIZE = 20
 
+_SPORT_HASHTAGS: dict[str, list[str]] = {
+    "Ride":           ["cycling"],
+    "VirtualRide":    ["cycling", "zwift"],
+    "Run":            ["running"],
+    "VirtualRun":     ["running"],
+    "Walk":           ["walking"],
+    "Hike":           ["hiking"],
+    "Swim":           ["swimming"],
+    "WeightTraining": ["weighttraining", "fitness"],
+    "Yoga":           ["yoga", "fitness"],
+    "Workout":        ["fitness"],
+    "Rowing":         ["rowing"],
+    "Kayaking":       ["kayaking"],
+    "AlpineSki":      ["skiing"],
+    "NordicSki":      ["nordicski"],
+    "Snowboard":      ["snowboarding"],
+}
+_BASE_HASHTAGS = ["strava", "bikeodon"]
+
+
+def _hashtags_for_activity(sport_type: str | None) -> list[str]:
+    """Return ordered list of hashtag names (without #) for an activity."""
+    tags = list(_SPORT_HASHTAGS.get(sport_type or "", []))
+    for t in _BASE_HASHTAGS:
+        if t not in tags:
+            tags.append(t)
+    return tags
+
 
 def _activity_row_to_ap(row, actor_url: str, outbox_url: str,
                         image_urls: list[str] | None = None) -> dict:
     """Convert a DB activity row to an ActivityPub Create{Note} activity."""
     row = dict(row)
     note_id = f"{actor_url}/activities/{row['id']}"
+
+    # Derive the base URL from actor_url (e.g. https://bikeodon.org)
+    from urllib.parse import urlparse as _urlparse
+    base_url = "{0.scheme}://{0.netloc}".format(_urlparse(actor_url))
+
     content_parts = [f"<p>{row.get('name', 'Activity')}</p>"]
     dist_m = row.get("distance") or 0
     elev_m = row.get("total_elevation_gain") or 0
     if dist_m:
         content_parts.append(f"<p>📍 {dist_m/1000:.1f} km  🏔 {elev_m:.0f} m</p>")
+
+    hashtag_names = _hashtags_for_activity(row.get("sport_type"))
+    tag_links = " ".join(
+        f'<a href="{base_url}/tags/{t}" class="mention hashtag" rel="tag">#<span>{t}</span></a>'
+        for t in hashtag_names
+    )
+    content_parts.append(f"<p>{tag_links}</p>")
     content = "".join(content_parts)
+
+    tag_objects = [
+        {"type": "Hashtag", "href": f"{base_url}/tags/{t}", "name": f"#{t}"}
+        for t in hashtag_names
+    ]
 
     published = row.get("start_date") or row.get("fetched_at") or ""
     if published and not published.endswith("Z") and "+" not in published:
@@ -668,6 +713,7 @@ def _activity_row_to_ap(row, actor_url: str, outbox_url: str,
         "type": "Note",
         "attributedTo": actor_url,
         "content": content,
+        "tag": tag_objects,
         "published": published,
         "to": ["https://www.w3.org/ns/activitystreams#Public"],
     }
