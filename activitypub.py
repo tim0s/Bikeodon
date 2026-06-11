@@ -24,7 +24,11 @@ from flask import (
 from cryptography.hazmat.primitives.asymmetric import rsa, padding as asym_padding
 from cryptography.hazmat.primitives import hashes, serialization
 
-from database import get_user_by_username, add_follower, remove_follower, get_followers
+from database import (
+    get_user_by_username,
+    add_follower, remove_follower, get_followers,
+    add_following, accept_following,
+)
 from database import _conn as _db_conn
 
 _log = logging.getLogger(__name__)
@@ -204,6 +208,12 @@ def inbox(username):
 
     if activity_type == "Follow":
         _handle_follow(username, user, activity, db_path)
+    elif activity_type == "Accept":
+        obj = activity.get("object", {})
+        if isinstance(obj, dict) and obj.get("type") == "Follow":
+            remote_actor = activity.get("actor", "")
+            if remote_actor:
+                accept_following(db_path, username, remote_actor)
     elif activity_type == "Undo":
         obj = activity.get("object", {})
         if isinstance(obj, dict) and obj.get("type") == "Follow":
@@ -260,6 +270,38 @@ def _handle_undo_follow(local_username, activity, db_path):
     actor_url = activity.get("actor")
     if actor_url:
         remove_follower(db_path, local_username, actor_url)
+
+
+def send_follow(local_username, local_user, remote_actor_url, db_path):
+    """Send a Follow activity to a remote actor and record it as pending."""
+    try:
+        resp = requests.get(remote_actor_url, headers={"Accept": _AP_MIME}, timeout=10)
+        actor_doc    = resp.json()
+        inbox_url    = actor_doc.get("inbox", "")
+        display_name = actor_doc.get("name") or actor_doc.get("preferredUsername")
+        icon         = actor_doc.get("icon", {})
+        avatar_url   = icon.get("url") if isinstance(icon, dict) else None
+    except Exception as exc:
+        _log.warning("Could not fetch remote actor %s: %s", remote_actor_url, exc)
+        return
+
+    actor_ap_url = url_for("activitypub.actor", username=local_username, _external=True)
+    _, priv_pem  = get_or_create_keypair(db_path, local_user["id"])
+    key_id       = f"{actor_ap_url}#main-key"
+
+    follow_activity = {
+        "@context": "https://www.w3.org/ns/activitystreams",
+        "id": f"{actor_ap_url}#follow/{abs(hash(remote_actor_url)):08x}",
+        "type": "Follow",
+        "actor": actor_ap_url,
+        "object": remote_actor_url,
+    }
+
+    add_following(db_path, local_username, remote_actor_url, inbox_url,
+                  display_name=display_name, avatar_url=avatar_url)
+
+    if inbox_url:
+        _deliver_activity(inbox_url, follow_activity, priv_pem, key_id)
 
 
 def _deliver_activity(inbox_url, activity_doc, private_pem, key_id):

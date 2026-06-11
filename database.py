@@ -273,6 +273,20 @@ def init_db(db_path):
         except sqlite3.OperationalError:
             pass
 
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS following (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            local_username  TEXT NOT NULL,
+            actor_url       TEXT NOT NULL,
+            inbox_url       TEXT NOT NULL DEFAULT '',
+            display_name    TEXT,
+            avatar_url      TEXT,
+            status          TEXT NOT NULL DEFAULT 'pending',
+            followed_at     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(local_username, actor_url)
+        )
+    """)
+
     conn.commit()
 
     # Seed default user if none exists
@@ -1167,6 +1181,43 @@ def get_followers(db_path, local_username: str) -> list[dict]:
     rows = conn.execute(
         "SELECT actor_url, inbox_url, display_name, avatar_url, followed_at FROM followers"
         " WHERE local_username=? ORDER BY followed_at DESC",
+        (local_username,),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def add_following(db_path, local_username: str, actor_url: str, inbox_url: str,
+                  display_name: str = None, avatar_url: str = None):
+    conn = _conn(db_path)
+    conn.execute(
+        "INSERT INTO following (local_username, actor_url, inbox_url, display_name, avatar_url, status)"
+        " VALUES (?,?,?,?,?,'pending')"
+        " ON CONFLICT(local_username, actor_url) DO UPDATE SET"
+        "   inbox_url=excluded.inbox_url,"
+        "   display_name=excluded.display_name,"
+        "   avatar_url=excluded.avatar_url",
+        (local_username, actor_url, inbox_url, display_name, avatar_url),
+    )
+    conn.commit()
+    conn.close()
+
+
+def accept_following(db_path, local_username: str, actor_url: str):
+    conn = _conn(db_path)
+    conn.execute(
+        "UPDATE following SET status='accepted' WHERE local_username=? AND actor_url=?",
+        (local_username, actor_url),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_following(db_path, local_username: str) -> list[dict]:
+    conn = _conn(db_path)
+    rows = conn.execute(
+        "SELECT actor_url, inbox_url, display_name, avatar_url, status, followed_at"
+        " FROM following WHERE local_username=? ORDER BY followed_at DESC",
         (local_username,),
     ).fetchall()
     conn.close()

@@ -27,7 +27,7 @@ from database import (
     _conn, clear_rendered, count_activities, create_user, enrich_activity_stream,
     find_overlapping_activity, get_activity, get_admin_stats, get_all_peak_powers,
     get_activities_without_metrics, get_daily_loads, get_error_activities,
-    get_followers, get_setting, get_site_setting, get_stream, get_user_by_athlete_id, get_user_by_id,
+    get_followers, get_following, get_setting, get_site_setting, get_stream, get_user_by_athlete_id, get_user_by_id,
     get_user_by_username, get_user_stats, get_zone_totals, get_zones, init_db,
     apply_zone_preset, HR_ZONE_PRESETS, POWER_ZONE_PRESETS,
     job_finish, job_start, get_recent_jobs,
@@ -740,6 +740,19 @@ def save_profile():
     return redirect(url_for("me", tab="profile"))
 
 
+@app.route("/ap/follow", methods=["POST"])
+@login_required
+def ap_follow():
+    from activitypub import send_follow
+    actor_url = request.form.get("actor_url", "").strip()
+    if not actor_url:
+        abort(400)
+    uid  = int(current_user.id)
+    user = get_user_by_id(DB_PATH, uid)
+    send_follow(current_user.username, user, actor_url, DB_PATH)
+    return redirect(request.referrer or url_for("me", tab="followers"))
+
+
 # ---------------------------------------------------------------------------
 # Upload
 # ---------------------------------------------------------------------------
@@ -1011,8 +1024,10 @@ def me():
     # Profile fields for the Profile tab
     profile_row = get_user_by_id(DB_PATH, uid)
 
-    # Followers for the Followers tab
+    # Followers / Following for those tabs
     followers = get_followers(DB_PATH, current_user.username)
+    following = get_following(DB_PATH, current_user.username)
+    following_urls = {f["actor_url"] for f in following}
 
     return render_template(
         "me.html",
@@ -1038,6 +1053,8 @@ def me():
         wpk_all=json.dumps(wpk_all),
         wpk_recent=json.dumps(wpk_recent),
         followers=followers,
+        following=following,
+        following_urls=following_urls,
     )
 
 
