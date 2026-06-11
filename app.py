@@ -305,8 +305,9 @@ STRAVA_CLIENT_SECRET = os.environ.get("STRAVA_CLIENT_SECRET", "")
 
 app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
-app.secret_key     = os.environ.get("FLASK_SECRET_KEY", "dev-key-change-me-in-production")
-app.config["DB_PATH"] = DB_PATH
+app.secret_key                      = os.environ.get("FLASK_SECRET_KEY", "dev-key-change-me-in-production")
+app.config["DB_PATH"]               = DB_PATH
+app.config["PREFERRED_URL_SCHEME"]  = "https"
 
 init_db(DB_PATH)
 
