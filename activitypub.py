@@ -35,6 +35,7 @@ from database import (
     enqueue_delivery, get_due_deliveries,
     mark_delivery_sent, update_delivery_attempt, mark_delivery_failed,
     count_activities, list_activities,
+    get_nodeinfo_stats,
 )
 from database import _conn as _db_conn
 
@@ -711,3 +712,47 @@ def following(username):
     resp = jsonify(doc)
     resp.content_type = _AP_MIME
     return resp
+
+
+# ---------------------------------------------------------------------------
+# NodeInfo  /.well-known/nodeinfo  +  /nodeinfo/2.0
+# ---------------------------------------------------------------------------
+
+@bp.route("/.well-known/nodeinfo")
+def nodeinfo_discovery():
+    href = url_for("activitypub.nodeinfo", _external=True)
+    doc = {
+        "links": [
+            {
+                "rel": "http://nodeinfo.diaspora.software/ns/schema/2.0",
+                "href": href,
+            }
+        ]
+    }
+    return jsonify(doc)
+
+
+@bp.route("/nodeinfo/2.0")
+def nodeinfo():
+    db_path = current_app.config["DB_PATH"]
+    stats   = get_nodeinfo_stats(db_path)
+    doc = {
+        "version": "2.0",
+        "software": {
+            "name":    "bikeodon",
+            "version": "0.1",
+        },
+        "protocols": ["activitypub"],
+        "usage": {
+            "users": {
+                "total":          stats["user_count"],
+                "activeHalfyear": stats["active_halfyear"],
+                "activeMonth":    stats["active_month"],
+            },
+            "localPosts": stats["local_posts"],
+        },
+        "openRegistrations": False,
+        "services": {"inbound": [], "outbound": []},
+        "metadata": {},
+    }
+    return jsonify(doc)

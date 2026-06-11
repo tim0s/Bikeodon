@@ -1282,6 +1282,29 @@ def update_delivery_attempt(db_path, delivery_id: int, next_attempt_at: str,
     conn.close()
 
 
+def get_nodeinfo_stats(db_path) -> dict:
+    conn = _conn(db_path)
+    user_count = conn.execute(
+        "SELECT COUNT(*) FROM users WHERE username IS NOT NULL"
+    ).fetchone()[0]
+    local_posts = conn.execute("SELECT COUNT(*) FROM activities").fetchone()[0]
+    active_halfyear = conn.execute(
+        "SELECT COUNT(DISTINCT user_id) FROM activities"
+        " WHERE start_date >= datetime('now', '-6 months')"
+    ).fetchone()[0]
+    active_month = conn.execute(
+        "SELECT COUNT(DISTINCT user_id) FROM activities"
+        " WHERE start_date >= datetime('now', '-1 month')"
+    ).fetchone()[0]
+    conn.close()
+    return {
+        "user_count":      user_count,
+        "local_posts":     local_posts,
+        "active_halfyear": active_halfyear,
+        "active_month":    active_month,
+    }
+
+
 def mark_ap_posted(db_path, activity_id: int, user_id: int):
     conn = _conn(db_path)
     conn.execute(
