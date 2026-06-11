@@ -514,10 +514,25 @@ def _watopia_img_px(lat: float, lon: float) -> tuple[float, float]:
     return x, y
 
 
+_watopia_cache: tuple[str, "Image.Image"] | None = None  # (path, image)
+
+
+def _load_watopia(map_path: str) -> "Image.Image | None":
+    global _watopia_cache
+    if _watopia_cache and _watopia_cache[0] == map_path:
+        return _watopia_cache[1]
+    if not os.path.exists(map_path):
+        return None
+    img = Image.open(map_path).convert("RGBA")
+    _watopia_cache = (map_path, img)
+    return img
+
+
 def _render_watopia_map(points: list, activity: dict, cfg: dict,
                         maps_dir: str) -> Image.Image | None:
     map_path = os.path.join(maps_dir, "watopia.png")
-    if not os.path.exists(map_path):
+    watopia_base = _load_watopia(map_path)
+    if watopia_base is None:
         print(f"    Watopia map not found at {map_path}, falling back to OSM")
         return None
 
@@ -571,8 +586,8 @@ def _render_watopia_map(points: list, activity: dict, cfg: dict,
     src_left = px0 - pad_left_px / scale - center_off_x
     src_top  = py0 - pad_top_px  / scale - center_off_y
 
-    # Load + crop
-    watopia = Image.open(map_path).convert("RGBA")
+    # Crop from cached image (no disk load after first render)
+    watopia = watopia_base
     W, H = watopia.size
     sl, st = int(src_left), int(src_top)
     sr, sb = sl + int(src_w), st + int(src_h)
