@@ -262,16 +262,16 @@
     <table>
       <thead><tr><th>Zone</th><th>% Max HR</th>{% if hr_max %}<th>bpm</th>{% endif %}</tr></thead>
       <tbody>
-        {% set prev_pct = 0 %}
+        {% set ns = namespace(prev_pct=0) %}
         {% for z in hr_zones %}
         <tr>
           <td><span style="display:inline-block;width:12px;height:12px;border-radius:2px;background:{{ z.color }};margin-right:.4rem;vertical-align:middle"></span>{{ z.name }}</td>
-          <td>{{ prev_pct|int }}–{{ z.max_pct|int }}%</td>
+          <td>{{ ns.prev_pct|int }}–{{ z.max_pct|int }}%</td>
           {% if hr_max %}
-          <td>{{ (prev_pct / 100 * hr_max)|int }}–{{ (z.max_pct / 100 * hr_max)|int }}</td>
+          <td>{{ (ns.prev_pct / 100 * hr_max)|int }}–{{ (z.max_pct / 100 * hr_max)|int }}</td>
           {% endif %}
         </tr>
-        {% set prev_pct = z.max_pct %}
+        {% set ns.prev_pct = z.max_pct %}
         {% endfor %}
       </tbody>
     </table>
@@ -291,16 +291,16 @@
     <table>
       <thead><tr><th>Zone</th><th>% FTP</th>{% if ftp %}<th>Watts</th>{% endif %}</tr></thead>
       <tbody>
-        {% set prev_pct = 0 %}
+        {% set ns = namespace(prev_pct=0) %}
         {% for z in power_zones %}
         <tr>
           <td><span style="display:inline-block;width:12px;height:12px;border-radius:2px;background:{{ z.color }};margin-right:.4rem;vertical-align:middle"></span>{{ z.name }}</td>
-          <td>{{ prev_pct|int }}–{% if z.max_pct >= 900 %}∞{% else %}{{ z.max_pct|int }}{% endif %}%</td>
+          <td>{{ ns.prev_pct|int }}–{% if z.max_pct >= 900 %}∞{% else %}{{ z.max_pct|int }}{% endif %}%</td>
           {% if ftp %}
-          <td>{{ (prev_pct / 100 * ftp)|int }}{% if z.max_pct < 900 %}–{{ (z.max_pct / 100 * ftp)|int }}{% else %}+{% endif %}</td>
+          <td>{{ (ns.prev_pct / 100 * ftp)|int }}{% if z.max_pct < 900 %}–{{ (z.max_pct / 100 * ftp)|int }}{% else %}+{% endif %}</td>
           {% endif %}
         </tr>
-        {% set prev_pct = z.max_pct %}
+        {% set ns.prev_pct = z.max_pct %}
         {% endfor %}
       </tbody>
     </table>
