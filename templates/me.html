@@ -698,12 +698,13 @@
 
 {% elif tab == "following" %}
 
-<form method="get" action="{{ url_for('me') }}" style="display:flex;gap:.5rem;margin-bottom:1.5rem">
+<p class="muted"><small>Follow anyone on Mastodon or another ActivityPub server. Enter their handle to look them up.</small></p>
+<form method="get" action="{{ url_for('me') }}" style="display:flex;align-items:center;gap:.5rem;margin-bottom:1.5rem">
   <input type="hidden" name="tab" value="following">
-  <input type="search" name="q" placeholder="Search fediverse — e.g. alice@mastodon.social"
+  <input type="search" name="q" placeholder="alice@mastodon.social"
          value="{{ request.args.get('q', '') }}"
-         style="flex:1;margin:0">
-  <button type="submit" style="white-space:nowrap">Find</button>
+         style="flex:1;margin:0;min-width:0">
+  <button type="submit" style="width:auto;white-space:nowrap;margin:0;padding:.5rem 1rem">Find</button>
 </form>
 
 {% if search_error %}
