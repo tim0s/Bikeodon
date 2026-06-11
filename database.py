@@ -287,6 +287,20 @@ def init_db(db_path):
         )
     """)
 
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS delivery_queue (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            inbox_url       TEXT NOT NULL,
+            activity_json   TEXT NOT NULL,
+            key_id          TEXT NOT NULL,
+            attempts        INTEGER NOT NULL DEFAULT 0,
+            next_attempt_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            last_error      TEXT,
+            created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            status          TEXT NOT NULL DEFAULT 'pending'
+        )
+    """)
+
     conn.commit()
 
     # Seed default user if none exists
@@ -1222,6 +1236,59 @@ def get_following(db_path, local_username: str) -> list[dict]:
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+def enqueue_delivery(db_path, inbox_url: str, activity_json: str, key_id: str):
+    conn = _conn(db_path)
+    conn.execute(
+        "INSERT INTO delivery_queue (inbox_url, activity_json, key_id) VALUES (?,?,?)",
+        (inbox_url, activity_json, key_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_due_deliveries(db_path, limit: int = 50) -> list[dict]:
+    conn = _conn(db_path)
+    rows = conn.execute(
+        "SELECT id, inbox_url, activity_json, key_id, attempts, created_at"
+        " FROM delivery_queue"
+        " WHERE status='pending' AND next_attempt_at <= datetime('now')"
+        " ORDER BY next_attempt_at ASC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def mark_delivery_sent(db_path, delivery_id: int):
+    conn = _conn(db_path)
+    conn.execute(
+        "UPDATE delivery_queue SET status='sent' WHERE id=?", (delivery_id,)
+    )
+    conn.commit()
+    conn.close()
+
+
+def update_delivery_attempt(db_path, delivery_id: int, next_attempt_at: str,
+                             attempts: int, error: str):
+    conn = _conn(db_path)
+    conn.execute(
+        "UPDATE delivery_queue SET attempts=?, next_attempt_at=?, last_error=? WHERE id=?",
+        (attempts, next_attempt_at, error, delivery_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def mark_delivery_failed(db_path, delivery_id: int, error: str):
+    conn = _conn(db_path)
+    conn.execute(
+        "UPDATE delivery_queue SET status='failed', last_error=? WHERE id=?",
+        (error, delivery_id),
+    )
+    conn.commit()
+    conn.close()
 
 
 def get_zone_totals(db_path, user_id: int) -> tuple:
