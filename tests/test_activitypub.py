@@ -979,3 +979,92 @@ class TestNodeInfo:
         }, uid)
         data = client.get("/nodeinfo/2.0").get_json()
         assert data["usage"]["localPosts"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Profile update propagation
+# ---------------------------------------------------------------------------
+
+class TestProfileUpdate:
+    """
+    send_profile_update must fan out an Update{Person} activity to all
+    followers when called after a profile change.
+    """
+
+    REMOTE_ACTOR = "https://mastodon.social/users/alice"
+    REMOTE_INBOX = "https://mastodon.social/users/alice/inbox"
+
+    def _add_follower(self, db_path, username):
+        from database import add_follower
+        add_follower(db_path, username, self.REMOTE_ACTOR, self.REMOTE_INBOX,
+                     display_name="Alice", avatar_url=None)
+
+    @pytest.fixture(autouse=True)
+    def bypass_sig_verification(self):
+        with patch("activitypub._verify_http_signature", return_value=(True, "ok")):
+            yield
+
+    def test_no_followers_sends_nothing(self, app, user):
+        import app as app_module
+        from activitypub import send_profile_update
+        username, uid = user
+        user_row = __import__("database").get_user_by_id(app_module.DB_PATH, uid)
+        with patch("activitypub._deliver_activity") as mock_deliver:
+            send_profile_update(username, user_row, app_module.DB_PATH)
+        mock_deliver.assert_not_called()
+
+    def test_fans_out_to_each_follower_inbox(self, app, user):
+        import app as app_module
+        from activitypub import send_profile_update
+        username, uid = user
+        self._add_follower(app_module.DB_PATH, username)
+        user_row = __import__("database").get_user_by_id(app_module.DB_PATH, uid)
+        with app.app_context(), patch("activitypub._deliver_activity") as mock_deliver:
+            send_profile_update(username, user_row, app_module.DB_PATH)
+        assert mock_deliver.call_count == 1
+        inbox_url, activity, key_id, db = mock_deliver.call_args[0]
+        assert inbox_url == self.REMOTE_INBOX
+
+    def test_update_activity_type(self, app, user):
+        import app as app_module
+        from activitypub import send_profile_update
+        username, uid = user
+        self._add_follower(app_module.DB_PATH, username)
+        user_row = __import__("database").get_user_by_id(app_module.DB_PATH, uid)
+        with app.app_context(), patch("activitypub._deliver_activity") as mock_deliver:
+            send_profile_update(username, user_row, app_module.DB_PATH)
+        _, activity, _, _ = mock_deliver.call_args[0]
+        assert activity["type"] == "Update"
+
+    def test_update_object_is_person(self, app, user):
+        import app as app_module
+        from activitypub import send_profile_update
+        username, uid = user
+        self._add_follower(app_module.DB_PATH, username)
+        user_row = __import__("database").get_user_by_id(app_module.DB_PATH, uid)
+        with app.app_context(), patch("activitypub._deliver_activity") as mock_deliver:
+            send_profile_update(username, user_row, app_module.DB_PATH)
+        _, activity, _, _ = mock_deliver.call_args[0]
+        assert activity["object"]["type"] == "Person"
+        assert activity["object"]["id"] == f"https://bikeodon.org/users/{username}"
+
+    def test_save_profile_triggers_update(self, client, user, app):
+        """Saving a profile via the HTTP route must fan out an Update."""
+        import app as app_module
+        from werkzeug.security import generate_password_hash
+        username, uid = user
+        self._add_follower(app_module.DB_PATH, username)
+
+        with client.session_transaction() as sess:
+            sess["_user_id"] = str(uid)
+
+        with patch("activitypub._deliver_activity") as mock_deliver:
+            r = client.post("/me/profile", data={
+                "display_name": "Tim Schneider",
+                "summary": "Cycling enthusiast",
+            })
+
+        assert r.status_code in (200, 302)
+        assert mock_deliver.called
+        _, activity, _, _ = mock_deliver.call_args[0]
+        assert activity["type"] == "Update"

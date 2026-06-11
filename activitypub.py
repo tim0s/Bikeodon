@@ -247,12 +247,20 @@ def actor(username):
         return render_template("profile.html", profile_user=dict(user))
 
     pub_pem, _ = get_or_create_keypair(db_path, user["id"])
-    actor_url  = url_for("activitypub.actor",     username=username, _external=True)
-    inbox_url  = url_for("activitypub.inbox",      username=username, _external=True)
-    outbox_url = url_for("activitypub.outbox",     username=username, _external=True)
-    foll_url   = url_for("activitypub.followers",  username=username, _external=True)
-    fing_url   = url_for("activitypub.following",  username=username, _external=True)
-    avatar_url = url_for("user_avatar", username=username, _external=True)
+    doc = _build_actor_doc(username, user, pub_pem)
+    resp = jsonify(doc)
+    resp.content_type = _AP_MIME
+    return resp
+
+
+def _build_actor_doc(username: str, user, pub_pem: str) -> dict:
+    """Build the Actor JSON-LD document for a user. Requires an active request context."""
+    actor_url  = url_for("activitypub.actor",    username=username, _external=True)
+    inbox_url  = url_for("activitypub.inbox",     username=username, _external=True)
+    outbox_url = url_for("activitypub.outbox",    username=username, _external=True)
+    foll_url   = url_for("activitypub.followers", username=username, _external=True)
+    fing_url   = url_for("activitypub.following", username=username, _external=True)
+    avatar_url = url_for("user_avatar",           username=username, _external=True)
 
     doc = {
         "@context":          _AP_CONTEXT,
@@ -281,9 +289,7 @@ def actor(username):
     if u.get("summary"):
         doc["summary"] = u["summary"]
 
-    resp = jsonify(doc)
-    resp.content_type = _AP_MIME
-    return resp
+    return doc
 
 
 def _avatar_media_type(filename: str | None) -> str:
@@ -458,6 +464,34 @@ def send_follow(local_username, local_user, remote_actor_url, db_path):
 
     if inbox_url:
         _deliver_activity(inbox_url, follow_activity, key_id, db_path)
+
+
+def send_profile_update(local_username: str, local_user, db_path: str):
+    """Fan out an Update{Person} to all followers after a profile change."""
+    followers = get_followers(db_path, local_username)
+    if not followers:
+        return
+
+    pub_pem, _ = get_or_create_keypair(db_path, local_user["id"])
+    actor_doc  = _build_actor_doc(local_username, local_user, pub_pem)
+    actor_url  = actor_doc["id"]
+    key_id     = f"{actor_url}#main-key"
+
+    update = {
+        "@context": "https://www.w3.org/ns/activitystreams",
+        "id":       f"{actor_url}#update/{int(datetime.now(timezone.utc).timestamp())}",
+        "type":     "Update",
+        "actor":    actor_url,
+        "to":       ["https://www.w3.org/ns/activitystreams#Public"],
+        "object":   actor_doc,
+    }
+
+    for follower in followers:
+        inbox_url = follower.get("inbox_url")
+        if inbox_url:
+            _deliver_activity(inbox_url, update, key_id, db_path)
+
+    _log.info("Queued profile Update for %s to %d follower(s)", local_username, len(followers))
 
 
 def _deliver_activity(inbox_url, activity_doc, key_id, db_path):

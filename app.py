@@ -793,6 +793,11 @@ def save_profile():
         (*updates.values(), uid),
     )
     conn.commit()
+
+    from activitypub import send_profile_update
+    user = get_user_by_id(DB_PATH, uid)
+    send_profile_update(user["username"], user, DB_PATH)
+
     flash("Profile updated.", "success")
     return redirect(url_for("me", tab="profile"))
 
