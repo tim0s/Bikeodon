@@ -449,7 +449,7 @@ class TestInboxFollow:
                 content_type=self.AP,
             )
         assert mock_deliver.called
-        inbox_url, accept_doc, _priv, _key_id = mock_deliver.call_args[0]
+        inbox_url, accept_doc, _key_id, _db = mock_deliver.call_args[0]
         assert inbox_url == self.REMOTE_INBOX
         assert accept_doc["type"] == "Accept"
         assert accept_doc["object"]["type"] == "Follow"
@@ -696,3 +696,286 @@ class TestHttpSignatureVerification:
             mock_req.get.side_effect = Exception("connection refused")
             r = self._post(client, username, body, hdrs)
         assert r.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Delivery queue
+# ---------------------------------------------------------------------------
+
+class TestDeliveryQueue:
+    """
+    _deliver_activity must enqueue immediately and return; the worker
+    thread does the actual HTTP POST with exponential backoff and a
+    3-day give-up window.
+    """
+
+    KEY_ID    = "https://bikeodon.org/users/tim0s42#main-key"
+    INBOX_URL = "https://mastodon.social/users/alice/inbox"
+
+    def _activity(self):
+        return {"@context": "https://www.w3.org/ns/activitystreams",
+                "type": "Create", "actor": "https://bikeodon.org/users/tim0s42"}
+
+    # ---- enqueue ----
+
+    def test_deliver_enqueues_not_sends(self, app, user):
+        """_deliver_activity must not make any HTTP call — it only queues."""
+        import app as app_module
+        from activitypub import _deliver_activity
+        username, _ = user
+        with patch("activitypub.requests") as mock_req:
+            _deliver_activity(self.INBOX_URL, self._activity(), self.KEY_ID, app_module.DB_PATH)
+            mock_req.post.assert_not_called()
+
+    def test_deliver_stores_row_in_db(self, app, user):
+        import app as app_module
+        from activitypub import _deliver_activity
+        from database import get_due_deliveries
+        username, _ = user
+        _deliver_activity(self.INBOX_URL, self._activity(), self.KEY_ID, app_module.DB_PATH)
+        rows = get_due_deliveries(app_module.DB_PATH)
+        assert any(r["inbox_url"] == self.INBOX_URL for r in rows)
+
+    # ---- worker: successful delivery ----
+
+    def test_worker_delivers_and_marks_sent(self, app, user):
+        import app as app_module
+        from activitypub import _deliver_activity, _process_due_deliveries
+        from database import get_due_deliveries
+        username, _ = user
+        _deliver_activity(self.INBOX_URL, self._activity(), self.KEY_ID, app_module.DB_PATH)
+
+        mock_resp = MagicMock()
+        mock_resp.ok = True
+        mock_resp.status_code = 202
+        with patch("activitypub.requests") as mock_req:
+            mock_req.post.return_value = mock_resp
+            _process_due_deliveries(app_module.DB_PATH)
+
+        assert get_due_deliveries(app_module.DB_PATH) == []
+
+    def test_worker_treats_410_gone_as_success(self, app, user):
+        """410 Gone means the remote account is deleted — don't retry."""
+        import app as app_module
+        from activitypub import _deliver_activity, _process_due_deliveries
+        from database import get_due_deliveries
+        username, _ = user
+        _deliver_activity(self.INBOX_URL, self._activity(), self.KEY_ID, app_module.DB_PATH)
+
+        mock_resp = MagicMock()
+        mock_resp.ok = False
+        mock_resp.status_code = 410
+        with patch("activitypub.requests") as mock_req:
+            mock_req.post.return_value = mock_resp
+            _process_due_deliveries(app_module.DB_PATH)
+
+        assert get_due_deliveries(app_module.DB_PATH) == []
+
+    # ---- worker: failure / retry ----
+
+    def test_worker_reschedules_on_failure(self, app, user):
+        """On HTTP 500, the delivery must be rescheduled (not deleted)."""
+        import app as app_module
+        from activitypub import _deliver_activity, _process_due_deliveries
+        from database import _conn
+        username, _ = user
+        _deliver_activity(self.INBOX_URL, self._activity(), self.KEY_ID, app_module.DB_PATH)
+
+        mock_resp = MagicMock()
+        mock_resp.ok = False
+        mock_resp.status_code = 500
+        mock_resp.text = "server error"
+        with patch("activitypub.requests") as mock_req:
+            mock_req.post.return_value = mock_resp
+            _process_due_deliveries(app_module.DB_PATH)
+
+        conn = _conn(app_module.DB_PATH)
+        row = conn.execute("SELECT attempts, status, last_error FROM delivery_queue").fetchone()
+        assert row["attempts"] == 1
+        assert row["status"] == "pending"
+        assert "500" in row["last_error"]
+
+    def test_worker_gives_up_after_3_days(self, app, user):
+        """A delivery that is > 3 days old must be marked failed, not retried."""
+        import app as app_module
+        from activitypub import _deliver_activity, _process_due_deliveries
+        from database import _conn
+        from datetime import datetime, timezone, timedelta
+        username, _ = user
+        _deliver_activity(self.INBOX_URL, self._activity(), self.KEY_ID, app_module.DB_PATH)
+
+        # Back-date created_at to 4 days ago
+        old_ts = (datetime.now(timezone.utc) - timedelta(days=4)).isoformat()
+        conn = _conn(app_module.DB_PATH)
+        conn.execute("UPDATE delivery_queue SET created_at=?", (old_ts,))
+        conn.commit()
+
+        mock_resp = MagicMock()
+        mock_resp.ok = False
+        mock_resp.status_code = 503
+        mock_resp.text = "unavailable"
+        with patch("activitypub.requests") as mock_req:
+            mock_req.post.return_value = mock_resp
+            _process_due_deliveries(app_module.DB_PATH)
+
+        row = conn.execute("SELECT status FROM delivery_queue").fetchone()
+        assert row["status"] == "failed"
+
+    def test_backoff_grows_exponentially(self, app, user):
+        """Each failure must push next_attempt_at further into the future."""
+        import app as app_module
+        from activitypub import _deliver_activity, _process_due_deliveries
+        from database import _conn
+        username, _ = user
+
+        mock_resp = MagicMock()
+        mock_resp.ok = False
+        mock_resp.status_code = 503
+        mock_resp.text = "unavailable"
+        with patch("activitypub.requests") as mock_req:
+            mock_req.post.return_value = mock_resp
+
+            _deliver_activity(self.INBOX_URL, self._activity(), self.KEY_ID, app_module.DB_PATH)
+            conn = _conn(app_module.DB_PATH)
+
+            # Force next_attempt_at to now so the worker picks it up each time
+            delays = []
+            for _ in range(3):
+                conn.execute("UPDATE delivery_queue SET next_attempt_at=datetime('now')")
+                conn.commit()
+                before = conn.execute("SELECT next_attempt_at FROM delivery_queue").fetchone()[0]
+                _process_due_deliveries(app_module.DB_PATH)
+                after = conn.execute("SELECT next_attempt_at FROM delivery_queue").fetchone()[0]
+                delays.append(after)
+
+        # Each successive next_attempt_at must be later than the previous
+        assert delays[0] < delays[1] < delays[2]
+
+
+# ---------------------------------------------------------------------------
+# Outbox
+# ---------------------------------------------------------------------------
+
+class TestOutbox:
+    AP = "application/activity+json"
+
+    def _seed_activity(self, db_path, user_id):
+        from database import upsert_activity
+        upsert_activity(db_path, {
+            "id": 1001,
+            "name": "Morning Ride",
+            "sport_type": "Ride",
+            "start_date": "2026-06-01T07:00:00Z",
+            "distance": 45200,
+            "total_elevation_gain": 320,
+            "moving_time": 5400,
+            "elapsed_time": 5600,
+        }, user_id)
+
+    def test_outbox_returns_200(self, client, user):
+        username, _ = user
+        r = client.get(f"/users/{username}/outbox", headers={"Accept": self.AP})
+        assert r.status_code == 200
+
+    def test_outbox_content_type(self, client, user):
+        username, _ = user
+        r = client.get(f"/users/{username}/outbox", headers={"Accept": self.AP})
+        assert "application/activity+json" in r.content_type
+
+    def test_outbox_is_ordered_collection(self, client, user):
+        username, _ = user
+        r = client.get(f"/users/{username}/outbox", headers={"Accept": self.AP})
+        assert r.get_json()["type"] == "OrderedCollection"
+
+    def test_outbox_has_total_items(self, client, user, app):
+        import app as app_module
+        username, uid = user
+        self._seed_activity(app_module.DB_PATH, uid)
+        r = client.get(f"/users/{username}/outbox", headers={"Accept": self.AP})
+        assert r.get_json()["totalItems"] == 1
+
+    def test_outbox_has_first_page_link(self, client, user):
+        username, _ = user
+        r = client.get(f"/users/{username}/outbox", headers={"Accept": self.AP})
+        data = r.get_json()
+        assert "first" in data
+        assert "page=true" in data["first"]
+
+    def test_outbox_page_returns_create_activities(self, client, user, app):
+        import app as app_module
+        username, uid = user
+        self._seed_activity(app_module.DB_PATH, uid)
+        r = client.get(f"/users/{username}/outbox?page=true", headers={"Accept": self.AP})
+        data = r.get_json()
+        assert data["type"] == "OrderedCollectionPage"
+        assert len(data["orderedItems"]) == 1
+        item = data["orderedItems"][0]
+        assert item["type"] == "Create"
+        assert item["object"]["type"] == "Note"
+
+    def test_outbox_unknown_user_404(self, client):
+        r = client.get("/users/nobody/outbox", headers={"Accept": self.AP})
+        assert r.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# NodeInfo
+# ---------------------------------------------------------------------------
+
+class TestNodeInfo:
+
+    def test_discovery_returns_200(self, client):
+        r = client.get("/.well-known/nodeinfo")
+        assert r.status_code == 200
+
+    def test_discovery_has_nodeinfo_link(self, client):
+        data = client.get("/.well-known/nodeinfo").get_json()
+        rels = [l["rel"] for l in data.get("links", [])]
+        assert "http://nodeinfo.diaspora.software/ns/schema/2.0" in rels
+
+    def test_discovery_href_points_to_nodeinfo_endpoint(self, client):
+        data = client.get("/.well-known/nodeinfo").get_json()
+        href = next(
+            l["href"] for l in data["links"]
+            if l["rel"] == "http://nodeinfo.diaspora.software/ns/schema/2.0"
+        )
+        assert "/nodeinfo/2.0" in href
+
+    def test_nodeinfo_returns_200(self, client):
+        r = client.get("/nodeinfo/2.0")
+        assert r.status_code == 200
+
+    def test_nodeinfo_version(self, client):
+        assert client.get("/nodeinfo/2.0").get_json()["version"] == "2.0"
+
+    def test_nodeinfo_software_name(self, client):
+        assert client.get("/nodeinfo/2.0").get_json()["software"]["name"] == "bikeodon"
+
+    def test_nodeinfo_protocols_includes_activitypub(self, client):
+        assert "activitypub" in client.get("/nodeinfo/2.0").get_json()["protocols"]
+
+    def test_nodeinfo_open_registrations_false(self, client):
+        assert client.get("/nodeinfo/2.0").get_json()["openRegistrations"] is False
+
+    def test_nodeinfo_usage_has_required_fields(self, client, user):
+        data = client.get("/nodeinfo/2.0").get_json()
+        usage = data["usage"]
+        assert "localPosts" in usage
+        assert "total" in usage["users"]
+        assert "activeHalfyear" in usage["users"]
+        assert "activeMonth" in usage["users"]
+
+    def test_nodeinfo_user_count_reflects_db(self, client, user):
+        data = client.get("/nodeinfo/2.0").get_json()
+        assert data["usage"]["users"]["total"] == 1
+
+    def test_nodeinfo_local_posts_reflects_db(self, client, user, app):
+        import app as app_module
+        from database import upsert_activity
+        _, uid = user
+        upsert_activity(app_module.DB_PATH, {
+            "id": 2001, "name": "Test Ride", "sport_type": "Ride",
+            "start_date": "2026-06-01T08:00:00Z",
+        }, uid)
+        data = client.get("/nodeinfo/2.0").get_json()
+        assert data["usage"]["localPosts"] == 1
