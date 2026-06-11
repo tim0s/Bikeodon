@@ -53,10 +53,10 @@ def _zone_thresholds(zones, base):
 
 def _zone_distribution(values, thresholds):
     """Return count per zone (same length as thresholds)."""
-    counts = [0] * len(thresholds)
-    for v in values:
-        counts[_zone_for_value(v, thresholds)] += 1
-    return counts
+    arr = np.asarray(values)
+    t   = np.asarray(thresholds)
+    idx = np.clip(np.searchsorted(t, arr, side='left'), 0, len(t) - 1)
+    return [int((idx == i).sum()) for i in range(len(t))]
 
 
 def _time_axis(stream, key):
@@ -79,6 +79,14 @@ def _time_axis(stream, key):
         t_min = [i / len(pairs) * (len(pairs) / 60) for i in range(len(pairs))]
 
     return np.array(t_min), np.array(values)
+
+
+def _downsample(t, y, max_pts=600):
+    """Thin arrays to at most max_pts points for faster matplotlib rendering."""
+    if len(t) <= max_pts:
+        return t, y
+    step = max(1, len(t) // max_pts)
+    return t[::step], y[::step]
 
 
 def _smooth(y, window=30):
@@ -147,9 +155,11 @@ def render_hr_chart(stream, cfg, out_path: str, db_path: str | None = None) -> s
     _apply_style(fig, [ax_time, ax_dist], cfg)
 
     # ── time series ──
+    t_ds, hr_ds = _downsample(t, hr)
+    _, hr_smooth_ds = _downsample(t, _smooth(hr))
     _draw_zone_bands(ax_time, zones, thresh)
-    ax_time.fill_between(t, hr, alpha=0.15, color=line_col)
-    ax_time.plot(t, _smooth(hr), color=line_col, linewidth=1.5, label="Heart Rate")
+    ax_time.fill_between(t_ds, hr_ds, alpha=0.15, color=line_col)
+    ax_time.plot(t_ds, hr_smooth_ds, color=line_col, linewidth=1.5, label="Heart Rate")
     ax_time.set_ylabel("bpm")
     ax_time.set_xlabel("Time (min)")
     ax_time.set_title("Heart Rate", fontsize=14, fontweight="bold", pad=10)
@@ -217,9 +227,11 @@ def render_power_chart(stream, cfg, out_path: str, db_path: str | None = None) -
     _apply_style(fig, [ax_time, ax_dist], cfg)
 
     # ── time series ──
+    t_ds, pw_ds = _downsample(t, power)
+    _, pw_smooth_ds = _downsample(t, _smooth(power, window=15))
     _draw_zone_bands(ax_time, zones, thresh)
-    ax_time.fill_between(t, power, alpha=0.15, color=line_col)
-    ax_time.plot(t, _smooth(power, window=15), color=line_col, linewidth=1.5)
+    ax_time.fill_between(t_ds, pw_ds, alpha=0.15, color=line_col)
+    ax_time.plot(t_ds, pw_smooth_ds, color=line_col, linewidth=1.5)
     ax_time.axhline(ftp, color="#ffffff", linewidth=1, linestyle="--", alpha=0.5, label=f"FTP {ftp}W")
     ax_time.set_ylabel("Watts")
     ax_time.set_xlabel("Time (min)")

@@ -147,8 +147,11 @@ def _draw_route(img: Image.Image, points: list,
     overlay_big = Image.new("RGBA", (w * scale, h * scale), (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay_big)
 
-    px_points = [(to_px(lat, lon)[0] * scale, to_px(lat, lon)[1] * scale)
-                 for lat, lon in points]
+    # Call to_px once per point (was called twice due to [0]/[1] indexing)
+    px_points = []
+    for lat, lon in points:
+        x, y = to_px(lat, lon)
+        px_points.append((x * scale, y * scale))
 
     route_color = _parse_color(route_cfg.get("color", "#FC4C02"),
                                 route_cfg.get("opacity", 0.9))
@@ -157,12 +160,15 @@ def _draw_route(img: Image.Image, points: list,
     outline_w = route_cfg.get("outline_width", 0) * scale
 
     def draw_polyline(color, width):
+        if len(px_points) < 2:
+            return
+        # Single polyline call with round joints instead of N ellipses + N-1 segments
+        draw.line(px_points, fill=color, width=int(width), joint="curve")
+        # Round end caps only at the two endpoints
         half_r = width / 2
-        for pt in px_points:
+        for pt in (px_points[0], px_points[-1]):
             draw.ellipse([pt[0] - half_r, pt[1] - half_r,
                           pt[0] + half_r, pt[1] + half_r], fill=color)
-        for i in range(len(px_points) - 1):
-            draw.line([px_points[i], px_points[i + 1]], fill=color, width=int(width))
 
     if outline_color_hex and outline_w > 0:
         outline_color = _parse_color(outline_color_hex, route_cfg.get("opacity", 0.9))
