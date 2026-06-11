@@ -14,7 +14,7 @@
 
 {# ── Tab navigation ───────────────────────────────────────────────────────── #}
 <div role="tablist" class="tab-bar">
-  {% for t, label in [("overview","Overview"),("fitness","Fitness"),("zones","Zones"),("power","Power"),("profile","Profile")] %}
+  {% for t, label in [("overview","Overview"),("fitness","Fitness"),("zones","Zones"),("power","Power"),("followers","Followers"),("profile","Profile")] %}
   <a href="{{ url_for('me') }}?tab={{ t }}" role="tab" {% if tab == t %}aria-selected="true"{% endif %}>{{ label }}</a>
   {% endfor %}
 </div>
@@ -647,6 +647,30 @@
   };
 })();
 </script>
+{% endif %}
+
+{% elif tab == "followers" %}
+
+<h3>Followers <small class="muted">({{ followers|length }})</small></h3>
+
+{% if followers %}
+<table>
+  <thead>
+    <tr><th>Account</th><th>Following since</th></tr>
+  </thead>
+  <tbody>
+    {% for f in followers %}
+    <tr>
+      <td>
+        <a href="{{ f.actor_url }}" target="_blank" rel="noopener">{{ f.actor_url }}</a>
+      </td>
+      <td><small class="muted">{{ f.followed_at[:10] }}</small></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted">No followers yet. Share your handle <strong>@{{ username }}@{{ request.host }}</strong> to let people follow you from Mastodon and other federated platforms.</p>
 {% endif %}
 
 {% elif tab == "profile" %}

@@ -27,7 +27,7 @@ from database import (
     _conn, clear_rendered, count_activities, create_user, enrich_activity_stream,
     find_overlapping_activity, get_activity, get_admin_stats, get_all_peak_powers,
     get_activities_without_metrics, get_daily_loads, get_error_activities,
-    get_setting, get_site_setting, get_stream, get_user_by_athlete_id, get_user_by_id,
+    get_followers, get_setting, get_site_setting, get_stream, get_user_by_athlete_id, get_user_by_id,
     get_user_by_username, get_user_stats, get_zone_totals, get_zones, init_db,
     apply_zone_preset, HR_ZONE_PRESETS, POWER_ZONE_PRESETS,
     job_finish, job_start, get_recent_jobs,
@@ -1011,6 +1011,9 @@ def me():
     # Profile fields for the Profile tab
     profile_row = get_user_by_id(DB_PATH, uid)
 
+    # Followers for the Followers tab
+    followers = get_followers(DB_PATH, current_user.username)
+
     return render_template(
         "me.html",
         username=current_user.username,
@@ -1034,6 +1037,7 @@ def me():
         curve_recent=json.dumps(curve_recent),
         wpk_all=json.dumps(wpk_all),
         wpk_recent=json.dumps(wpk_recent),
+        followers=followers,
     )
 
 
