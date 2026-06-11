@@ -2,10 +2,15 @@
 {% block title %}{{ username }} – Bikeodon{% endblock %}
 {% block content %}
 
-<hgroup>
-  <h2>{{ username }}</h2>
-  <p>Your training dashboard</p>
-</hgroup>
+<div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem">
+  <img src="{{ url_for('user_avatar', username=username) }}"
+       alt="Avatar"
+       style="width:56px;height:56px;border-radius:50%;object-fit:cover;flex-shrink:0">
+  <hgroup style="margin:0">
+    <h2 style="margin:0">{{ profile.display_name or username }}</h2>
+    <p style="margin:0">Your training dashboard</p>
+  </hgroup>
+</div>
 
 {# ── Tab navigation ───────────────────────────────────────────────────────── #}
 <div role="tablist" class="tab-bar">
