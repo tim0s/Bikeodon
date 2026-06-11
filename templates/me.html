@@ -698,6 +698,40 @@
 
 {% elif tab == "following" %}
 
+<form method="get" action="{{ url_for('me') }}" style="display:flex;gap:.5rem;margin-bottom:1.5rem">
+  <input type="hidden" name="tab" value="following">
+  <input type="search" name="q" placeholder="Search fediverse — e.g. alice@mastodon.social"
+         value="{{ request.args.get('q', '') }}"
+         style="flex:1;margin:0">
+  <button type="submit" style="white-space:nowrap">Find</button>
+</form>
+
+{% if search_error %}
+<p style="color:#ff7043"><small>{{ search_error }}</small></p>
+{% elif search_result %}
+{% set r = search_result %}
+{% set already = r.actor_url in following_urls %}
+<article style="display:flex;align-items:center;gap:1rem;padding:.75rem 1rem;margin-bottom:1.5rem">
+  {% if r.avatar_url %}
+  <img src="{{ r.avatar_url }}" alt="" style="width:48px;height:48px;border-radius:50%;object-fit:cover;flex-shrink:0">
+  {% else %}
+  <span style="width:48px;height:48px;border-radius:50%;background:#333;flex-shrink:0;display:inline-block"></span>
+  {% endif %}
+  <div style="flex:1;min-width:0">
+    <strong>{{ r.display_name }}</strong><br>
+    <small class="muted"><a href="{{ r.actor_url }}" target="_blank" rel="noopener">{{ r.handle }}</a></small>
+  </div>
+  <form method="post" action="{{ url_for('ap_follow') }}" style="margin:0">
+    <input type="hidden" name="actor_url" value="{{ r.actor_url }}">
+    <button type="submit" class="outline"
+            style="{% if already %}opacity:.4;cursor:default{% endif %}"
+            {% if already %}disabled{% endif %}>
+      {% if already %}Following{% else %}Follow{% endif %}
+    </button>
+  </form>
+</article>
+{% endif %}
+
 <h3>Following <small class="muted">({{ following|length }})</small></h3>
 
 {% if following %}

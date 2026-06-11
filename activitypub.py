@@ -272,6 +272,46 @@ def _handle_undo_follow(local_username, activity, db_path):
         remove_follower(db_path, local_username, actor_url)
 
 
+def webfinger_lookup(handle: str) -> dict | None:
+    """
+    Resolve a fediverse handle (e.g. alice@mastodon.social or @alice@mastodon.social)
+    to an actor document dict, or return None on any failure.
+    """
+    handle = handle.strip().lstrip("@")
+    if "@" not in handle:
+        return None
+    username, domain = handle.rsplit("@", 1)
+    try:
+        wf = requests.get(
+            f"https://{domain}/.well-known/webfinger",
+            params={"resource": f"acct:{username}@{domain}"},
+            headers={"Accept": _JRD_MIME},
+            timeout=10,
+        )
+        if not wf.ok:
+            return None
+        actor_url = next(
+            (l["href"] for l in wf.json().get("links", []) if l.get("rel") == "self"),
+            None,
+        )
+        if not actor_url:
+            return None
+        ar = requests.get(actor_url, headers={"Accept": _AP_MIME}, timeout=10)
+        if not ar.ok:
+            return None
+        doc = ar.json()
+        icon = doc.get("icon", {})
+        return {
+            "actor_url":    actor_url,
+            "display_name": doc.get("name") or doc.get("preferredUsername"),
+            "handle":       f"@{doc.get('preferredUsername', username)}@{domain}",
+            "avatar_url":   icon.get("url") if isinstance(icon, dict) else None,
+        }
+    except Exception as exc:
+        _log.warning("WebFinger lookup failed for %s: %s", handle, exc)
+        return None
+
+
 def send_follow(local_username, local_user, remote_actor_url, db_path):
     """Send a Follow activity to a remote actor and record it as pending."""
     try:

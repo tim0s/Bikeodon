@@ -1029,6 +1029,17 @@ def me():
     following = get_following(DB_PATH, current_user.username)
     following_urls = {f["actor_url"] for f in following}
 
+    # Fediverse search on the Following tab
+    search_result = None
+    search_error  = None
+    if tab == "following":
+        from activitypub import webfinger_lookup
+        q = request.args.get("q", "").strip()
+        if q:
+            search_result = webfinger_lookup(q)
+            if search_result is None:
+                search_error = f"Could not find \"{q}\" — check the handle and try again."
+
     return render_template(
         "me.html",
         username=current_user.username,
@@ -1055,6 +1066,8 @@ def me():
         followers=followers,
         following=following,
         following_urls=following_urls,
+        search_result=search_result,
+        search_error=search_error,
     )
 
 
