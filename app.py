@@ -162,7 +162,11 @@ def login():
             flash("Invalid username or password.", "error")
             return render_template("login.html")
         login_user(User(row["id"], row["username"]))
-        return redirect(request.args.get("next") or url_for("index"))
+        from urllib.parse import urlparse
+        next_url = request.args.get("next") or ""
+        if not next_url or urlparse(next_url).netloc:
+            next_url = url_for("index")
+        return redirect(next_url)
     return render_template("login.html")
 
 

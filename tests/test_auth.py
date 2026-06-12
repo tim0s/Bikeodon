@@ -46,6 +46,39 @@ def _register(client, username, password="secret123"):
     }, follow_redirects=True)
 
 
+def _login(client, username, password="secret123"):
+    return client.post("/login", data={
+        "username": username, "password": password,
+    }, follow_redirects=False)
+
+
+class TestOpenRedirect:
+
+    def test_safe_local_next_is_honoured(self, client):
+        _register(client, "redirect_user1")
+        r = _login(client, "redirect_user1")
+        # default redirect after login goes somewhere local
+        assert r.status_code in (301, 302)
+        location = r.headers["Location"]
+        assert "evil.com" not in location
+
+    def test_external_next_is_ignored(self, client):
+        _register(client, "redirect_user2")
+        r = client.post("/login?next=https://evil.com/steal",
+                        data={"username": "redirect_user2", "password": "secret123"},
+                        follow_redirects=False)
+        assert r.status_code in (301, 302)
+        assert "evil.com" not in r.headers["Location"]
+
+    def test_protocol_relative_next_is_ignored(self, client):
+        _register(client, "redirect_user3")
+        r = client.post("/login?next=//evil.com/steal",
+                        data={"username": "redirect_user3", "password": "secret123"},
+                        follow_redirects=False)
+        assert r.status_code in (301, 302)
+        assert "evil.com" not in r.headers["Location"]
+
+
 class TestUsernameValidation:
 
     def test_valid_username_accepted(self, client):
