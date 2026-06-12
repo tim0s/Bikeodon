@@ -8,6 +8,7 @@ Run:  flask --app app run
 import json
 import logging
 import os
+import re
 import threading
 
 from dotenv import load_dotenv
@@ -126,6 +127,13 @@ def register():
         invite_code = request.form.get("invite_code", "").strip()
         if not username or not password:
             flash("Username and password are required.", "error")
+            return render_template("register.html")
+        if not re.match(r'^[A-Za-z0-9_.-]{1,30}$', username):
+            flash(
+                "Username may only contain letters, numbers, underscores, hyphens, and dots, "
+                "and must be 30 characters or fewer.",
+                "error",
+            )
             return render_template("register.html")
         required_code = get_site_setting(DB_PATH, "invite_code")
         if required_code and invite_code != required_code:
