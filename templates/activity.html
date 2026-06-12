@@ -60,28 +60,26 @@
     <span class="stat-value">{{ activity.moving_time }}</span>
   </div>
   {% endif %}
-  {% if activity.avg_speed %}
+  {% if activity.avg_speed or activity.max_speed %}
   <div class="stat-chip">
-    <span class="stat-label">Avg speed</span>
-    <span class="stat-value">{{ activity.avg_speed }}</span>
+    <span class="stat-label">Speed</span>
+    {% if activity.avg_speed %}<span class="stat-value">Avg {{ activity.avg_speed }} km/h</span>{% endif %}
+    {% if activity.max_speed %}<span class="stat-value">Max {{ activity.max_speed }} km/h</span>{% endif %}
   </div>
   {% endif %}
-  {% if activity.avg_hr %}
+  {% if activity.avg_hr or activity.max_hr %}
   <div class="stat-chip">
-    <span class="stat-label">Avg HR</span>
-    <span class="stat-value">{{ activity.avg_hr }} bpm</span>
+    <span class="stat-label">Heart rate</span>
+    {% if activity.avg_hr %}<span class="stat-value">Avg {{ activity.avg_hr }} bpm</span>{% endif %}
+    {% if activity.max_hr %}<span class="stat-value">Max {{ activity.max_hr }} bpm</span>{% endif %}
   </div>
   {% endif %}
-  {% if activity.avg_watts %}
-  <div class="stat-chip">
-    <span class="stat-label">Avg power</span>
-    <span class="stat-value">{{ activity.avg_watts }} W</span>
-  </div>
-  {% endif %}
-  {% if activity.np_watts %}
-  <div class="stat-chip" title="Normalized Power — power-weighted average that accounts for variability">
-    <span class="stat-label">NP</span>
-    <span class="stat-value">{{ activity.np_watts }} W</span>
+  {% if activity.avg_watts or activity.max_watts or activity.np_watts %}
+  <div class="stat-chip" title="{% if activity.np_watts %}NP = Normalized Power — power-weighted average that accounts for variability{% endif %}">
+    <span class="stat-label">Power</span>
+    {% if activity.avg_watts %}<span class="stat-value">Avg {{ activity.avg_watts }} W</span>{% endif %}
+    {% if activity.max_watts %}<span class="stat-value">Max {{ activity.max_watts }} W</span>{% endif %}
+    {% if activity.np_watts %}<span class="stat-value">NP {{ activity.np_watts }} W</span>{% endif %}
   </div>
   {% endif %}
   {% if activity.tss is not none %}

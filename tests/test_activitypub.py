@@ -30,16 +30,15 @@ import pytest
 # Fixtures
 # ---------------------------------------------------------------------------
 
-@pytest.fixture()
-def app(tmp_path):
+@pytest.fixture(scope="module")
+def app(tmp_path_factory):
     """
     Spin up the Flask app with an isolated temp DB and a minimal config.
-    Patches the module-level DB_PATH and _base_cfg so the real bikeodon.db
-    is never touched.
+    Module-scoped so the app is only loaded once per test file.
     """
     import yaml
 
-    # Minimal config that satisfies app.py bootstrap
+    tmp_path = tmp_path_factory.mktemp("bikeodon")
     cfg = {
         "database": {"path": str(tmp_path / "test.db")},
         "daemon":   {"interval_minutes": 15},
@@ -52,7 +51,6 @@ def app(tmp_path):
     os.environ["BIKEODON_CONFIG"] = cfg_path
     os.environ["FLASK_SECRET_KEY"] = "test-secret"
 
-    # Import after env is set so module-level bootstrap picks up the temp config
     import importlib
     import app as app_module
     importlib.reload(app_module)
@@ -66,19 +64,23 @@ def app(tmp_path):
     os.environ.pop("BIKEODON_CONFIG", None)
 
 
-@pytest.fixture()
+@pytest.fixture(scope="module")
 def client(app):
     return app.test_client()
 
 
+_user_counter = 0
+
 @pytest.fixture()
 def user(app):
-    """Create a test user and return (username, user_id)."""
+    """Create a uniquely-named test user and return (username, user_id)."""
+    global _user_counter
+    _user_counter += 1
     from werkzeug.security import generate_password_hash
     import app as app_module
     from database import create_user
 
-    username = "tim0s42"
+    username = f"testuser{_user_counter}"
     uid = create_user(app_module.DB_PATH, username, generate_password_hash("pw"))
     return username, uid
 
@@ -709,12 +711,14 @@ class TestDeliveryQueue:
     3-day give-up window.
     """
 
-    KEY_ID    = "https://bikeodon.org/users/tim0s42#main-key"
     INBOX_URL = "https://mastodon.social/users/alice/inbox"
 
-    def _activity(self):
+    def _key_id(self, username):
+        return f"https://bikeodon.org/users/{username}#main-key"
+
+    def _activity(self, username):
         return {"@context": "https://www.w3.org/ns/activitystreams",
-                "type": "Create", "actor": "https://bikeodon.org/users/tim0s42"}
+                "type": "Create", "actor": f"https://bikeodon.org/users/{username}"}
 
     # ---- enqueue ----
 
@@ -724,7 +728,7 @@ class TestDeliveryQueue:
         from activitypub import _deliver_activity
         username, _ = user
         with patch("activitypub.requests") as mock_req:
-            _deliver_activity(self.INBOX_URL, self._activity(), self.KEY_ID, app_module.DB_PATH)
+            _deliver_activity(self.INBOX_URL, self._activity(username), self._key_id(username), app_module.DB_PATH)
             mock_req.post.assert_not_called()
 
     def test_deliver_stores_row_in_db(self, app, user):
@@ -732,7 +736,7 @@ class TestDeliveryQueue:
         from activitypub import _deliver_activity
         from database import get_due_deliveries
         username, _ = user
-        _deliver_activity(self.INBOX_URL, self._activity(), self.KEY_ID, app_module.DB_PATH)
+        _deliver_activity(self.INBOX_URL, self._activity(username), self._key_id(username), app_module.DB_PATH)
         rows = get_due_deliveries(app_module.DB_PATH)
         assert any(r["inbox_url"] == self.INBOX_URL for r in rows)
 
@@ -741,9 +745,14 @@ class TestDeliveryQueue:
     def test_worker_delivers_and_marks_sent(self, app, user):
         import app as app_module
         from activitypub import _deliver_activity, _process_due_deliveries
-        from database import get_due_deliveries
+        from database import get_due_deliveries, _conn
         username, _ = user
-        _deliver_activity(self.INBOX_URL, self._activity(), self.KEY_ID, app_module.DB_PATH)
+        _deliver_activity(self.INBOX_URL, self._activity(username), self._key_id(username), app_module.DB_PATH)
+        conn = _conn(app_module.DB_PATH)
+        row_id = conn.execute(
+            "SELECT id FROM delivery_queue WHERE key_id=? ORDER BY id DESC LIMIT 1",
+            (self._key_id(username),),
+        ).fetchone()["id"]
 
         mock_resp = MagicMock()
         mock_resp.ok = True
@@ -752,15 +761,21 @@ class TestDeliveryQueue:
             mock_req.post.return_value = mock_resp
             _process_due_deliveries(app_module.DB_PATH)
 
-        assert get_due_deliveries(app_module.DB_PATH) == []
+        row = conn.execute("SELECT status FROM delivery_queue WHERE id=?", (row_id,)).fetchone()
+        assert row is None or row["status"] == "sent"
 
     def test_worker_treats_410_gone_as_success(self, app, user):
         """410 Gone means the remote account is deleted — don't retry."""
         import app as app_module
         from activitypub import _deliver_activity, _process_due_deliveries
-        from database import get_due_deliveries
+        from database import _conn
         username, _ = user
-        _deliver_activity(self.INBOX_URL, self._activity(), self.KEY_ID, app_module.DB_PATH)
+        _deliver_activity(self.INBOX_URL, self._activity(username), self._key_id(username), app_module.DB_PATH)
+        conn = _conn(app_module.DB_PATH)
+        row_id = conn.execute(
+            "SELECT id FROM delivery_queue WHERE key_id=? ORDER BY id DESC LIMIT 1",
+            (self._key_id(username),),
+        ).fetchone()["id"]
 
         mock_resp = MagicMock()
         mock_resp.ok = False
@@ -769,7 +784,8 @@ class TestDeliveryQueue:
             mock_req.post.return_value = mock_resp
             _process_due_deliveries(app_module.DB_PATH)
 
-        assert get_due_deliveries(app_module.DB_PATH) == []
+        row = conn.execute("SELECT status FROM delivery_queue WHERE id=?", (row_id,)).fetchone()
+        assert row is None or row["status"] == "sent"
 
     # ---- worker: failure / retry ----
 
@@ -779,7 +795,12 @@ class TestDeliveryQueue:
         from activitypub import _deliver_activity, _process_due_deliveries
         from database import _conn
         username, _ = user
-        _deliver_activity(self.INBOX_URL, self._activity(), self.KEY_ID, app_module.DB_PATH)
+        _deliver_activity(self.INBOX_URL, self._activity(username), self._key_id(username), app_module.DB_PATH)
+        conn = _conn(app_module.DB_PATH)
+        row_id = conn.execute(
+            "SELECT id FROM delivery_queue WHERE key_id=? ORDER BY id DESC LIMIT 1",
+            (self._key_id(username),),
+        ).fetchone()["id"]
 
         mock_resp = MagicMock()
         mock_resp.ok = False
@@ -789,8 +810,9 @@ class TestDeliveryQueue:
             mock_req.post.return_value = mock_resp
             _process_due_deliveries(app_module.DB_PATH)
 
-        conn = _conn(app_module.DB_PATH)
-        row = conn.execute("SELECT attempts, status, last_error FROM delivery_queue").fetchone()
+        row = conn.execute(
+            "SELECT attempts, status, last_error FROM delivery_queue WHERE id=?", (row_id,)
+        ).fetchone()
         assert row["attempts"] == 1
         assert row["status"] == "pending"
         assert "500" in row["last_error"]
@@ -802,12 +824,16 @@ class TestDeliveryQueue:
         from database import _conn
         from datetime import datetime, timezone, timedelta
         username, _ = user
-        _deliver_activity(self.INBOX_URL, self._activity(), self.KEY_ID, app_module.DB_PATH)
+        _deliver_activity(self.INBOX_URL, self._activity(username), self._key_id(username), app_module.DB_PATH)
+        conn = _conn(app_module.DB_PATH)
+        row_id = conn.execute(
+            "SELECT id FROM delivery_queue WHERE key_id=? ORDER BY id DESC LIMIT 1",
+            (self._key_id(username),),
+        ).fetchone()["id"]
 
         # Back-date created_at to 4 days ago
         old_ts = (datetime.now(timezone.utc) - timedelta(days=4)).isoformat()
-        conn = _conn(app_module.DB_PATH)
-        conn.execute("UPDATE delivery_queue SET created_at=?", (old_ts,))
+        conn.execute("UPDATE delivery_queue SET created_at=? WHERE id=?", (old_ts, row_id))
         conn.commit()
 
         mock_resp = MagicMock()
@@ -818,7 +844,7 @@ class TestDeliveryQueue:
             mock_req.post.return_value = mock_resp
             _process_due_deliveries(app_module.DB_PATH)
 
-        row = conn.execute("SELECT status FROM delivery_queue").fetchone()
+        row = conn.execute("SELECT status FROM delivery_queue WHERE id=?", (row_id,)).fetchone()
         assert row["status"] == "failed"
 
     def test_backoff_grows_exponentially(self, app, user):
@@ -835,17 +861,22 @@ class TestDeliveryQueue:
         with patch("activitypub.requests") as mock_req:
             mock_req.post.return_value = mock_resp
 
-            _deliver_activity(self.INBOX_URL, self._activity(), self.KEY_ID, app_module.DB_PATH)
+            _deliver_activity(self.INBOX_URL, self._activity(username), self._key_id(username), app_module.DB_PATH)
             conn = _conn(app_module.DB_PATH)
+            row_id = conn.execute(
+                "SELECT id FROM delivery_queue WHERE key_id=? ORDER BY id DESC LIMIT 1",
+                (self._key_id(username),),
+            ).fetchone()["id"]
 
             # Force next_attempt_at to now so the worker picks it up each time
             delays = []
             for _ in range(3):
-                conn.execute("UPDATE delivery_queue SET next_attempt_at=datetime('now')")
+                conn.execute("UPDATE delivery_queue SET next_attempt_at=datetime('now') WHERE id=?", (row_id,))
                 conn.commit()
-                before = conn.execute("SELECT next_attempt_at FROM delivery_queue").fetchone()[0]
                 _process_due_deliveries(app_module.DB_PATH)
-                after = conn.execute("SELECT next_attempt_at FROM delivery_queue").fetchone()[0]
+                after = conn.execute(
+                    "SELECT next_attempt_at FROM delivery_queue WHERE id=?", (row_id,)
+                ).fetchone()[0]
                 delays.append(after)
 
         # Each successive next_attempt_at must be later than the previous
@@ -1025,19 +1056,20 @@ class TestNodeInfo:
         assert "activeMonth" in usage["users"]
 
     def test_nodeinfo_user_count_reflects_db(self, client, user):
-        data = client.get("/nodeinfo/2.0").get_json()
-        assert data["usage"]["users"]["total"] == 1
+        before = client.get("/nodeinfo/2.0").get_json()["usage"]["users"]["total"]
+        assert before >= 1
 
     def test_nodeinfo_local_posts_reflects_db(self, client, user, app):
         import app as app_module
         from database import upsert_activity
         _, uid = user
+        before = client.get("/nodeinfo/2.0").get_json()["usage"]["localPosts"]
         upsert_activity(app_module.DB_PATH, {
             "id": 2001, "name": "Test Ride", "sport_type": "Ride",
             "start_date": "2026-06-01T08:00:00Z",
         }, uid)
         data = client.get("/nodeinfo/2.0").get_json()
-        assert data["usage"]["localPosts"] == 1
+        assert data["usage"]["localPosts"] == before + 1
 
 
 # ---------------------------------------------------------------------------

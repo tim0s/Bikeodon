@@ -229,6 +229,7 @@ def init_db(db_path):
         ("metrics_computed_at",  "TEXT"),
         ("hr_tss",               "REAL"),
         ("breakthroughs_json",   "TEXT"),
+        ("average_speed",        "REAL"),
     ]:
         try:
             conn.execute(f"ALTER TABLE activities ADD COLUMN {col} {typedef}")
@@ -660,12 +661,13 @@ def upsert_activity(db_path, data: dict, user_id: int, source: str = "strava"):
     conn.execute("""
         INSERT OR REPLACE INTO activities
         (id, user_id, name, sport_type, start_date,
-         distance, moving_time, elapsed_time, total_elevation_gain, max_speed,
+         distance, moving_time, elapsed_time, total_elevation_gain,
+         average_speed, max_speed,
          average_heartrate, max_heartrate, average_watts, max_watts,
          start_lat, start_lon, points_json, fetched_at,
          strava_url, posted_at, mastodon_post_url, scheduled_for_post,
          map_rendered_at, charts_rendered_at, source)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """, (
         data["id"], user_id,
         data.get("name"),
@@ -675,6 +677,7 @@ def upsert_activity(db_path, data: dict, user_id: int, source: str = "strava"):
         data.get("moving_time"),
         data.get("elapsed_time"),
         data.get("total_elevation_gain"),
+        data.get("average_speed"),
         data.get("max_speed"),
         data.get("average_heartrate"),
         data.get("max_heartrate"),

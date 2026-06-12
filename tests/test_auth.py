@@ -7,8 +7,9 @@ import pytest
 import yaml
 
 
-@pytest.fixture()
-def app(tmp_path):
+@pytest.fixture(scope="module")
+def app(tmp_path_factory):
+    tmp_path = tmp_path_factory.mktemp("bikeodon_auth")
     cfg = {
         "database": {"path": str(tmp_path / "test.db")},
         "daemon":   {"interval_minutes": 15},
