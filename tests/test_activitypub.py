@@ -285,9 +285,12 @@ class TestActorProfile:
     def _set_profile(self, db_path, user_id, **kwargs):
         from database import _conn
         conn = _conn(db_path)
-        sets = ", ".join(f"{k}=?" for k in kwargs)
-        conn.execute(f"UPDATE users SET {sets} WHERE id=?", (*kwargs.values(), user_id))
-        conn.commit()
+        try:
+            sets = ", ".join(f"{k}=?" for k in kwargs)
+            conn.execute(f"UPDATE users SET {sets} WHERE id=?", (*kwargs.values(), user_id))
+            conn.commit()
+        finally:
+            conn.close()
 
     def test_actor_has_icon_always(self, client, user):
         """icon is always present — falls back to the default avatar."""
@@ -334,6 +337,7 @@ class TestActorProfile:
         r = client.get(f"/users/{username}/avatar")
         assert r.status_code == 200
         assert r.content_type.startswith("image/")
+        r.close()
 
 
 # ---------------------------------------------------------------------------
@@ -749,20 +753,23 @@ class TestDeliveryQueue:
         username, _ = user
         _deliver_activity(self.INBOX_URL, self._activity(username), self._key_id(username), app_module.DB_PATH)
         conn = _conn(app_module.DB_PATH)
-        row_id = conn.execute(
-            "SELECT id FROM delivery_queue WHERE key_id=? ORDER BY id DESC LIMIT 1",
-            (self._key_id(username),),
-        ).fetchone()["id"]
+        try:
+            row_id = conn.execute(
+                "SELECT id FROM delivery_queue WHERE key_id=? ORDER BY id DESC LIMIT 1",
+                (self._key_id(username),),
+            ).fetchone()["id"]
 
-        mock_resp = MagicMock()
-        mock_resp.ok = True
-        mock_resp.status_code = 202
-        with patch("activitypub.requests") as mock_req:
-            mock_req.post.return_value = mock_resp
-            _process_due_deliveries(app_module.DB_PATH)
+            mock_resp = MagicMock()
+            mock_resp.ok = True
+            mock_resp.status_code = 202
+            with patch("activitypub.requests") as mock_req:
+                mock_req.post.return_value = mock_resp
+                _process_due_deliveries(app_module.DB_PATH)
 
-        row = conn.execute("SELECT status FROM delivery_queue WHERE id=?", (row_id,)).fetchone()
-        assert row is None or row["status"] == "sent"
+            row = conn.execute("SELECT status FROM delivery_queue WHERE id=?", (row_id,)).fetchone()
+            assert row is None or row["status"] == "sent"
+        finally:
+            conn.close()
 
     def test_worker_treats_410_gone_as_success(self, app, user):
         """410 Gone means the remote account is deleted — don't retry."""
@@ -772,20 +779,23 @@ class TestDeliveryQueue:
         username, _ = user
         _deliver_activity(self.INBOX_URL, self._activity(username), self._key_id(username), app_module.DB_PATH)
         conn = _conn(app_module.DB_PATH)
-        row_id = conn.execute(
-            "SELECT id FROM delivery_queue WHERE key_id=? ORDER BY id DESC LIMIT 1",
-            (self._key_id(username),),
-        ).fetchone()["id"]
+        try:
+            row_id = conn.execute(
+                "SELECT id FROM delivery_queue WHERE key_id=? ORDER BY id DESC LIMIT 1",
+                (self._key_id(username),),
+            ).fetchone()["id"]
 
-        mock_resp = MagicMock()
-        mock_resp.ok = False
-        mock_resp.status_code = 410
-        with patch("activitypub.requests") as mock_req:
-            mock_req.post.return_value = mock_resp
-            _process_due_deliveries(app_module.DB_PATH)
+            mock_resp = MagicMock()
+            mock_resp.ok = False
+            mock_resp.status_code = 410
+            with patch("activitypub.requests") as mock_req:
+                mock_req.post.return_value = mock_resp
+                _process_due_deliveries(app_module.DB_PATH)
 
-        row = conn.execute("SELECT status FROM delivery_queue WHERE id=?", (row_id,)).fetchone()
-        assert row is None or row["status"] == "sent"
+            row = conn.execute("SELECT status FROM delivery_queue WHERE id=?", (row_id,)).fetchone()
+            assert row is None or row["status"] == "sent"
+        finally:
+            conn.close()
 
     # ---- worker: failure / retry ----
 
@@ -797,25 +807,28 @@ class TestDeliveryQueue:
         username, _ = user
         _deliver_activity(self.INBOX_URL, self._activity(username), self._key_id(username), app_module.DB_PATH)
         conn = _conn(app_module.DB_PATH)
-        row_id = conn.execute(
-            "SELECT id FROM delivery_queue WHERE key_id=? ORDER BY id DESC LIMIT 1",
-            (self._key_id(username),),
-        ).fetchone()["id"]
+        try:
+            row_id = conn.execute(
+                "SELECT id FROM delivery_queue WHERE key_id=? ORDER BY id DESC LIMIT 1",
+                (self._key_id(username),),
+            ).fetchone()["id"]
 
-        mock_resp = MagicMock()
-        mock_resp.ok = False
-        mock_resp.status_code = 500
-        mock_resp.text = "server error"
-        with patch("activitypub.requests") as mock_req:
-            mock_req.post.return_value = mock_resp
-            _process_due_deliveries(app_module.DB_PATH)
+            mock_resp = MagicMock()
+            mock_resp.ok = False
+            mock_resp.status_code = 500
+            mock_resp.text = "server error"
+            with patch("activitypub.requests") as mock_req:
+                mock_req.post.return_value = mock_resp
+                _process_due_deliveries(app_module.DB_PATH)
 
-        row = conn.execute(
-            "SELECT attempts, status, last_error FROM delivery_queue WHERE id=?", (row_id,)
-        ).fetchone()
-        assert row["attempts"] == 1
-        assert row["status"] == "pending"
-        assert "500" in row["last_error"]
+            row = conn.execute(
+                "SELECT attempts, status, last_error FROM delivery_queue WHERE id=?", (row_id,)
+            ).fetchone()
+            assert row["attempts"] == 1
+            assert row["status"] == "pending"
+            assert "500" in row["last_error"]
+        finally:
+            conn.close()
 
     def test_worker_gives_up_after_3_days(self, app, user):
         """A delivery that is > 3 days old must be marked failed, not retried."""
@@ -826,26 +839,29 @@ class TestDeliveryQueue:
         username, _ = user
         _deliver_activity(self.INBOX_URL, self._activity(username), self._key_id(username), app_module.DB_PATH)
         conn = _conn(app_module.DB_PATH)
-        row_id = conn.execute(
-            "SELECT id FROM delivery_queue WHERE key_id=? ORDER BY id DESC LIMIT 1",
-            (self._key_id(username),),
-        ).fetchone()["id"]
+        try:
+            row_id = conn.execute(
+                "SELECT id FROM delivery_queue WHERE key_id=? ORDER BY id DESC LIMIT 1",
+                (self._key_id(username),),
+            ).fetchone()["id"]
 
-        # Back-date created_at to 4 days ago
-        old_ts = (datetime.now(timezone.utc) - timedelta(days=4)).isoformat()
-        conn.execute("UPDATE delivery_queue SET created_at=? WHERE id=?", (old_ts, row_id))
-        conn.commit()
+            # Back-date created_at to 4 days ago
+            old_ts = (datetime.now(timezone.utc) - timedelta(days=4)).isoformat()
+            conn.execute("UPDATE delivery_queue SET created_at=? WHERE id=?", (old_ts, row_id))
+            conn.commit()
 
-        mock_resp = MagicMock()
-        mock_resp.ok = False
-        mock_resp.status_code = 503
-        mock_resp.text = "unavailable"
-        with patch("activitypub.requests") as mock_req:
-            mock_req.post.return_value = mock_resp
-            _process_due_deliveries(app_module.DB_PATH)
+            mock_resp = MagicMock()
+            mock_resp.ok = False
+            mock_resp.status_code = 503
+            mock_resp.text = "unavailable"
+            with patch("activitypub.requests") as mock_req:
+                mock_req.post.return_value = mock_resp
+                _process_due_deliveries(app_module.DB_PATH)
 
-        row = conn.execute("SELECT status FROM delivery_queue WHERE id=?", (row_id,)).fetchone()
-        assert row["status"] == "failed"
+            row = conn.execute("SELECT status FROM delivery_queue WHERE id=?", (row_id,)).fetchone()
+            assert row["status"] == "failed"
+        finally:
+            conn.close()
 
     def test_backoff_grows_exponentially(self, app, user):
         """Each failure must push next_attempt_at further into the future."""
@@ -858,26 +874,29 @@ class TestDeliveryQueue:
         mock_resp.ok = False
         mock_resp.status_code = 503
         mock_resp.text = "unavailable"
-        with patch("activitypub.requests") as mock_req:
-            mock_req.post.return_value = mock_resp
+        conn = _conn(app_module.DB_PATH)
+        try:
+            with patch("activitypub.requests") as mock_req:
+                mock_req.post.return_value = mock_resp
 
-            _deliver_activity(self.INBOX_URL, self._activity(username), self._key_id(username), app_module.DB_PATH)
-            conn = _conn(app_module.DB_PATH)
-            row_id = conn.execute(
-                "SELECT id FROM delivery_queue WHERE key_id=? ORDER BY id DESC LIMIT 1",
-                (self._key_id(username),),
-            ).fetchone()["id"]
+                _deliver_activity(self.INBOX_URL, self._activity(username), self._key_id(username), app_module.DB_PATH)
+                row_id = conn.execute(
+                    "SELECT id FROM delivery_queue WHERE key_id=? ORDER BY id DESC LIMIT 1",
+                    (self._key_id(username),),
+                ).fetchone()["id"]
 
-            # Force next_attempt_at to now so the worker picks it up each time
-            delays = []
-            for _ in range(3):
-                conn.execute("UPDATE delivery_queue SET next_attempt_at=datetime('now') WHERE id=?", (row_id,))
-                conn.commit()
-                _process_due_deliveries(app_module.DB_PATH)
-                after = conn.execute(
-                    "SELECT next_attempt_at FROM delivery_queue WHERE id=?", (row_id,)
-                ).fetchone()[0]
-                delays.append(after)
+                # Force next_attempt_at to now so the worker picks it up each time
+                delays = []
+                for _ in range(3):
+                    conn.execute("UPDATE delivery_queue SET next_attempt_at=datetime('now') WHERE id=?", (row_id,))
+                    conn.commit()
+                    _process_due_deliveries(app_module.DB_PATH)
+                    after = conn.execute(
+                        "SELECT next_attempt_at FROM delivery_queue WHERE id=?", (row_id,)
+                    ).fetchone()[0]
+                    delays.append(after)
+        finally:
+            conn.close()
 
         # Each successive next_attempt_at must be later than the previous
         assert delays[0] < delays[1] < delays[2]

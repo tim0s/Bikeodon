@@ -322,17 +322,18 @@ def init_db(db_path):
 
     conn.commit()
 
-    # Seed default user if none exists
-    if not conn.execute("SELECT 1 FROM users").fetchone():
-        conn.execute(
-            "INSERT INTO users (created_at) VALUES (?)",
-            (datetime.now(timezone.utc).isoformat(),),
-        )
-        conn.commit()
-        _seed_defaults(conn, user_id=1)
-        conn.commit()
-
-    conn.close()
+    try:
+        # Seed default user if none exists
+        if not conn.execute("SELECT 1 FROM users").fetchone():
+            conn.execute(
+                "INSERT INTO users (created_at) VALUES (?)",
+                (datetime.now(timezone.utc).isoformat(),),
+            )
+            conn.commit()
+            _seed_defaults(conn, user_id=1)
+            conn.commit()
+    finally:
+        conn.close()
 
 
 def seed_user_defaults(conn, user_id: int):
@@ -365,61 +366,73 @@ def _seed_defaults(conn, user_id: int):
 
 def get_setting(db_path, user_id: int, area: str, key: str) -> str | None:
     conn = _conn(db_path)
-    row = conn.execute(
-        "SELECT value FROM settings WHERE user_id=? AND area=? AND key=?",
-        (user_id, area, key),
-    ).fetchone()
-    conn.close()
+    try:
+        row = conn.execute(
+            "SELECT value FROM settings WHERE user_id=? AND area=? AND key=?",
+            (user_id, area, key),
+        ).fetchone()
+    finally:
+        conn.close()
     return row["value"] if row else None
 
 
 def set_setting(db_path, user_id: int, area: str, key: str, value: str):
     conn = _conn(db_path)
-    conn.execute(
-        "INSERT INTO settings (user_id, area, key, value) VALUES (?,?,?,?)"
-        " ON CONFLICT(user_id, area, key) DO UPDATE SET value=excluded.value",
-        (user_id, area, key, value),
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute(
+            "INSERT INTO settings (user_id, area, key, value) VALUES (?,?,?,?)"
+            " ON CONFLICT(user_id, area, key) DO UPDATE SET value=excluded.value",
+            (user_id, area, key, value),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def list_settings(db_path, user_id: int) -> list[sqlite3.Row]:
     conn = _conn(db_path)
-    rows = conn.execute(
-        "SELECT area, key, value FROM settings WHERE user_id=? ORDER BY area, key",
-        (user_id,),
-    ).fetchall()
-    conn.close()
+    try:
+        rows = conn.execute(
+            "SELECT area, key, value FROM settings WHERE user_id=? ORDER BY area, key",
+            (user_id,),
+        ).fetchall()
+    finally:
+        conn.close()
     return rows
 
 
 def get_site_setting(db_path, key: str) -> str | None:
     conn = _conn(db_path)
-    row = conn.execute("SELECT value FROM site_settings WHERE key=?", (key,)).fetchone()
-    conn.close()
+    try:
+        row = conn.execute("SELECT value FROM site_settings WHERE key=?", (key,)).fetchone()
+    finally:
+        conn.close()
     return row["value"] if row else None
 
 
 def set_site_setting(db_path, key: str, value: str):
     conn = _conn(db_path)
-    conn.execute(
-        "INSERT INTO site_settings (key, value) VALUES (?,?)"
-        " ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-        (key, value),
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute(
+            "INSERT INTO site_settings (key, value) VALUES (?,?)"
+            " ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, value),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def get_zones(db_path, user_id: int, zone_type: str) -> list[dict]:
     conn = _conn(db_path)
-    rows = conn.execute(
-        "SELECT name, max_pct, color FROM zones"
-        " WHERE user_id=? AND type=? ORDER BY zone_index",
-        (user_id, zone_type),
-    ).fetchall()
-    conn.close()
+    try:
+        rows = conn.execute(
+            "SELECT name, max_pct, color FROM zones"
+            " WHERE user_id=? AND type=? ORDER BY zone_index",
+            (user_id, zone_type),
+        ).fetchall()
+    finally:
+        conn.close()
     return [{"name": r["name"], "max_pct": r["max_pct"], "color": r["color"]} for r in rows]
 
 
@@ -429,14 +442,16 @@ def apply_zone_preset(db_path, user_id: int, zone_type: str, preset_key: str):
     if not rows:
         raise ValueError(f"Unknown preset {preset_key!r} for zone_type {zone_type!r}")
     conn = _conn(db_path)
-    conn.execute("DELETE FROM zones WHERE user_id=? AND type=?", (user_id, zone_type))
-    for idx, name, max_pct, color in rows:
-        conn.execute(
-            "INSERT INTO zones (user_id, type, zone_index, name, max_pct, color) VALUES (?,?,?,?,?,?)",
-            (user_id, zone_type, idx, name, float(max_pct), color),
-        )
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute("DELETE FROM zones WHERE user_id=? AND type=?", (user_id, zone_type))
+        for idx, name, max_pct, color in rows:
+            conn.execute(
+                "INSERT INTO zones (user_id, type, zone_index, name, max_pct, color) VALUES (?,?,?,?,?,?)",
+                (user_id, zone_type, idx, name, float(max_pct), color),
+            )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 # ---------------------------------------------------------------------------
@@ -450,18 +465,20 @@ def load_user_config(db_path: str, user_id: int, base_cfg: dict) -> dict:
     server-level paths: output_dir, tiles.cache_dir, daemon).
     """
     conn = _conn(db_path)
-    rows = conn.execute(
-        "SELECT area, key, value FROM settings WHERE user_id=?", (user_id,)
-    ).fetchall()
-    hr_zones    = conn.execute(
-        "SELECT name, max_pct, color FROM zones WHERE user_id=? AND type='hr' ORDER BY zone_index",
-        (user_id,),
-    ).fetchall()
-    power_zones = conn.execute(
-        "SELECT name, max_pct, color FROM zones WHERE user_id=? AND type='power' ORDER BY zone_index",
-        (user_id,),
-    ).fetchall()
-    conn.close()
+    try:
+        rows = conn.execute(
+            "SELECT area, key, value FROM settings WHERE user_id=?", (user_id,)
+        ).fetchall()
+        hr_zones    = conn.execute(
+            "SELECT name, max_pct, color FROM zones WHERE user_id=? AND type='hr' ORDER BY zone_index",
+            (user_id,),
+        ).fetchall()
+        power_zones = conn.execute(
+            "SELECT name, max_pct, color FROM zones WHERE user_id=? AND type='power' ORDER BY zone_index",
+            (user_id,),
+        ).fetchall()
+    finally:
+        conn.close()
 
     s = {(r["area"], r["key"]): r["value"] for r in rows}
 
@@ -607,12 +624,14 @@ def mark_rendered(db_path, activity_id: int, user_id: int, map: bool = False, ch
     if not fields:
         return
     conn = _conn(db_path)
-    conn.execute(
-        f"UPDATE activities SET {', '.join(fields)} WHERE id=? AND user_id=?",
-        (activity_id, user_id),
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute(
+            f"UPDATE activities SET {', '.join(fields)} WHERE id=? AND user_id=?",
+            (activity_id, user_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def clear_rendered(db_path, activity_id: int, user_id: int, map: bool = True, charts: bool = True):
@@ -624,116 +643,128 @@ def clear_rendered(db_path, activity_id: int, user_id: int, map: bool = True, ch
     if not fields:
         return
     conn = _conn(db_path)
-    conn.execute(
-        f"UPDATE activities SET {', '.join(fields)} WHERE id=? AND user_id=?",
-        (activity_id, user_id),
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute(
+            f"UPDATE activities SET {', '.join(fields)} WHERE id=? AND user_id=?",
+            (activity_id, user_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def get_unrendered(db_path, user_id: int) -> list:
     conn = _conn(db_path)
-    rows = conn.execute(
-        "SELECT * FROM activities WHERE user_id=?"
-        " AND (map_rendered_at IS NULL OR charts_rendered_at IS NULL)"
-        " ORDER BY start_date DESC",
-        (user_id,),
-    ).fetchall()
-    conn.close()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM activities WHERE user_id=?"
+            " AND (map_rendered_at IS NULL OR charts_rendered_at IS NULL)"
+            " ORDER BY start_date DESC",
+            (user_id,),
+        ).fetchall()
+    finally:
+        conn.close()
     return rows
 
 
 def upsert_activity(db_path, data: dict, user_id: int, source: str = "strava"):
     conn = _conn(db_path)
-    existing = conn.execute(
-        "SELECT posted_at, mastodon_post_url, scheduled_for_post,"
-        " map_rendered_at, charts_rendered_at"
-        " FROM activities WHERE id=? AND user_id=?",
-        (data["id"], user_id),
-    ).fetchone()
-    posted_at          = existing["posted_at"]          if existing else None
-    mastodon_post_url  = existing["mastodon_post_url"]  if existing else None
-    scheduled_for_post = existing["scheduled_for_post"] if existing else 0
-    map_rendered_at    = existing["map_rendered_at"]    if existing else None
-    charts_rendered_at = existing["charts_rendered_at"] if existing else None
+    try:
+        existing = conn.execute(
+            "SELECT posted_at, mastodon_post_url, scheduled_for_post,"
+            " map_rendered_at, charts_rendered_at"
+            " FROM activities WHERE id=? AND user_id=?",
+            (data["id"], user_id),
+        ).fetchone()
+        posted_at          = existing["posted_at"]          if existing else None
+        mastodon_post_url  = existing["mastodon_post_url"]  if existing else None
+        scheduled_for_post = existing["scheduled_for_post"] if existing else 0
+        map_rendered_at    = existing["map_rendered_at"]    if existing else None
+        charts_rendered_at = existing["charts_rendered_at"] if existing else None
 
-    conn.execute("""
-        INSERT OR REPLACE INTO activities
-        (id, user_id, name, sport_type, start_date,
-         distance, moving_time, elapsed_time, total_elevation_gain,
-         average_speed, max_speed,
-         average_heartrate, max_heartrate, average_watts, max_watts,
-         start_lat, start_lon, points_json, fetched_at,
-         strava_url, posted_at, mastodon_post_url, scheduled_for_post,
-         map_rendered_at, charts_rendered_at, source)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-    """, (
-        data["id"], user_id,
-        data.get("name"),
-        data.get("sport_type"),
-        data.get("start_date"),
-        data.get("distance"),
-        data.get("moving_time"),
-        data.get("elapsed_time"),
-        data.get("total_elevation_gain"),
-        data.get("average_speed"),
-        data.get("max_speed"),
-        data.get("average_heartrate"),
-        data.get("max_heartrate"),
-        data.get("average_watts"),
-        data.get("max_watts"),
-        data.get("start_lat"),
-        data.get("start_lon"),
-        json.dumps(data.get("points") or []),
-        datetime.now(timezone.utc).isoformat(),
-        data.get("source_url"),
-        posted_at,
-        mastodon_post_url,
-        scheduled_for_post,
-        map_rendered_at,
-        charts_rendered_at,
-        source,
-    ))
-    conn.commit()
-    conn.close()
+        conn.execute("""
+            INSERT OR REPLACE INTO activities
+            (id, user_id, name, sport_type, start_date,
+             distance, moving_time, elapsed_time, total_elevation_gain,
+             average_speed, max_speed,
+             average_heartrate, max_heartrate, average_watts, max_watts,
+             start_lat, start_lon, points_json, fetched_at,
+             strava_url, posted_at, mastodon_post_url, scheduled_for_post,
+             map_rendered_at, charts_rendered_at, source)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """, (
+            data["id"], user_id,
+            data.get("name"),
+            data.get("sport_type"),
+            data.get("start_date"),
+            data.get("distance"),
+            data.get("moving_time"),
+            data.get("elapsed_time"),
+            data.get("total_elevation_gain"),
+            data.get("average_speed"),
+            data.get("max_speed"),
+            data.get("average_heartrate"),
+            data.get("max_heartrate"),
+            data.get("average_watts"),
+            data.get("max_watts"),
+            data.get("start_lat"),
+            data.get("start_lon"),
+            json.dumps(data.get("points") or []),
+            datetime.now(timezone.utc).isoformat(),
+            data.get("source_url"),
+            posted_at,
+            mastodon_post_url,
+            scheduled_for_post,
+            map_rendered_at,
+            charts_rendered_at,
+            source,
+        ))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def mark_posted(db_path, activity_id: int, mastodon_post_url: str, user_id: int):
     conn = _conn(db_path)
-    conn.execute(
-        "UPDATE activities SET posted_at=?, mastodon_post_url=?, scheduled_for_post=0, post_error=NULL"
-        " WHERE id=? AND user_id=?",
-        (datetime.now(timezone.utc).isoformat(), mastodon_post_url, activity_id, user_id),
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute(
+            "UPDATE activities SET posted_at=?, mastodon_post_url=?, scheduled_for_post=0, post_error=NULL"
+            " WHERE id=? AND user_id=?",
+            (datetime.now(timezone.utc).isoformat(), mastodon_post_url, activity_id, user_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def set_activity_error(db_path, activity_id: int, user_id: int, kind: str, error: str | None):
     """Set or clear render_error / post_error on an activity."""
     col = "render_error" if kind == "render" else "post_error"
     conn = _conn(db_path)
-    conn.execute(f"UPDATE activities SET {col}=? WHERE id=? AND user_id=?",
-                 (error, activity_id, user_id))
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute(f"UPDATE activities SET {col}=? WHERE id=? AND user_id=?",
+                     (error, activity_id, user_id))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def get_error_activities(db_path) -> dict:
     """Return activities with render or post errors, for the admin dashboard."""
     conn = _conn(db_path)
-    render_errors = conn.execute(
-        "SELECT a.id, a.name, a.user_id, u.username, a.render_error, a.start_date"
-        " FROM activities a JOIN users u ON u.id = a.user_id"
-        " WHERE a.render_error IS NOT NULL ORDER BY a.start_date DESC LIMIT 50"
-    ).fetchall()
-    post_errors = conn.execute(
-        "SELECT a.id, a.name, a.user_id, u.username, a.post_error, a.start_date"
-        " FROM activities a JOIN users u ON u.id = a.user_id"
-        " WHERE a.post_error IS NOT NULL ORDER BY a.start_date DESC LIMIT 50"
-    ).fetchall()
-    conn.close()
+    try:
+        render_errors = conn.execute(
+            "SELECT a.id, a.name, a.user_id, u.username, a.render_error, a.start_date"
+            " FROM activities a JOIN users u ON u.id = a.user_id"
+            " WHERE a.render_error IS NOT NULL ORDER BY a.start_date DESC LIMIT 50"
+        ).fetchall()
+        post_errors = conn.execute(
+            "SELECT a.id, a.name, a.user_id, u.username, a.post_error, a.start_date"
+            " FROM activities a JOIN users u ON u.id = a.user_id"
+            " WHERE a.post_error IS NOT NULL ORDER BY a.start_date DESC LIMIT 50"
+        ).fetchall()
+    finally:
+        conn.close()
     return {
         "render_errors": [dict(r) for r in render_errors],
         "post_errors":   [dict(r) for r in post_errors],
@@ -753,51 +784,61 @@ def list_activities(db_path, user_id: int, limit: int = 20, offset: int = 0,
     col = _SORT_COLS.get(sort, "start_date")
     dir_ = "ASC" if direction == "asc" else "DESC"
     conn = _conn(db_path)
-    rows = conn.execute(
-        f"SELECT * FROM activities WHERE user_id=? ORDER BY {col} {dir_} LIMIT ? OFFSET ?",
-        (user_id, limit, offset),
-    ).fetchall()
-    conn.close()
+    try:
+        rows = conn.execute(
+            f"SELECT * FROM activities WHERE user_id=? ORDER BY {col} {dir_} LIMIT ? OFFSET ?",
+            (user_id, limit, offset),
+        ).fetchall()
+    finally:
+        conn.close()
     return rows
 
 
 def count_activities(db_path, user_id: int) -> int:
     conn = _conn(db_path)
-    n = conn.execute(
-        "SELECT COUNT(*) FROM activities WHERE user_id=?", (user_id,)
-    ).fetchone()[0]
-    conn.close()
+    try:
+        n = conn.execute(
+            "SELECT COUNT(*) FROM activities WHERE user_id=?", (user_id,)
+        ).fetchone()[0]
+    finally:
+        conn.close()
     return n
 
 
 def get_activity(db_path, activity_id, user_id: int):
     conn = _conn(db_path)
-    row = conn.execute(
-        "SELECT * FROM activities WHERE id=? AND user_id=?", (activity_id, user_id)
-    ).fetchone()
-    conn.close()
+    try:
+        row = conn.execute(
+            "SELECT * FROM activities WHERE id=? AND user_id=?", (activity_id, user_id)
+        ).fetchone()
+    finally:
+        conn.close()
     return row
 
 
 def get_unposted(db_path, user_id: int) -> list:
     conn = _conn(db_path)
-    rows = conn.execute(
-        "SELECT * FROM activities WHERE user_id=? AND posted_at IS NULL"
-        " AND scheduled_for_post=1 ORDER BY start_date ASC",
-        (user_id,),
-    ).fetchall()
-    conn.close()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM activities WHERE user_id=? AND posted_at IS NULL"
+            " AND scheduled_for_post=1 ORDER BY start_date ASC",
+            (user_id,),
+        ).fetchall()
+    finally:
+        conn.close()
     return rows
 
 
 def set_scheduled(db_path, activity_id: int, user_id: int, value: bool):
     conn = _conn(db_path)
-    conn.execute(
-        "UPDATE activities SET scheduled_for_post=? WHERE id=? AND user_id=?",
-        (1 if value else 0, activity_id, user_id),
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute(
+            "UPDATE activities SET scheduled_for_post=? WHERE id=? AND user_id=?",
+            (1 if value else 0, activity_id, user_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def get_points(row) -> list[tuple[float, float]]:
@@ -810,54 +851,64 @@ def get_points(row) -> list[tuple[float, float]]:
 def get_all_users(db_path) -> list:
     """Return all users that have a Strava access token (i.e. are connected)."""
     conn = _conn(db_path)
-    rows = conn.execute("""
-        SELECT u.id, u.username
-        FROM users u
-        JOIN settings s ON s.user_id = u.id
-          AND s.area = 'strava' AND s.key = 'access_token'
-          AND s.value IS NOT NULL AND s.value != ''
-    """).fetchall()
-    conn.close()
+    try:
+        rows = conn.execute("""
+            SELECT u.id, u.username
+            FROM users u
+            JOIN settings s ON s.user_id = u.id
+              AND s.area = 'strava' AND s.key = 'access_token'
+              AND s.value IS NOT NULL AND s.value != ''
+        """).fetchall()
+    finally:
+        conn.close()
     return rows
 
 
 def get_latest_activity_date(db_path, user_id: int) -> str | None:
     """Return the start_date of the most recent activity for this user, or None."""
     conn = _conn(db_path)
-    row = conn.execute(
-        "SELECT start_date FROM activities WHERE user_id=? ORDER BY start_date DESC LIMIT 1",
-        (user_id,),
-    ).fetchone()
-    conn.close()
+    try:
+        row = conn.execute(
+            "SELECT start_date FROM activities WHERE user_id=? ORDER BY start_date DESC LIMIT 1",
+            (user_id,),
+        ).fetchone()
+    finally:
+        conn.close()
     return row["start_date"] if row else None
 
 
 def get_user_by_athlete_id(db_path, athlete_id: str):
     conn = _conn(db_path)
-    row = conn.execute("""
-        SELECT u.id, u.username FROM users u
-        JOIN settings s ON s.user_id = u.id
-          AND s.area = 'strava' AND s.key = 'athlete_id' AND s.value = ?
-    """, (str(athlete_id),)).fetchone()
-    conn.close()
+    try:
+        row = conn.execute("""
+            SELECT u.id, u.username FROM users u
+            JOIN settings s ON s.user_id = u.id
+              AND s.area = 'strava' AND s.key = 'athlete_id' AND s.value = ?
+        """, (str(athlete_id),)).fetchone()
+    finally:
+        conn.close()
     return row
 
 
 def get_user_by_username(db_path, username: str):
     conn = _conn(db_path)
-    row = conn.execute(
-        "SELECT * FROM users WHERE username=?", (username,)
-    ).fetchone()
-    conn.close()
+    try:
+        row = conn.execute(
+            "SELECT * FROM users WHERE username=?", (username,)
+        ).fetchone()
+    finally:
+        conn.close()
     return row
 
 
 def get_user_by_id(db_path, user_id: int):
     conn = _conn(db_path)
-    row = conn.execute(
-        "SELECT * FROM users WHERE id=?", (user_id,)
-    ).fetchone()
-    conn.close()
+    try:
+        row = conn.execute(
+            "SELECT * FROM users WHERE id=?", (user_id,)
+        ).fetchone()
+    finally:
+        conn.close()
     return row
 
 
@@ -868,51 +919,57 @@ def create_user(db_path, username: str, password_hash: str) -> int:
     Returns the user_id.
     """
     conn = _conn(db_path)
-    first = conn.execute("SELECT id, username FROM users WHERE id=1").fetchone()
-    if first and not first["username"]:
-        conn.execute(
-            "UPDATE users SET username=?, password_hash=? WHERE id=1",
-            (username, password_hash),
-        )
-        user_id = 1
-    else:
-        cur = conn.execute(
-            "INSERT INTO users (username, password_hash, created_at) VALUES (?,?,?)",
-            (username, password_hash, datetime.now(timezone.utc).isoformat()),
-        )
-        user_id = cur.lastrowid
-        _seed_defaults(conn, user_id)
-    conn.commit()
-    conn.close()
+    try:
+        first = conn.execute("SELECT id, username FROM users WHERE id=1").fetchone()
+        if first and not first["username"]:
+            conn.execute(
+                "UPDATE users SET username=?, password_hash=? WHERE id=1",
+                (username, password_hash),
+            )
+            user_id = 1
+        else:
+            cur = conn.execute(
+                "INSERT INTO users (username, password_hash, created_at) VALUES (?,?,?)",
+                (username, password_hash, datetime.now(timezone.utc).isoformat()),
+            )
+            user_id = cur.lastrowid
+            _seed_defaults(conn, user_id)
+        conn.commit()
+    finally:
+        conn.close()
     return user_id
 
 
 def log_daemon_run(db_path, started_at: str, finished_at: str,
                    duration_secs: float, activities_synced: int, error: str = None):
     conn = _conn(db_path)
-    conn.execute(
-        "INSERT INTO daemon_runs (started_at, finished_at, duration_secs, activities_synced, error)"
-        " VALUES (?,?,?,?,?)",
-        (started_at, finished_at, duration_secs, activities_synced, error),
-    )
-    # Keep only the last 100 runs
-    conn.execute(
-        "DELETE FROM daemon_runs WHERE id NOT IN"
-        " (SELECT id FROM daemon_runs ORDER BY id DESC LIMIT 100)"
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute(
+            "INSERT INTO daemon_runs (started_at, finished_at, duration_secs, activities_synced, error)"
+            " VALUES (?,?,?,?,?)",
+            (started_at, finished_at, duration_secs, activities_synced, error),
+        )
+        # Keep only the last 100 runs
+        conn.execute(
+            "DELETE FROM daemon_runs WHERE id NOT IN"
+            " (SELECT id FROM daemon_runs ORDER BY id DESC LIMIT 100)"
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def get_admin_stats(db_path) -> dict:
     conn = _conn(db_path)
-    user_count     = conn.execute("SELECT COUNT(*) FROM users WHERE username IS NOT NULL").fetchone()[0]
-    activity_count = conn.execute("SELECT COUNT(*) FROM activities").fetchone()[0]
-    recent_runs    = conn.execute(
-        "SELECT started_at, finished_at, duration_secs, activities_synced, error"
-        " FROM daemon_runs ORDER BY id DESC LIMIT 20"
-    ).fetchall()
-    conn.close()
+    try:
+        user_count     = conn.execute("SELECT COUNT(*) FROM users WHERE username IS NOT NULL").fetchone()[0]
+        activity_count = conn.execute("SELECT COUNT(*) FROM activities").fetchone()[0]
+        recent_runs    = conn.execute(
+            "SELECT started_at, finished_at, duration_secs, activities_synced, error"
+            " FROM daemon_runs ORDER BY id DESC LIMIT 20"
+        ).fetchall()
+    finally:
+        conn.close()
     interval_minutes = 15
     return {
         "user_count":      user_count,
@@ -924,35 +981,39 @@ def get_admin_stats(db_path) -> dict:
 
 def set_admin(db_path, username: str, is_admin: bool):
     conn = _conn(db_path)
-    conn.execute("UPDATE users SET is_admin=? WHERE username=?", (1 if is_admin else 0, username))
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute("UPDATE users SET is_admin=? WHERE username=?", (1 if is_admin else 0, username))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def get_user_stats(db_path, user_id: int) -> dict:
     conn = _conn(db_path)
-    from datetime import datetime, timezone
-    year = datetime.now(timezone.utc).year
+    try:
+        from datetime import datetime, timezone
+        year = datetime.now(timezone.utc).year
 
-    total = conn.execute(
-        "SELECT COUNT(*) AS n, SUM(distance) AS dist, SUM(total_elevation_gain) AS elev"
-        " FROM activities WHERE user_id=?", (user_id,)
-    ).fetchone()
+        total = conn.execute(
+            "SELECT COUNT(*) AS n, SUM(distance) AS dist, SUM(total_elevation_gain) AS elev"
+            " FROM activities WHERE user_id=?", (user_id,)
+        ).fetchone()
 
-    this_year = conn.execute(
-        "SELECT COUNT(*) AS n, SUM(distance) AS dist, SUM(total_elevation_gain) AS elev"
-        " FROM activities WHERE user_id=? AND start_date >= ?",
-        (user_id, f"{year}-01-01"),
-    ).fetchone()
+        this_year = conn.execute(
+            "SELECT COUNT(*) AS n, SUM(distance) AS dist, SUM(total_elevation_gain) AS elev"
+            " FROM activities WHERE user_id=? AND start_date >= ?",
+            (user_id, f"{year}-01-01"),
+        ).fetchone()
 
-    by_sport = conn.execute(
-        "SELECT sport_type, COUNT(*) AS n FROM activities"
-        " WHERE user_id=? AND sport_type IS NOT NULL"
-        " GROUP BY sport_type ORDER BY n DESC",
-        (user_id,),
-    ).fetchall()
+        by_sport = conn.execute(
+            "SELECT sport_type, COUNT(*) AS n FROM activities"
+            " WHERE user_id=? AND sport_type IS NOT NULL"
+            " GROUP BY sport_type ORDER BY n DESC",
+            (user_id,),
+        ).fetchall()
 
-    conn.close()
+    finally:
+        conn.close()
     return {
         "total_count":      total["n"] or 0,
         "total_distance":   (total["dist"] or 0) / 1000,
@@ -997,11 +1058,13 @@ def find_overlapping_activity(db_path, user_id: int, start_date_iso: str | None,
         return None
 
     conn = _conn(db_path)
-    rows = conn.execute(
-        "SELECT * FROM activities WHERE user_id=? AND start_date >= ? AND start_date <= ?",
-        (user_id, window_lo, window_hi),
-    ).fetchall()
-    conn.close()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM activities WHERE user_id=? AND start_date >= ? AND start_date <= ?",
+            (user_id, window_lo, window_hi),
+        ).fetchall()
+    finally:
+        conn.close()
 
     best       = None
     best_ratio = 0.0
@@ -1031,13 +1094,15 @@ def find_overlapping_activity(db_path, user_id: int, start_date_iso: str | None,
 def enrich_activity_stream(db_path, activity_id: int, user_id: int, points: list):
     """Replace points_json for an existing activity and clear charts_rendered_at."""
     conn = _conn(db_path)
-    conn.execute(
-        "UPDATE activities SET points_json=?, charts_rendered_at=NULL"
-        " WHERE id=? AND user_id=?",
-        (json.dumps(points), activity_id, user_id),
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute(
+            "UPDATE activities SET points_json=?, charts_rendered_at=NULL"
+            " WHERE id=? AND user_id=?",
+            (json.dumps(points), activity_id, user_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def update_activity_metrics(
@@ -1051,23 +1116,25 @@ def update_activity_metrics(
 ):
     now = datetime.now(timezone.utc).isoformat()
     conn = _conn(db_path)
-    conn.execute(
-        "UPDATE activities"
-        " SET tss=?, np_watts=?, trimp=?, peak_power_json=?,"
-        "     hr_zone_secs_json=?, power_zone_secs_json=?, metrics_computed_at=?,"
-        "     hr_tss=?"
-        " WHERE id=? AND user_id=?",
-        (tss, np_watts, trimp, peak_power_json,
-         hr_zone_secs_json, power_zone_secs_json, now,
-         hr_tss, activity_id, user_id),
-    )
-    if breakthroughs_json is not None:
+    try:
         conn.execute(
-            "UPDATE activities SET breakthroughs_json=? WHERE id=? AND user_id=?",
-            (breakthroughs_json, activity_id, user_id),
+            "UPDATE activities"
+            " SET tss=?, np_watts=?, trimp=?, peak_power_json=?,"
+            "     hr_zone_secs_json=?, power_zone_secs_json=?, metrics_computed_at=?,"
+            "     hr_tss=?"
+            " WHERE id=? AND user_id=?",
+            (tss, np_watts, trimp, peak_power_json,
+             hr_zone_secs_json, power_zone_secs_json, now,
+             hr_tss, activity_id, user_id),
         )
-    conn.commit()
-    conn.close()
+        if breakthroughs_json is not None:
+            conn.execute(
+                "UPDATE activities SET breakthroughs_json=? WHERE id=? AND user_id=?",
+                (breakthroughs_json, activity_id, user_id),
+            )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def get_daily_loads(db_path, user_id: int) -> dict:
@@ -1076,13 +1143,15 @@ def get_daily_loads(db_path, user_id: int) -> dict:
     Activities with neither contribute nothing to the PMC.
     """
     conn = _conn(db_path)
-    rows = conn.execute(
-        "SELECT start_date, tss, hr_tss FROM activities"
-        " WHERE user_id=? AND (tss IS NOT NULL OR hr_tss IS NOT NULL)"
-        " AND start_date IS NOT NULL",
-        (user_id,),
-    ).fetchall()
-    conn.close()
+    try:
+        rows = conn.execute(
+            "SELECT start_date, tss, hr_tss FROM activities"
+            " WHERE user_id=? AND (tss IS NOT NULL OR hr_tss IS NOT NULL)"
+            " AND start_date IS NOT NULL",
+            (user_id,),
+        ).fetchall()
+    finally:
+        conn.close()
     result = {}
     for r in rows:
         ds = (r["start_date"] or "")[:10]
@@ -1100,21 +1169,23 @@ def get_all_peak_powers(db_path, user_id: int, days: int | None = None,
     """
     conn = _conn(db_path)
     excl = f" AND id != {int(exclude_id)}" if exclude_id is not None else ""
-    if days is not None:
-        from datetime import datetime, timedelta, timezone
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-        rows = conn.execute(
-            f"SELECT peak_power_json FROM activities"
-            f" WHERE user_id=? AND peak_power_json IS NOT NULL AND start_date >= ?{excl}",
-            (user_id, cutoff),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            f"SELECT peak_power_json FROM activities"
-            f" WHERE user_id=? AND peak_power_json IS NOT NULL{excl}",
-            (user_id,),
-        ).fetchall()
-    conn.close()
+    try:
+        if days is not None:
+            from datetime import datetime, timedelta, timezone
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+            rows = conn.execute(
+                f"SELECT peak_power_json FROM activities"
+                f" WHERE user_id=? AND peak_power_json IS NOT NULL AND start_date >= ?{excl}",
+                (user_id, cutoff),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                f"SELECT peak_power_json FROM activities"
+                f" WHERE user_id=? AND peak_power_json IS NOT NULL{excl}",
+                (user_id,),
+            ).fetchall()
+    finally:
+        conn.close()
     result = []
     for r in rows:
         try:
@@ -1127,242 +1198,282 @@ def get_all_peak_powers(db_path, user_id: int, days: int | None = None,
 def reset_metrics_computed(db_path, user_id: int):
     """Clear metrics_computed_at so the next backfill reprocesses all activities."""
     conn = _conn(db_path)
-    conn.execute(
-        "UPDATE activities SET metrics_computed_at=NULL WHERE user_id=?", (user_id,)
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute(
+            "UPDATE activities SET metrics_computed_at=NULL WHERE user_id=?", (user_id,)
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def get_activities_without_metrics(db_path, user_id: int) -> list:
     """Return activities that have a stream but have never had metrics computed."""
     conn = _conn(db_path)
-    rows = conn.execute(
-        "SELECT * FROM activities"
-        " WHERE user_id=? AND metrics_computed_at IS NULL"
-        " AND points_json IS NOT NULL AND points_json != '[]'",
-        (user_id,),
-    ).fetchall()
-    conn.close()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM activities"
+            " WHERE user_id=? AND metrics_computed_at IS NULL"
+            " AND points_json IS NOT NULL AND points_json != '[]'",
+            (user_id,),
+        ).fetchall()
+    finally:
+        conn.close()
     return rows
 
 
 def job_start(db_path, job_type: str, details: str = "") -> int:
     """Log the start of a background job. Returns the job id."""
     conn = _conn(db_path)
-    cur = conn.execute(
-        "INSERT INTO job_log (started_at, job_type, status, details) VALUES (?,?,?,?)",
-        (datetime.now(timezone.utc).isoformat(), job_type, "running", details),
-    )
-    job_id = cur.lastrowid
-    conn.commit()
-    conn.close()
+    try:
+        cur = conn.execute(
+            "INSERT INTO job_log (started_at, job_type, status, details) VALUES (?,?,?,?)",
+            (datetime.now(timezone.utc).isoformat(), job_type, "running", details),
+        )
+        job_id = cur.lastrowid
+        conn.commit()
+    finally:
+        conn.close()
     return job_id
 
 
 def job_finish(db_path, job_id: int, status: str = "done", details: str = ""):
     conn = _conn(db_path)
-    conn.execute(
-        "UPDATE job_log SET finished_at=?, status=?, details=? WHERE id=?",
-        (datetime.now(timezone.utc).isoformat(), status, details, job_id),
-    )
-    # Keep only last 200 entries
-    conn.execute(
-        "DELETE FROM job_log WHERE id NOT IN (SELECT id FROM job_log ORDER BY id DESC LIMIT 200)"
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute(
+            "UPDATE job_log SET finished_at=?, status=?, details=? WHERE id=?",
+            (datetime.now(timezone.utc).isoformat(), status, details, job_id),
+        )
+        # Keep only last 200 entries
+        conn.execute(
+            "DELETE FROM job_log WHERE id NOT IN (SELECT id FROM job_log ORDER BY id DESC LIMIT 200)"
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def get_recent_jobs(db_path, limit: int = 30) -> list:
     conn = _conn(db_path)
-    rows = conn.execute(
-        "SELECT id, started_at, finished_at, job_type, status, details"
-        " FROM job_log ORDER BY id DESC LIMIT ?",
-        (limit,),
-    ).fetchall()
-    conn.close()
+    try:
+        rows = conn.execute(
+            "SELECT id, started_at, finished_at, job_type, status, details"
+            " FROM job_log ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    finally:
+        conn.close()
     return [dict(r) for r in rows]
 
 
 def add_follower(db_path, local_username: str, actor_url: str, inbox_url: str,
                  display_name: str = None, avatar_url: str = None):
     conn = _conn(db_path)
-    conn.execute(
-        "INSERT INTO followers (local_username, actor_url, inbox_url, display_name, avatar_url)"
-        " VALUES (?,?,?,?,?)"
-        " ON CONFLICT(local_username, actor_url) DO UPDATE SET"
-        "   inbox_url=excluded.inbox_url,"
-        "   display_name=excluded.display_name,"
-        "   avatar_url=excluded.avatar_url",
-        (local_username, actor_url, inbox_url, display_name, avatar_url),
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute(
+            "INSERT INTO followers (local_username, actor_url, inbox_url, display_name, avatar_url)"
+            " VALUES (?,?,?,?,?)"
+            " ON CONFLICT(local_username, actor_url) DO UPDATE SET"
+            "   inbox_url=excluded.inbox_url,"
+            "   display_name=excluded.display_name,"
+            "   avatar_url=excluded.avatar_url",
+            (local_username, actor_url, inbox_url, display_name, avatar_url),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def remove_follower(db_path, local_username: str, actor_url: str):
     conn = _conn(db_path)
-    conn.execute(
-        "DELETE FROM followers WHERE local_username=? AND actor_url=?",
-        (local_username, actor_url),
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute(
+            "DELETE FROM followers WHERE local_username=? AND actor_url=?",
+            (local_username, actor_url),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def get_followers(db_path, local_username: str) -> list[dict]:
     conn = _conn(db_path)
-    rows = conn.execute(
-        "SELECT actor_url, inbox_url, display_name, avatar_url, followed_at FROM followers"
-        " WHERE local_username=? ORDER BY followed_at DESC",
-        (local_username,),
-    ).fetchall()
-    conn.close()
+    try:
+        rows = conn.execute(
+            "SELECT actor_url, inbox_url, display_name, avatar_url, followed_at FROM followers"
+            " WHERE local_username=? ORDER BY followed_at DESC",
+            (local_username,),
+        ).fetchall()
+    finally:
+        conn.close()
     return [dict(r) for r in rows]
 
 
 def add_following(db_path, local_username: str, actor_url: str, inbox_url: str,
                   display_name: str = None, avatar_url: str = None):
     conn = _conn(db_path)
-    conn.execute(
-        "INSERT INTO following (local_username, actor_url, inbox_url, display_name, avatar_url, status)"
-        " VALUES (?,?,?,?,?,'pending')"
-        " ON CONFLICT(local_username, actor_url) DO UPDATE SET"
-        "   inbox_url=excluded.inbox_url,"
-        "   display_name=excluded.display_name,"
-        "   avatar_url=excluded.avatar_url",
-        (local_username, actor_url, inbox_url, display_name, avatar_url),
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute(
+            "INSERT INTO following (local_username, actor_url, inbox_url, display_name, avatar_url, status)"
+            " VALUES (?,?,?,?,?,'pending')"
+            " ON CONFLICT(local_username, actor_url) DO UPDATE SET"
+            "   inbox_url=excluded.inbox_url,"
+            "   display_name=excluded.display_name,"
+            "   avatar_url=excluded.avatar_url",
+            (local_username, actor_url, inbox_url, display_name, avatar_url),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def accept_following(db_path, local_username: str, actor_url: str):
     conn = _conn(db_path)
-    conn.execute(
-        "UPDATE following SET status='accepted' WHERE local_username=? AND actor_url=?",
-        (local_username, actor_url),
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute(
+            "UPDATE following SET status='accepted' WHERE local_username=? AND actor_url=?",
+            (local_username, actor_url),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def add_feed_item(db_path, local_username: str, actor_url: str, actor_name: str | None,
                   actor_avatar: str | None, object_id: str, object_url: str | None,
                   content: str | None, published: str | None, attachments_json: str | None):
     conn = _conn(db_path)
-    conn.execute(
-        "INSERT OR IGNORE INTO feed_items"
-        " (local_username, actor_url, actor_name, actor_avatar, object_id, object_url,"
-        "  content, published, attachments_json)"
-        " VALUES (?,?,?,?,?,?,?,?,?)",
-        (local_username, actor_url, actor_name, actor_avatar, object_id, object_url,
-         content, published, attachments_json),
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute(
+            "INSERT OR IGNORE INTO feed_items"
+            " (local_username, actor_url, actor_name, actor_avatar, object_id, object_url,"
+            "  content, published, attachments_json)"
+            " VALUES (?,?,?,?,?,?,?,?,?)",
+            (local_username, actor_url, actor_name, actor_avatar, object_id, object_url,
+             content, published, attachments_json),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def get_feed_items(db_path, local_username: str, limit: int = 20, offset: int = 0) -> list[dict]:
     conn = _conn(db_path)
-    rows = conn.execute(
-        "SELECT * FROM feed_items WHERE local_username=?"
-        " ORDER BY published DESC, received_at DESC LIMIT ? OFFSET ?",
-        (local_username, limit, offset),
-    ).fetchall()
-    conn.close()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM feed_items WHERE local_username=?"
+            " ORDER BY published DESC, received_at DESC LIMIT ? OFFSET ?",
+            (local_username, limit, offset),
+        ).fetchall()
+    finally:
+        conn.close()
     return [dict(r) for r in rows]
 
 
 def count_feed_items(db_path, local_username: str) -> int:
     conn = _conn(db_path)
-    n = conn.execute(
-        "SELECT COUNT(*) FROM feed_items WHERE local_username=?", (local_username,)
-    ).fetchone()[0]
-    conn.close()
+    try:
+        n = conn.execute(
+            "SELECT COUNT(*) FROM feed_items WHERE local_username=?", (local_username,)
+        ).fetchone()[0]
+    finally:
+        conn.close()
     return n
 
 
 def remove_following(db_path, local_username: str, actor_url: str):
     conn = _conn(db_path)
-    conn.execute(
-        "DELETE FROM following WHERE local_username=? AND actor_url=?",
-        (local_username, actor_url),
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute(
+            "DELETE FROM following WHERE local_username=? AND actor_url=?",
+            (local_username, actor_url),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def get_following(db_path, local_username: str) -> list[dict]:
     conn = _conn(db_path)
-    rows = conn.execute(
-        "SELECT actor_url, inbox_url, display_name, avatar_url, status, followed_at"
-        " FROM following WHERE local_username=? ORDER BY followed_at DESC",
-        (local_username,),
-    ).fetchall()
-    conn.close()
+    try:
+        rows = conn.execute(
+            "SELECT actor_url, inbox_url, display_name, avatar_url, status, followed_at"
+            " FROM following WHERE local_username=? ORDER BY followed_at DESC",
+            (local_username,),
+        ).fetchall()
+    finally:
+        conn.close()
     return [dict(r) for r in rows]
 
 
 def enqueue_delivery(db_path, inbox_url: str, activity_json: str, key_id: str):
     conn = _conn(db_path)
-    conn.execute(
-        "INSERT INTO delivery_queue (inbox_url, activity_json, key_id) VALUES (?,?,?)",
-        (inbox_url, activity_json, key_id),
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute(
+            "INSERT INTO delivery_queue (inbox_url, activity_json, key_id) VALUES (?,?,?)",
+            (inbox_url, activity_json, key_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def get_due_deliveries(db_path, limit: int = 50) -> list[dict]:
     conn = _conn(db_path)
-    rows = conn.execute(
-        "SELECT id, inbox_url, activity_json, key_id, attempts, created_at"
-        " FROM delivery_queue"
-        " WHERE status='pending' AND next_attempt_at <= datetime('now')"
-        " ORDER BY next_attempt_at ASC LIMIT ?",
-        (limit,),
-    ).fetchall()
-    conn.close()
+    try:
+        rows = conn.execute(
+            "SELECT id, inbox_url, activity_json, key_id, attempts, created_at"
+            " FROM delivery_queue"
+            " WHERE status='pending' AND next_attempt_at <= datetime('now')"
+            " ORDER BY next_attempt_at ASC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    finally:
+        conn.close()
     return [dict(r) for r in rows]
 
 
 def mark_delivery_sent(db_path, delivery_id: int):
     conn = _conn(db_path)
-    conn.execute(
-        "UPDATE delivery_queue SET status='sent' WHERE id=?", (delivery_id,)
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute(
+            "UPDATE delivery_queue SET status='sent' WHERE id=?", (delivery_id,)
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def update_delivery_attempt(db_path, delivery_id: int, next_attempt_at: str,
                              attempts: int, error: str):
     conn = _conn(db_path)
-    conn.execute(
-        "UPDATE delivery_queue SET attempts=?, next_attempt_at=?, last_error=? WHERE id=?",
-        (attempts, next_attempt_at, error, delivery_id),
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute(
+            "UPDATE delivery_queue SET attempts=?, next_attempt_at=?, last_error=? WHERE id=?",
+            (attempts, next_attempt_at, error, delivery_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def get_nodeinfo_stats(db_path) -> dict:
     conn = _conn(db_path)
-    user_count = conn.execute(
-        "SELECT COUNT(*) FROM users WHERE username IS NOT NULL"
-    ).fetchone()[0]
-    local_posts = conn.execute("SELECT COUNT(*) FROM activities").fetchone()[0]
-    active_halfyear = conn.execute(
-        "SELECT COUNT(DISTINCT user_id) FROM activities"
-        " WHERE start_date >= datetime('now', '-6 months')"
-    ).fetchone()[0]
-    active_month = conn.execute(
-        "SELECT COUNT(DISTINCT user_id) FROM activities"
-        " WHERE start_date >= datetime('now', '-1 month')"
-    ).fetchone()[0]
-    conn.close()
+    try:
+        user_count = conn.execute(
+            "SELECT COUNT(*) FROM users WHERE username IS NOT NULL"
+        ).fetchone()[0]
+        local_posts = conn.execute("SELECT COUNT(*) FROM activities").fetchone()[0]
+        active_halfyear = conn.execute(
+            "SELECT COUNT(DISTINCT user_id) FROM activities"
+            " WHERE start_date >= datetime('now', '-6 months')"
+        ).fetchone()[0]
+        active_month = conn.execute(
+            "SELECT COUNT(DISTINCT user_id) FROM activities"
+            " WHERE start_date >= datetime('now', '-1 month')"
+        ).fetchone()[0]
+    finally:
+        conn.close()
     return {
         "user_count":      user_count,
         "local_posts":     local_posts,
@@ -1373,22 +1484,26 @@ def get_nodeinfo_stats(db_path) -> dict:
 
 def mark_ap_posted(db_path, activity_id: int, user_id: int):
     conn = _conn(db_path)
-    conn.execute(
-        "UPDATE activities SET ap_posted_at=? WHERE id=? AND user_id=?",
-        (datetime.now(timezone.utc).isoformat(), activity_id, user_id),
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute(
+            "UPDATE activities SET ap_posted_at=? WHERE id=? AND user_id=?",
+            (datetime.now(timezone.utc).isoformat(), activity_id, user_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def mark_delivery_failed(db_path, delivery_id: int, error: str):
     conn = _conn(db_path)
-    conn.execute(
-        "UPDATE delivery_queue SET status='failed', last_error=? WHERE id=?",
-        (error, delivery_id),
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute(
+            "UPDATE delivery_queue SET status='failed', last_error=? WHERE id=?",
+            (error, delivery_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def get_zone_totals(db_path, user_id: int) -> tuple:
@@ -1397,12 +1512,14 @@ def get_zone_totals(db_path, user_id: int) -> tuple:
     Returns (hr_totals, power_totals): each is {zone_name: total_seconds}.
     """
     conn = _conn(db_path)
-    rows = conn.execute(
-        "SELECT hr_zone_secs_json, power_zone_secs_json FROM activities"
-        " WHERE user_id=? AND (hr_zone_secs_json IS NOT NULL OR power_zone_secs_json IS NOT NULL)",
-        (user_id,),
-    ).fetchall()
-    conn.close()
+    try:
+        rows = conn.execute(
+            "SELECT hr_zone_secs_json, power_zone_secs_json FROM activities"
+            " WHERE user_id=? AND (hr_zone_secs_json IS NOT NULL OR power_zone_secs_json IS NOT NULL)",
+            (user_id,),
+        ).fetchall()
+    finally:
+        conn.close()
 
     hr_totals    = {}
     power_totals = {}

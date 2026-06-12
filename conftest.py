@@ -1,11 +1,19 @@
 import sys
 import os
+import gc
 
 sys.path.insert(0, os.path.dirname(__file__))
 
 
 import sqlite3
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _force_gc():
+    """Force garbage collection after each test to attribute ResourceWarnings accurately."""
+    yield
+    gc.collect()
 
 
 @pytest.fixture()

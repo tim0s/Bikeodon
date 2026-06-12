@@ -439,7 +439,6 @@ def user_avatar(username):
 @login_required
 def save_profile():
     uid  = int(current_user.id)
-    conn = _conn(DB_PATH)
 
     display_name = request.form.get("display_name", "").strip()
     summary      = request.form.get("summary", "").strip()
@@ -449,7 +448,6 @@ def save_profile():
     if f and f.filename:
         ext = os.path.splitext(f.filename)[1].lower()
         if ext not in (".jpg", ".jpeg", ".png", ".gif", ".webp"):
-            conn.close()
             flash("Avatar must be a JPG, PNG, GIF or WebP image.", "error")
             return redirect(url_for("me", tab="profile"))
         avatars_dir = os.path.abspath(os.path.join(
@@ -463,13 +461,16 @@ def save_profile():
     if avatar_filename:
         updates["avatar_filename"] = avatar_filename
 
-    set_clause = ", ".join(f"{k}=?" for k in updates)
-    conn.execute(
-        f"UPDATE users SET {set_clause} WHERE id=?",
-        (*updates.values(), uid),
-    )
-    conn.commit()
-    conn.close()
+    conn = _conn(DB_PATH)
+    try:
+        set_clause = ", ".join(f"{k}=?" for k in updates)
+        conn.execute(
+            f"UPDATE users SET {set_clause} WHERE id=?",
+            (*updates.values(), uid),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
     from activitypub import send_profile_update
     user = get_user_by_id(DB_PATH, uid)
