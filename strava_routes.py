@@ -11,7 +11,7 @@ from database import (
     load_user_config, set_setting, upsert_activity,
 )
 from strava import StravaClient, exchange_code, strava_auth_url
-from tasks import _render_and_track
+from tasks import _render_and_track, request_backfill
 
 
 def _make_strava_client(uid: int):
@@ -87,6 +87,7 @@ def _handle_webhook_event(event: dict):
         cfg     = load_user_config(DB_PATH, uid, _base_cfg)
         out_dir = _base_cfg["map"].get("output_dir", "output")
         _render_and_track(obj_id, uid, cfg, out_dir)
+        request_backfill(uid)
 
 
 def register_routes(app):
@@ -132,6 +133,8 @@ def register_routes(app):
             for activity_id in new_ids:
                 _render_and_track(activity_id, uid, cfg, out_dir)
             print(f"[manual-sync] Done — {len(new_ids)} new activities for user {uid}")
+            if new_ids:
+                request_backfill(uid)
 
         threading.Thread(target=_run, daemon=True).start()
         flash("Syncing from Strava — new activities will appear shortly.", "success")

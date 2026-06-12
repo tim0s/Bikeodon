@@ -39,8 +39,8 @@ from training_load import (
     fit_critical_power, weekly_load,
 )
 from tasks import (
-    _backfill_lock, _collect_activity_images, _do_post_activity,
-    _render_and_track, run_metrics_backfill,
+    _collect_activity_images, _do_post_activity,
+    _render_and_track, request_backfill, start_backfill_worker,
 )
 from strava_routes import _sync_cooldown_remaining
 import admin_routes
@@ -65,6 +65,7 @@ init_db(DB_PATH)
 from activitypub import bp as _ap_bp, start_delivery_worker
 app.register_blueprint(_ap_bp)
 start_delivery_worker(DB_PATH)
+start_backfill_worker()
 
 _log_path = os.path.join(os.path.dirname(DB_PATH), "bikeodon_errors.log")
 logging.basicConfig(
@@ -606,6 +607,9 @@ def upload():
             _render_and_track(act["id"], uid, cfg, out_dir)
             imported += 1
 
+    if imported or enriched:
+        request_backfill(uid)
+
     if imported:
         flash(f"Imported {imported} activit{'y' if imported == 1 else 'ies'}.", "success")
     if enriched:
@@ -630,8 +634,6 @@ def me():
 
     stats = get_user_stats(DB_PATH, uid)
     cfg   = load_user_config(DB_PATH, uid, _base_cfg)
-
-    threading.Thread(target=run_metrics_backfill, args=(uid,), daemon=True).start()
 
     daily_loads = get_daily_loads(DB_PATH, uid)
     pmc_rows    = compute_pmc(daily_loads, days=180)

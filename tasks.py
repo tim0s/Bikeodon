@@ -30,7 +30,36 @@ from training_load import (
 )
 from inference import infer_training_params
 
-_backfill_lock = threading.Lock()
+_backfill_lock  = threading.Lock()
+_backfill_event = threading.Event()
+_backfill_uids: set[int] = set()
+_backfill_uids_lock = threading.Lock()
+
+
+def request_backfill(uid: int) -> None:
+    """Signal the backfill worker to process pending metrics for uid."""
+    with _backfill_uids_lock:
+        _backfill_uids.add(uid)
+    _backfill_event.set()
+
+
+def start_backfill_worker() -> None:
+    """Start the persistent backfill worker thread. Safe to call once at startup."""
+    def _loop():
+        while True:
+            _backfill_event.wait()
+            _backfill_event.clear()
+            with _backfill_uids_lock:
+                uids = list(_backfill_uids)
+                _backfill_uids.clear()
+            for uid in uids:
+                try:
+                    run_metrics_backfill(uid)
+                except Exception as e:
+                    print(f"[backfill-worker] Unexpected error for user {uid}: {e}")
+
+    t = threading.Thread(target=_loop, daemon=True, name="backfill-worker")
+    t.start()
 
 
 # ---------------------------------------------------------------------------
@@ -189,13 +218,11 @@ def _compute_and_store_metrics(activity_id: int, uid: int, cfg: dict, stream: li
 
 
 def run_metrics_backfill(uid: int):
-    """Compute metrics for activities that have never been processed. Thread-safe via _backfill_lock."""
-    if not _backfill_lock.acquire(blocking=False):
+    """Compute metrics for activities that have never been processed."""
+    pending = get_activities_without_metrics(DB_PATH, uid)
+    if not pending:
         return
     try:
-        pending = get_activities_without_metrics(DB_PATH, uid)
-        if not pending:
-            return
         job_id = job_start(DB_PATH, "metrics_backfill",
                            f"Starting — {len(pending)} activities pending")
         print(f"[backfill] Starting metrics for {len(pending)} activities (user {uid})")
@@ -225,8 +252,6 @@ def run_metrics_backfill(uid: int):
         print(f"[backfill] Done — {done}/{len(pending)} activities processed")
     except Exception as e:
         print(f"[backfill] Fatal error: {e}")
-    finally:
-        _backfill_lock.release()
 
 
 # ---------------------------------------------------------------------------
