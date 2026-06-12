@@ -32,6 +32,7 @@
   </header>
 
   {% if item.content %}
+  {# content is sanitized via nh3 before storage — safe to render as HTML #}
   <div style="margin-bottom:.5rem">{{ item.content | safe }}</div>
   {% endif %}
 

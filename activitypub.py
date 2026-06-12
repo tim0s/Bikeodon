@@ -17,6 +17,7 @@ import re
 import requests
 import threading
 import time
+import nh3
 from datetime import datetime, timezone, timedelta
 from email.utils import formatdate, parsedate_to_datetime
 from urllib.parse import urlparse
@@ -416,7 +417,14 @@ def _handle_create_note(local_username, activity, note_obj, db_path):
 
     object_id  = note_obj.get("id", "")
     object_url = note_obj.get("url") or object_id
-    content    = note_obj.get("content", "")
+    raw_content = note_obj.get("content", "") or ""
+    content = nh3.clean(
+        raw_content,
+        tags={"p", "br", "a", "strong", "em", "b", "i", "ul", "ol", "li",
+              "blockquote", "code", "pre", "span"},
+        attributes={"a": {"href", "rel", "class"}, "span": {"class"}},
+        link_rel=None,
+    )
     published  = note_obj.get("published", "")
 
     raw_attachments = note_obj.get("attachment") or []

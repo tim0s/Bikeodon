@@ -1351,3 +1351,19 @@ class TestHomeFeed:
             sess["_user_id"] = str(uid)
         r = client.get("/feed")
         assert b"Hello from Bob!" in r.data
+
+    def test_xss_content_is_sanitized(self, app, user):
+        import app as app_module
+        from activitypub import _handle_create_note
+        from database import get_feed_items
+        username, _ = user
+        self._add_following(app_module.DB_PATH, username)
+
+        xss_note = {"content": '<p>Hello</p><script>alert(1)</script><img src=x onerror=alert(2)>'}
+        activity = self._create_note_activity(extra_note=xss_note)
+        _handle_create_note(username, activity, activity["object"], app_module.DB_PATH)
+
+        items = get_feed_items(app_module.DB_PATH, username)
+        assert "<script>" not in items[0]["content"]
+        assert "onerror" not in items[0]["content"]
+        assert "Hello" in items[0]["content"]
