@@ -320,6 +320,21 @@ def init_db(db_path):
         )
     """)
 
+    # Indexes — safe to run on existing DBs (IF NOT EXISTS)
+    for ddl in [
+        "CREATE INDEX IF NOT EXISTS idx_activities_user_date"
+        "  ON activities(user_id, start_date DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_activities_user_metrics"
+        "  ON activities(user_id, metrics_computed_at)",
+        "CREATE INDEX IF NOT EXISTS idx_followers_local"
+        "  ON followers(local_username)",
+        "CREATE INDEX IF NOT EXISTS idx_following_local"
+        "  ON following(local_username)",
+        "CREATE INDEX IF NOT EXISTS idx_feed_items_local_published"
+        "  ON feed_items(local_username, published DESC)",
+    ]:
+        conn.execute(ddl)
+
     conn.commit()
 
     try:
