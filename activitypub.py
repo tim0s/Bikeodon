@@ -164,29 +164,32 @@ def _verify_http_signature(req, body_bytes: bytes) -> tuple[bool, str]:
 def get_or_create_keypair(db_path: str, user_id: int) -> tuple[str, str]:
     """Return (public_pem, private_pem) for a user, generating if absent."""
     conn = _db_conn(db_path)
-    row  = conn.execute(
-        "SELECT public_key_pem, private_key_pem FROM users WHERE id=?", (user_id,)
-    ).fetchone()
+    try:
+        row = conn.execute(
+            "SELECT public_key_pem, private_key_pem FROM users WHERE id=?", (user_id,)
+        ).fetchone()
 
-    if row and row["public_key_pem"] and row["private_key_pem"]:
-        return row["public_key_pem"], row["private_key_pem"]
+        if row and row["public_key_pem"] and row["private_key_pem"]:
+            return row["public_key_pem"], row["private_key_pem"]
 
-    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    priv_pem = private_key.private_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PrivateFormat.PKCS8,
-        encryption_algorithm=serialization.NoEncryption(),
-    ).decode()
-    pub_pem = private_key.public_key().public_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PublicFormat.SubjectPublicKeyInfo,
-    ).decode()
-    conn.execute(
-        "UPDATE users SET public_key_pem=?, private_key_pem=? WHERE id=?",
-        (pub_pem, priv_pem, user_id),
-    )
-    conn.commit()
-    return pub_pem, priv_pem
+        private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        priv_pem = private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        ).decode()
+        pub_pem = private_key.public_key().public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        ).decode()
+        conn.execute(
+            "UPDATE users SET public_key_pem=?, private_key_pem=? WHERE id=?",
+            (pub_pem, priv_pem, user_id),
+        )
+        conn.commit()
+        return pub_pem, priv_pem
+    finally:
+        conn.close()
 
 
 # ---------------------------------------------------------------------------
