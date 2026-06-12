@@ -53,7 +53,10 @@ import strava_routes
 
 app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
-app.secret_key                     = os.environ.get("FLASK_SECRET_KEY", "dev-key-change-me-in-production")
+_secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-key-change-me-in-production")
+if _secret_key == "dev-key-change-me-in-production" and not app.debug:
+    raise RuntimeError("FLASK_SECRET_KEY must be set in production (DEBUG=False)")
+app.secret_key = _secret_key
 app.config["DB_PATH"]              = DB_PATH
 app.config["PREFERRED_URL_SCHEME"] = "https"
 

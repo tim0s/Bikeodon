@@ -1233,22 +1233,36 @@ def get_all_peak_powers(db_path, user_id: int, days: int | None = None,
     exclude_id: omit a specific activity (used for breakthrough detection).
     """
     conn = _conn(db_path)
-    excl = f" AND id != {int(exclude_id)}" if exclude_id is not None else ""
     try:
         if days is not None:
             from datetime import datetime, timedelta, timezone
             cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-            rows = conn.execute(
-                f"SELECT peak_power_json FROM activities"
-                f" WHERE user_id=? AND peak_power_json IS NOT NULL AND start_date >= ?{excl}",
-                (user_id, cutoff),
-            ).fetchall()
+            if exclude_id is not None:
+                rows = conn.execute(
+                    "SELECT peak_power_json FROM activities"
+                    " WHERE user_id=? AND peak_power_json IS NOT NULL"
+                    " AND start_date >= ? AND id != ?",
+                    (user_id, cutoff, exclude_id),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT peak_power_json FROM activities"
+                    " WHERE user_id=? AND peak_power_json IS NOT NULL AND start_date >= ?",
+                    (user_id, cutoff),
+                ).fetchall()
         else:
-            rows = conn.execute(
-                f"SELECT peak_power_json FROM activities"
-                f" WHERE user_id=? AND peak_power_json IS NOT NULL{excl}",
-                (user_id,),
-            ).fetchall()
+            if exclude_id is not None:
+                rows = conn.execute(
+                    "SELECT peak_power_json FROM activities"
+                    " WHERE user_id=? AND peak_power_json IS NOT NULL AND id != ?",
+                    (user_id, exclude_id),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT peak_power_json FROM activities"
+                    " WHERE user_id=? AND peak_power_json IS NOT NULL",
+                    (user_id,),
+                ).fetchall()
     finally:
         conn.close()
     result = []
