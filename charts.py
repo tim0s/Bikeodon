@@ -123,7 +123,7 @@ def _draw_zone_bands(ax, zones, thresholds, alpha=0.08):
 # HR chart
 # ---------------------------------------------------------------------------
 
-def render_hr_chart(stream, cfg, out_path: str, db_path: str | None = None) -> str | None:
+def render_hr_chart(stream, cfg, out_path: str, db_path: str | None = None, user_id: int | None = None) -> str | None:
     chart_cfg = cfg.get("charts", {})
     hr_cfg    = chart_cfg.get("heart_rate", {})
     if not hr_cfg.get("enabled", True):
@@ -134,8 +134,8 @@ def render_hr_chart(stream, cfg, out_path: str, db_path: str | None = None) -> s
         return None
 
     max_hr = hr_cfg.get("max_hr")
-    if not max_hr and db_path:
-        max_hr = infer_max_hr(db_path)
+    if not max_hr and db_path and user_id is not None:
+        max_hr = infer_max_hr(db_path, user_id)
     if not max_hr:
         max_hr = int(max(hr))
     zones   = hr_cfg.get("zones", _default_hr_zones())
@@ -193,7 +193,7 @@ def render_hr_chart(stream, cfg, out_path: str, db_path: str | None = None) -> s
 # Power chart
 # ---------------------------------------------------------------------------
 
-def render_power_chart(stream, cfg, out_path: str, db_path: str | None = None) -> str | None:
+def render_power_chart(stream, cfg, out_path: str, db_path: str | None = None, user_id: int | None = None) -> str | None:
     chart_cfg = cfg.get("charts", {})
     pwr_cfg   = chart_cfg.get("power", {})
     if not pwr_cfg.get("enabled", True):
@@ -204,8 +204,8 @@ def render_power_chart(stream, cfg, out_path: str, db_path: str | None = None) -
         return None
 
     ftp = pwr_cfg.get("ftp")
-    if not ftp and db_path:
-        ftp = infer_ftp(db_path)
+    if not ftp and db_path and user_id is not None:
+        ftp = infer_ftp(db_path, user_id)
     if not ftp:
         print("    Warning: charts.power.ftp not set and could not be inferred — skipping power chart")
         return None
@@ -292,7 +292,8 @@ def _draw_zone_bar(ax, zones, pcts, cfg):
 # ---------------------------------------------------------------------------
 
 def generate_charts(activity_id: int, stream: list[dict], cfg: dict,
-                    out_dir: str, db_path: str | None = None) -> list[str]:
+                    out_dir: str, db_path: str | None = None,
+                    user_id: int | None = None) -> list[str]:
     """
     Generate all available charts for an activity.
     Returns list of image paths (only those that were successfully created).
@@ -301,14 +302,16 @@ def generate_charts(activity_id: int, stream: list[dict], cfg: dict,
     paths = []
 
     hr_path = render_hr_chart(
-        stream, cfg, os.path.join(out_dir, f"{activity_id}_hr.png"), db_path=db_path
+        stream, cfg, os.path.join(out_dir, f"{activity_id}_hr.png"),
+        db_path=db_path, user_id=user_id,
     )
     if hr_path:
         print(f"    Saved HR chart → {hr_path}")
         paths.append(hr_path)
 
     power_path = render_power_chart(
-        stream, cfg, os.path.join(out_dir, f"{activity_id}_power.png"), db_path=db_path
+        stream, cfg, os.path.join(out_dir, f"{activity_id}_power.png"),
+        db_path=db_path, user_id=user_id,
     )
     if power_path:
         print(f"    Saved power chart → {power_path}")

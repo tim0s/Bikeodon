@@ -185,7 +185,7 @@ def _render_activities(ids: list[int], db_path: str, user_id: int, cfg: dict,
         if need_charts:
             stream = get_stream(row)
             try:
-                paths = generate_charts(activity_id, stream, cfg, out_dir, db_path=db_path)
+                paths = generate_charts(activity_id, stream, cfg, out_dir, db_path=db_path, user_id=user_id)
                 for p in paths:
                     print(f"    Rendered chart → {p}")
             except Exception as e:
@@ -280,7 +280,7 @@ def cmd_charts(args, cfg):
     stream  = get_stream(row)
     out_dir = cfg["map"].get("output_dir", "output")
     print(f"Generating charts for [{row['id']}] {row['name']}…")
-    paths = generate_charts(row["id"], stream, cfg, out_dir, db_path=db_path)
+    paths = generate_charts(row["id"], stream, cfg, out_dir, db_path=db_path, user_id=args.user_id)
     if not paths:
         print("  No chart data available (no HR or power recorded).")
     for p in paths:
@@ -365,7 +365,7 @@ def _do_post(row, cfg, db_path: str, out_dir: str, rerender: bool = False, user_
 
     text        = _build_post_text(dict(row), cfg["mastodon"].get("post_template", "{name}\n#cycling"))
     stream      = get_stream(row)
-    chart_paths = generate_charts(activity_id, stream, cfg, out_dir, db_path=db_path)
+    chart_paths = generate_charts(activity_id, stream, cfg, out_dir, db_path=db_path, user_id=uid)
     all_images  = ([img_path] + chart_paths)[:4]
 
     client    = MastodonClient.from_cfg(cfg)
@@ -434,7 +434,7 @@ def cmd_metrics(args, cfg):
 
         if not ftp or not hr_max:
             print("Running inference (FTP, max HR)…")
-            inferred = infer_training_params(db_path)
+            inferred = infer_training_params(db_path, uid)
             if inferred["ftp"] and not ftp:
                 ftp = inferred["ftp"]
                 set_setting(db_path, uid, "inference", "ftp", str(round(ftp, 1)))

@@ -70,7 +70,7 @@ def _render_and_track(activity_id: int, uid: int, cfg: dict, out_dir: str, row=N
 
     stream = get_stream(row)
     try:
-        generate_charts(activity_id, stream, cfg, out_dir, db_path=DB_PATH)
+        generate_charts(activity_id, stream, cfg, out_dir, db_path=DB_PATH, user_id=uid)
         mark_rendered(DB_PATH, activity_id, uid, charts=True)
     except Exception as e:
         errors.append(f"charts: {e}")
@@ -202,7 +202,7 @@ def run_metrics_backfill(uid: int):
 
         bcfg_pre = load_user_config(DB_PATH, uid, _base_cfg)
         if not bcfg_pre["charts"]["power"]["ftp"] or not bcfg_pre["charts"]["heart_rate"]["max_hr"]:
-            inferred = infer_training_params(DB_PATH)
+            inferred = infer_training_params(DB_PATH, uid)
             if inferred["ftp"] and not bcfg_pre["charts"]["power"]["ftp"]:
                 set_setting(DB_PATH, uid, "inference", "ftp", str(round(inferred["ftp"], 1)))
                 print(f"[backfill] Inferred FTP: {inferred['ftp']:.0f} W")
@@ -261,7 +261,7 @@ def _collect_activity_images(activity_id: int, uid: int, cfg: dict, out_dir: str
         img_path_exists = True
 
     stream      = get_stream(row)
-    chart_paths = generate_charts(activity_id, stream, cfg, out_dir, db_path=DB_PATH)
+    chart_paths = generate_charts(activity_id, stream, cfg, out_dir, db_path=DB_PATH, user_id=uid)
     images      = ([img_path] if img_path_exists else []) + chart_paths
     return images[:4]
 
