@@ -14,6 +14,26 @@ from strava import StravaClient, exchange_code, strava_auth_url
 from tasks import _render_and_track
 
 
+def _make_strava_client(uid: int):
+    """Return a StravaClient for uid, or None if no token is stored."""
+    access_token = get_setting(DB_PATH, uid, "strava", "access_token") or ""
+    if not access_token:
+        return None
+    refresh_tok = get_setting(DB_PATH, uid, "strava", "refresh_token") or ""
+    expires_at  = float(get_setting(DB_PATH, uid, "strava", "token_expires_at") or 0)
+
+    def _on_refresh(new_access, new_refresh, new_expires):
+        set_setting(DB_PATH, uid, "strava", "access_token",     new_access)
+        set_setting(DB_PATH, uid, "strava", "refresh_token",    new_refresh)
+        set_setting(DB_PATH, uid, "strava", "token_expires_at", str(new_expires))
+
+    return StravaClient(
+        access_token=access_token, client_id=STRAVA_CLIENT_ID,
+        client_secret=STRAVA_CLIENT_SECRET, refresh_tok=refresh_tok,
+        expires_at=expires_at, on_refresh=_on_refresh,
+    )
+
+
 def _sync_cooldown_remaining(uid: int) -> int:
     """Return seconds until the user may sync again, or 0 if available."""
     last = get_setting(DB_PATH, uid, "strava", "last_manual_sync_at")
@@ -55,22 +75,9 @@ def _handle_webhook_event(event: dict):
         return
 
     if aspect in ("create", "update"):
-        access_token = get_setting(DB_PATH, uid, "strava", "access_token") or ""
-        refresh_tok  = get_setting(DB_PATH, uid, "strava", "refresh_token") or ""
-        expires_at   = float(get_setting(DB_PATH, uid, "strava", "token_expires_at") or 0)
-        if not access_token:
+        client = _make_strava_client(uid)
+        if not client:
             return
-
-        def _on_refresh(new_access, new_refresh, new_expires):
-            set_setting(DB_PATH, uid, "strava", "access_token",     new_access)
-            set_setting(DB_PATH, uid, "strava", "refresh_token",    new_refresh)
-            set_setting(DB_PATH, uid, "strava", "token_expires_at", str(new_expires))
-
-        client = StravaClient(
-            access_token=access_token, client_id=STRAVA_CLIENT_ID,
-            client_secret=STRAVA_CLIENT_SECRET, refresh_tok=refresh_tok,
-            expires_at=expires_at, on_refresh=_on_refresh,
-        )
         try:
             data = client.get_activity(obj_id)
         except Exception:
@@ -98,22 +105,9 @@ def register_routes(app):
                     datetime.now(timezone.utc).isoformat())
 
         def _run():
-            access_token = get_setting(DB_PATH, uid, "strava", "access_token") or ""
-            refresh_tok  = get_setting(DB_PATH, uid, "strava", "refresh_token") or ""
-            expires_at   = float(get_setting(DB_PATH, uid, "strava", "token_expires_at") or 0)
-            if not access_token:
+            client = _make_strava_client(uid)
+            if not client:
                 return
-
-            def _on_refresh(a, r, e):
-                set_setting(DB_PATH, uid, "strava", "access_token",     a)
-                set_setting(DB_PATH, uid, "strava", "refresh_token",    r)
-                set_setting(DB_PATH, uid, "strava", "token_expires_at", str(e))
-
-            client = StravaClient(
-                access_token=access_token, client_id=STRAVA_CLIENT_ID,
-                client_secret=STRAVA_CLIENT_SECRET, refresh_tok=refresh_tok,
-                expires_at=expires_at, on_refresh=_on_refresh,
-            )
             try:
                 ids = client.get_activity_ids(n=10)
             except Exception as e:
