@@ -667,31 +667,71 @@ def get_unrendered(db_path, user_id: int) -> list:
     return rows
 
 
+_METRICS_INVALIDATING_FIELDS = {
+    "sport_type", "elapsed_time", "moving_time", "distance",
+    "average_watts", "average_heartrate",
+}
+
+
 def upsert_activity(db_path, data: dict, user_id: int, source: str = "strava"):
     conn = _conn(db_path)
     try:
         existing = conn.execute(
             "SELECT posted_at, mastodon_post_url, scheduled_for_post,"
-            " map_rendered_at, charts_rendered_at"
+            " map_rendered_at, charts_rendered_at, ap_posted_at,"
+            " tss, np_watts, trimp, hr_tss, peak_power_json,"
+            " hr_zone_secs_json, power_zone_secs_json, breakthroughs_json,"
+            " metrics_computed_at,"
+            " sport_type, elapsed_time, moving_time, distance,"
+            " average_watts, average_heartrate"
             " FROM activities WHERE id=? AND user_id=?",
             (data["id"], user_id),
         ).fetchone()
-        posted_at          = existing["posted_at"]          if existing else None
-        mastodon_post_url  = existing["mastodon_post_url"]  if existing else None
-        scheduled_for_post = existing["scheduled_for_post"] if existing else 0
-        map_rendered_at    = existing["map_rendered_at"]    if existing else None
-        charts_rendered_at = existing["charts_rendered_at"] if existing else None
+
+        if existing:
+            invalidated = any(
+                data.get(f) != existing[f]
+                for f in _METRICS_INVALIDATING_FIELDS
+                if data.get(f) is not None
+            )
+            metrics_computed_at = None if invalidated else existing["metrics_computed_at"]
+        else:
+            metrics_computed_at = None
 
         conn.execute("""
-            INSERT OR REPLACE INTO activities
+            INSERT INTO activities
             (id, user_id, name, sport_type, start_date,
              distance, moving_time, elapsed_time, total_elevation_gain,
              average_speed, max_speed,
              average_heartrate, max_heartrate, average_watts, max_watts,
              start_lat, start_lon, points_json, fetched_at,
              strava_url, posted_at, mastodon_post_url, scheduled_for_post,
-             map_rendered_at, charts_rendered_at, source)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             map_rendered_at, charts_rendered_at, ap_posted_at, source,
+             tss, np_watts, trimp, hr_tss, peak_power_json,
+             hr_zone_secs_json, power_zone_secs_json, breakthroughs_json,
+             metrics_computed_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(id, user_id) DO UPDATE SET
+              name                  = excluded.name,
+              sport_type            = excluded.sport_type,
+              start_date            = excluded.start_date,
+              distance              = excluded.distance,
+              moving_time           = excluded.moving_time,
+              elapsed_time          = excluded.elapsed_time,
+              total_elevation_gain  = excluded.total_elevation_gain,
+              average_speed         = excluded.average_speed,
+              max_speed             = excluded.max_speed,
+              average_heartrate     = excluded.average_heartrate,
+              max_heartrate         = excluded.max_heartrate,
+              average_watts         = excluded.average_watts,
+              max_watts             = excluded.max_watts,
+              start_lat             = excluded.start_lat,
+              start_lon             = excluded.start_lon,
+              points_json           = excluded.points_json,
+              fetched_at            = excluded.fetched_at,
+              strava_url            = excluded.strava_url,
+              source                = excluded.source,
+              metrics_computed_at   = excluded.metrics_computed_at
         """, (
             data["id"], user_id,
             data.get("name"),
@@ -712,12 +752,22 @@ def upsert_activity(db_path, data: dict, user_id: int, source: str = "strava"):
             json.dumps(data.get("points") or []),
             datetime.now(timezone.utc).isoformat(),
             data.get("source_url"),
-            posted_at,
-            mastodon_post_url,
-            scheduled_for_post,
-            map_rendered_at,
-            charts_rendered_at,
+            existing["posted_at"]          if existing else None,
+            existing["mastodon_post_url"]  if existing else None,
+            existing["scheduled_for_post"] if existing else 0,
+            existing["map_rendered_at"]    if existing else None,
+            existing["charts_rendered_at"] if existing else None,
+            existing["ap_posted_at"]       if existing else None,
             source,
+            existing["tss"]                if existing else None,
+            existing["np_watts"]           if existing else None,
+            existing["trimp"]              if existing else None,
+            existing["hr_tss"]             if existing else None,
+            existing["peak_power_json"]    if existing else None,
+            existing["hr_zone_secs_json"]  if existing else None,
+            existing["power_zone_secs_json"] if existing else None,
+            existing["breakthroughs_json"] if existing else None,
+            metrics_computed_at,
         ))
         conn.commit()
     finally:
