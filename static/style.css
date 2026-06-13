@@ -61,6 +61,13 @@ body > header nav ul:last-of-type { margin-right: .75rem; }
   max-width: none;
 }
 
+/* ── Responsive table wrapper ─────────────────────────────────────────────── */
+
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
 /* ── Page background ──────────────────────────────────────────────────────── */
 
 body {
@@ -175,8 +182,12 @@ details summary { cursor: pointer; margin-bottom: .75rem; }
   margin-bottom: 1.5rem;
   border-bottom: 2px solid #e8e8e8;
   padding-bottom: .5rem;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
 }
-.tab-bar a { text-decoration: none; opacity: 0.5; color: var(--text); }
+.tab-bar::-webkit-scrollbar { display: none; }
+.tab-bar a { text-decoration: none; opacity: 0.5; color: var(--text); white-space: nowrap; }
 .tab-bar a:hover { opacity: 0.8; }
 .tab-bar a[aria-selected="true"] {
   opacity: 1;
@@ -373,3 +384,24 @@ th[data-col].sort-desc .sort-arrow {
 .center  { text-align: center; }
 .muted   { opacity: 0.45; }
 .no-underline { text-decoration: none; }
+
+/* ── Mobile / narrow-screen overrides ────────────────────────────────────── */
+
+@media (max-width: 640px) {
+  .nav-logo img { height: 52px; }
+
+  main.container { padding-top: 1rem; }
+
+  .activity-stats { gap: .4rem; }
+  .stat-chip { min-width: 72px; padding: .4rem .6rem; }
+  .stat-value { font-size: 1rem; }
+
+  .activity-charts {
+    grid-template-columns: 1fr;
+  }
+
+  /* keep charts usable on narrow screens */
+  .activity-chart { min-width: 0; }
+
+  .auth-card { margin: 2rem auto; }
+}

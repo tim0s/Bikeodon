@@ -28,9 +28,9 @@
   <table>
     <thead>
       <tr>
-        {% for col, label in [('date','Date'),('type','Type'),('name','Name'),('distance','Distance'),('elevation','Elevation')] %}
-        <th>
-          <a href="{{ sort_url(col) }}" class="sort-link {% if sort == col %}sort-active{% endif %}">
+        {% for col, label in [('date','Date'),('type',''),('name','Name'),('distance','Dist.'),('elevation','Elev.')] %}
+        <th style="{% if col in ('distance','elevation') %}text-align:right{% endif %}">
+          <a href="{{ sort_url(col) }}" class="sort-link {% if sort == col %}sort-active{% endif %}" title="{{ {'type':'Sort by type','distance':'Sort by distance','elevation':'Sort by elevation','date':'Sort by date','name':'Sort by name'}[col] }}">
             {{ label }}
             {% if sort == col %}
               {{ '▲' if dir == 'asc' else '▼' }}
@@ -40,14 +40,14 @@
           </a>
         </th>
         {% endfor %}
-        <th>Posted</th>
       </tr>
     </thead>
     <tbody>
       {% for a in activities %}
       <tr>
-        <td>{{ a.date }}</td>
-        <td><small>{{ a.sport_type }}</small></td>
+        <td style="white-space:nowrap">{{ a.date }}</td>
+        {% set emoji, label = a.sport_type | sport_emoji %}
+        <td title="{{ label }}" style="font-size:1.1rem;text-align:center">{{ emoji }}</td>
         <td>
           <a href="{{ url_for('activity', activity_id=a.id) }}">{{ a.name }}</a>
           {% if a.has_breakthrough %}<span title="New records on this ride" style="margin-left:.3rem">🏆</span>{% endif %}
@@ -56,22 +56,20 @@
             <img src="{{ url_for('static', filename='icon-strava.svg') }}" class="brand-icon strava-icon" alt="Strava">
           </a>
           {% endif %}
-        </td>
-        <td>{{ a.distance }}</td>
-        <td>{{ a.elevation }}</td>
-        <td>
           {% if a.posted and a.post_url %}
-            <a href="{{ a.post_url }}" class="brand-icon-link" target="_blank" rel="noopener" title="View on Mastodon">
-              <img src="{{ url_for('static', filename='icon-mastodon.svg') }}" class="brand-icon mastodon-icon" alt="Mastodon">
-            </a>
+          <a href="{{ a.post_url }}" class="brand-icon-link" target="_blank" rel="noopener" title="View on Mastodon">
+            <img src="{{ url_for('static', filename='icon-mastodon.svg') }}" class="brand-icon mastodon-icon" alt="Mastodon">
+          </a>
           {% elif a.posted %}
-            <span title="Posted">✓</span>
+          <a class="brand-icon-link" title="Posted to Mastodon">
+            <img src="{{ url_for('static', filename='icon-mastodon.svg') }}" class="brand-icon mastodon-icon" alt="Mastodon">
+          </a>
           {% elif a.scheduled %}
-            <span class="scheduled-badge" title="Scheduled for posting">queued</span>
-          {% else %}
-            <span class="muted">–</span>
+          <span class="scheduled-badge" title="Scheduled for posting">queued</span>
           {% endif %}
         </td>
+        <td style="text-align:right;white-space:nowrap">{{ a.distance }}</td>
+        <td style="text-align:right;white-space:nowrap">{{ a.elevation }}</td>
       </tr>
       {% endfor %}
     </tbody>

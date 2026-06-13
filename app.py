@@ -89,6 +89,35 @@ def internal_error(exc):
 
 app.jinja_env.globals["enumerate"] = enumerate
 
+_SPORT_EMOJI = {
+    "Ride":            ("🚴", "Ride"),
+    "VirtualRide":     ("🚴💻", "Virtual Ride"),
+    "Run":             ("🏃", "Run"),
+    "VirtualRun":      ("🏃💻", "Virtual Run"),
+    "Walk":            ("🚶", "Walk"),
+    "Hike":            ("🥾", "Hike"),
+    "Swim":            ("🏊", "Swim"),
+    "Workout":         ("💪", "Workout"),
+    "WeightTraining":  ("🏋️", "Weight Training"),
+    "Yoga":            ("🧘", "Yoga"),
+    "Rowing":          ("🚣", "Rowing"),
+    "Kayaking":        ("🛶", "Kayaking"),
+    "Skiing":          ("⛷️", "Skiing"),
+    "Snowboard":       ("🏂", "Snowboard"),
+    "Skateboard":      ("🛹", "Skateboard"),
+    "Soccer":          ("⚽", "Soccer"),
+    "Tennis":          ("🎾", "Tennis"),
+    "Golf":            ("⛳", "Golf"),
+    "MountainBikeRide": ("🚵", "MTB"),
+    "GravelRide":      ("🚵", "Gravel"),
+    "EBikeRide":       ("⚡🚴", "E-Bike"),
+}
+
+@app.template_filter("sport_emoji")
+def sport_emoji_filter(sport_type):
+    emoji, label = _SPORT_EMOJI.get(sport_type, ("🏅", sport_type or "?"))
+    return emoji, label
+
 # ---------------------------------------------------------------------------
 # Auth
 # ---------------------------------------------------------------------------
@@ -210,7 +239,7 @@ def index():
             "id":            r["id"],
             "name":          r["name"] or "—",
             "sport_type":    r["sport_type"] or "",
-            "date":          (r["start_date"] or "")[:10],
+            "date":          (lambda d: f"{d[8:10]}.{d[5:7]}.{d[2:4]}" if len(d) >= 10 else d)((r["start_date"] or "")[:10]),
             "distance":      f"{(r['distance'] or 0) / 1000:.1f} km",
             "elevation":     f"{r['total_elevation_gain'] or 0:.0f} m",
             "distance_raw":  (r["distance"] or 0) / 1000,
@@ -270,7 +299,7 @@ def activity(activity_id):
         "id":         row["id"],
         "name":       row["name"] or "—",
         "sport_type": row["sport_type"] or "",
-        "date":       (row["start_date"] or "")[:10],
+        "date":       (lambda d: f"{d[8:10]}.{d[5:7]}.{d[2:4]}" if len(d) >= 10 else d)((row["start_date"] or "")[:10]),
         "distance":   f"{(row['distance'] or 0) / 1000:.1f} km" if row["distance"] else None,
         "elevation":  f"{row['total_elevation_gain'] or 0:.0f} m" if row["total_elevation_gain"] is not None else None,
         "moving_time": _fmt_time(row["moving_time"]),

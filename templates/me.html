@@ -66,17 +66,22 @@
 
 {% if stats.by_sport %}
 <h3>By activity type</h3>
-<div class="activity-stats">
-  {% for s in stats.by_sport %}
-  <div class="stat-chip">
-    <span class="stat-label">{{ s.sport }}</span>
-    <span class="stat-value">{{ s.count }}</span>
-  </div>
-  {% endfor %}
+<div class="table-scroll">
+<table>
+  <tbody>
+    {% for s in stats.by_sport %}
+    <tr>
+      <td class="muted"><small>{{ s.sport }}</small></td>
+      <td>{{ s.count }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
 </div>
 {% endif %}
 
 <h3>Totals</h3>
+<div class="table-scroll">
 <table>
   <thead>
     <tr><th></th><th>{{ stats.year }}</th><th>All time</th></tr>
@@ -99,6 +104,7 @@
     </tr>
   </tbody>
 </table>
+</div>
 
 <script src="{{ url_for('static', filename='chart.min.js') }}"></script>
 <script>
@@ -654,6 +660,7 @@
 <h3>Followers <small class="muted">({{ followers|length }})</small></h3>
 
 {% if followers %}
+<div class="table-scroll">
 <table>
   <thead>
     <tr><th>Account</th><th>Since</th><th></th></tr>
@@ -692,6 +699,7 @@
     {% endfor %}
   </tbody>
 </table>
+</div>
 {% else %}
 <p class="muted">No followers yet. Share your handle <strong>@{{ username }}@{{ request.host }}</strong> to let people follow you from Mastodon and other federated platforms.</p>
 {% endif %}
@@ -736,6 +744,7 @@
 <h3>Following <small class="muted">({{ following|length }})</small></h3>
 
 {% if following %}
+<div class="table-scroll">
 <table>
   <thead>
     <tr><th>Account</th><th>Since</th><th>Status</th><th></th></tr>
@@ -779,6 +788,7 @@
     {% endfor %}
   </tbody>
 </table>
+</div>
 {% else %}
 <p class="muted">You're not following anyone yet. Use the <a href="{{ url_for('me') }}?tab=followers">Followers tab</a> to follow people back.</p>
 {% endif %}
