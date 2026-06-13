@@ -11,27 +11,27 @@
 ## Screenshots
 
 <p align="center">
-  <img src="docs/screenshots/activity-list.png" width="390" alt="Activity list">
+  <img src="docs/screenshots/activity-list.png" width="800" alt="Activity list">
   <br><em>All your rides in one place, with quick stats and Strava/Mastodon links inline</em>
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/activity-detail.png" width="390" alt="Activity detail">
+  <img src="docs/screenshots/activity-detail.png" width="800" alt="Activity detail">
   <br><em>Activity detail — route map and HR chart; post to Mastodon or to your followers in one click</em>
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/dashboard-overview.png" width="390" alt="Training dashboard">
+  <img src="docs/screenshots/dashboard-overview.png" width="800" alt="Training dashboard">
   <br><em>Training dashboard — fitness (CTL), fatigue (ATL), form (TSB), Critical Power, W', and weekly load</em>
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/dashboard-power.png" width="390" alt="Power curve">
+  <img src="docs/screenshots/dashboard-power.png" width="800" alt="Power curve">
   <br><em>Mean maximal power curve with Critical Power model overlay</em>
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/settings.png" width="390" alt="Settings">
+  <img src="docs/screenshots/settings.png" width="800" alt="Settings">
   <br><em>Auto-detects FTP and max HR from your data — or set them manually</em>
 </p>
 
