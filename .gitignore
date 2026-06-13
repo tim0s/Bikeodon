@@ -9,3 +9,8 @@ output/
 .claude/
 IDEAS.md
 CODE.md
+TODO.md
+/screenshots/
+screenshots_seed.db
+.coverage
+bikeodon_errors.log

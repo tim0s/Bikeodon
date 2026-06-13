@@ -12,7 +12,7 @@
 
 <p align="center">
   <img src="docs/screenshots/activity-list.png" width="390" alt="Activity list">
-  <br><em>All your rides in one place, with quick stats and post status</em>
+  <br><em>All your rides in one place, with quick stats and Strava/Mastodon links inline</em>
 </p>
 
 <p align="center">
