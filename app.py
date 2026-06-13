@@ -303,7 +303,8 @@ def activity(activity_id):
         "distance":   f"{(row['distance'] or 0) / 1000:.1f} km" if row["distance"] else None,
         "elevation":  f"{row['total_elevation_gain'] or 0:.0f} m" if row["total_elevation_gain"] is not None else None,
         "moving_time": _fmt_time(row["moving_time"]),
-        "avg_speed":  f"{row['average_speed'] * 3.6:.1f}" if row["average_speed"] else None,
+        "avg_speed":  f"{row['average_speed'] * 3.6:.1f}" if row["average_speed"] else (
+                      f"{row['distance'] / row['moving_time'] * 3.6:.1f}" if row["distance"] and row["moving_time"] else None),
         "max_speed":  f"{row['max_speed'] * 3.6:.1f}" if row["max_speed"] else None,
         "avg_hr":     f"{row['average_heartrate']:.0f}" if row["average_heartrate"] else None,
         "max_hr":     f"{row['max_heartrate']:.0f}" if row["max_heartrate"] else None,
