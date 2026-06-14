@@ -25,11 +25,12 @@
     <div class="carousel-track" id="carouselTrack">
       {% set slides = [
         ("activity-list",      "All your rides in one place — distance, elevation, moving time, and post status at a glance"),
-        ("activity-detail",    "Activity detail — route map with stats overlay and HR chart; post to Mastodon in one click"),
+        ("activity-detail",    "Activity detail — route map, HR and power charts; share to the Fediverse in one click"),
+        ("feed",               "Home feed — posts from people you follow on the Fediverse, with likes and boosts"),
         ("dashboard-overview", "Training dashboard — weekly load, zone distribution, and all-time totals by sport"),
         ("dashboard-fitness",  "Performance Management Chart — Fitness (CTL), Fatigue (ATL), Form (TSB) over 6 months"),
-        ("dashboard-power",    "Mean maximal power curve with Critical Power model overlay, all-time vs. last 90 days"),
-        ("settings",           "Fully customisable — zones, map style, chart colours, and Mastodon post template"),
+        ("dashboard-power",    "Mean maximal power curve with Critical Power model and CP history over time"),
+        ("settings",           "Fully customisable — zones, map style, chart colours, and post template"),
       ] %}
       {% for name, caption in slides %}
       <div class="carousel-slide">
