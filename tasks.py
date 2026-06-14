@@ -15,10 +15,10 @@ from config import DB_PATH, _base_cfg
 
 from database import (
     _conn, get_activities_without_metrics, get_activity, get_all_peak_powers,
-    get_setting, job_finish, job_start,
+    get_cp_history, get_setting, job_finish, job_start,
     load_user_config, mark_rendered, mark_posted,
     set_activity_error, set_scheduled, set_setting,
-    update_activity_metrics,
+    update_activity_metrics, upsert_cp_history,
 )
 from activity_parser import points_from_file, stream_from_file
 from charts import generate_charts
@@ -26,7 +26,7 @@ from map_renderer import render_activity_map
 from mastodon_client import MastodonClient
 from training_load import (
     aggregate_power_curve, compute_hr_tss, compute_np, compute_peak_powers,
-    compute_trimp, compute_tss, compute_zone_times,
+    compute_trimp, compute_tss, compute_zone_times, fit_critical_power,
 )
 from inference import infer_training_params
 
@@ -213,6 +213,18 @@ def _compute_and_store_metrics(activity_id: int, uid: int, cfg: dict, stream: li
             if new_hr <= 220 and new_hr > cached_f and (not cached_f or new_hr <= cached_f + 10):
                 set_setting(DB_PATH, uid, "inference", "max_hr", str(round(new_hr, 1)))
                 print(f"[metrics] Updated inferred max HR: {new_hr:.0f} bpm")
+
+        if peaks and row.get("start_date"):
+            cumulative = get_all_peak_powers(
+                DB_PATH, uid, before_date=row["start_date"]
+            )
+            cumulative_mmp = aggregate_power_curve(cumulative)
+            cp, w_prime = fit_critical_power(cumulative_mmp)
+            if cp:
+                upsert_cp_history(
+                    DB_PATH, uid, activity_id, row["start_date"],
+                    cp, w_prime, len(cumulative),
+                )
 
     except Exception as e:
         print(f"[metrics] Failed for {activity_id}: {e}")

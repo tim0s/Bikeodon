@@ -308,6 +308,18 @@ def init_db(db_path):
             status          TEXT NOT NULL DEFAULT 'pending'
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS cp_history (
+            id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id            INTEGER NOT NULL,
+            activity_id        INTEGER NOT NULL,
+            activity_date      TEXT NOT NULL,
+            cp_watts           REAL NOT NULL,
+            w_prime_joules     REAL NOT NULL,
+            basis_activities   INTEGER NOT NULL DEFAULT 0,
+            UNIQUE(user_id, activity_id)
+        )
+    """)
 
     # Indexes — safe to run on existing DBs (IF NOT EXISTS)
     for ddl in [
@@ -321,6 +333,8 @@ def init_db(db_path):
         "  ON following(local_username)",
         "CREATE INDEX IF NOT EXISTS idx_feed_items_local_published"
         "  ON feed_items(local_username, published DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_cp_history_user_date"
+        "  ON cp_history(user_id, activity_date ASC)",
     ]:
         conn.execute(ddl)
 
@@ -1212,10 +1226,51 @@ def get_daily_loads(db_path, user_id: int) -> dict:
     return result
 
 
+def upsert_cp_history(db_path, user_id: int, activity_id: int,
+                      activity_date: str, cp_watts: float,
+                      w_prime_joules: float, basis_activities: int) -> None:
+    conn = _conn(db_path)
+    try:
+        conn.execute(
+            "INSERT INTO cp_history"
+            " (user_id, activity_id, activity_date, cp_watts, w_prime_joules, basis_activities)"
+            " VALUES (?,?,?,?,?,?)"
+            " ON CONFLICT(user_id, activity_id) DO UPDATE SET"
+            "   activity_date=excluded.activity_date,"
+            "   cp_watts=excluded.cp_watts,"
+            "   w_prime_joules=excluded.w_prime_joules,"
+            "   basis_activities=excluded.basis_activities",
+            (user_id, activity_id, activity_date, cp_watts, w_prime_joules, basis_activities),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_cp_history(db_path, user_id: int) -> list:
+    """Return [{date, cp, w_prime, basis}] ordered chronologically."""
+    conn = _conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT activity_date, cp_watts, w_prime_joules, basis_activities"
+            " FROM cp_history WHERE user_id=? ORDER BY activity_date ASC",
+            (user_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [
+        {"date": r["activity_date"][:10], "cp": round(r["cp_watts"]),
+         "w_prime": round(r["w_prime_joules"]), "basis": r["basis_activities"]}
+        for r in rows
+    ]
+
+
 def get_all_peak_powers(db_path, user_id: int, days: int | None = None,
-                        exclude_id: int | None = None) -> list:
+                        exclude_id: int | None = None,
+                        before_date: str | None = None) -> list:
     """
     Return list of parsed peak_power dicts for all activities (or last `days` days).
+    before_date: ISO date string — only include activities on or before this date.
     exclude_id: omit a specific activity (used for breakthrough detection).
     """
     conn = _conn(db_path)
@@ -1235,6 +1290,20 @@ def get_all_peak_powers(db_path, user_id: int, days: int | None = None,
                     "SELECT peak_power_json FROM activities"
                     " WHERE user_id=? AND peak_power_json IS NOT NULL AND start_date >= ?",
                     (user_id, cutoff),
+                ).fetchall()
+        elif before_date is not None:
+            if exclude_id is not None:
+                rows = conn.execute(
+                    "SELECT peak_power_json FROM activities"
+                    " WHERE user_id=? AND peak_power_json IS NOT NULL"
+                    " AND start_date <= ? AND id != ?",
+                    (user_id, before_date, exclude_id),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT peak_power_json FROM activities"
+                    " WHERE user_id=? AND peak_power_json IS NOT NULL AND start_date <= ?",
+                    (user_id, before_date),
                 ).fetchall()
         else:
             if exclude_id is not None:
@@ -1279,7 +1348,8 @@ def get_activities_without_metrics(db_path, user_id: int) -> list:
         rows = conn.execute(
             "SELECT * FROM activities"
             " WHERE user_id=? AND metrics_computed_at IS NULL"
-            " AND source_file IS NOT NULL",
+            " AND source_file IS NOT NULL"
+            " ORDER BY start_date ASC",
             (user_id,),
         ).fetchall()
     finally:

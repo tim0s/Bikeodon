@@ -27,7 +27,7 @@ from config import DB_PATH, _base_cfg, STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET, S
 from database import (
     _conn, attach_source_file, clear_rendered, count_activities, create_user,
     find_overlapping_activity, get_activity, get_all_peak_powers,
-    get_daily_loads, get_followers, get_following,
+    get_cp_history, get_daily_loads, get_followers, get_following,
     get_setting, get_site_setting, get_user_by_id,
     get_user_by_username, get_user_stats, get_zone_totals, get_zones, init_db,
     list_activities, load_user_config, mark_ap_posted,
@@ -703,6 +703,8 @@ def me():
     hr_zone_chart_json    = _zone_chart_data(hr_zones,    hr_totals)
     power_zone_chart_json = _zone_chart_data(power_zones, power_totals)
 
+    cp_history = get_cp_history(DB_PATH, uid)
+
     profile_row = get_user_by_id(DB_PATH, uid)
 
     followers = get_followers(DB_PATH, current_user.username)
@@ -742,6 +744,7 @@ def me():
         curve_recent=json.dumps(curve_recent),
         wpk_all=json.dumps(wpk_all),
         wpk_recent=json.dumps(wpk_recent),
+        cp_history_json=json.dumps(cp_history),
         followers=followers,
         following=following,
         following_urls=following_urls,

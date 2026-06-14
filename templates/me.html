@@ -519,8 +519,40 @@
   const curveRecent = {{ curve_recent | safe }};
   const wpkAll      = {{ wpk_all | safe }};
   const wpkRecent   = {{ wpk_recent | safe }};
-  const labels      = ["5s","30s","1min","5min","20min","60min"];
-  const durations   = [5, 30, 60, 300, 1200, 3600];
+
+  // Build display labels from the keys actually present in the data.
+  // We use a fixed set of "display" durations (seconds) and pick the closest
+  // stored key for each, so the x-axis is readable regardless of MMP grid version.
+  const _displayDurations = [5, 15, 30, 60, 120, 300, 600, 1200, 1800, 3600];
+  const _labelToSecs = l => {
+    if (l.endsWith('min')) return parseInt(l) * 60;
+    if (l.endsWith('h'))   return parseInt(l) * 3600;
+    if (l.endsWith('s'))   return parseInt(l);
+    return null;
+  };
+  const _secsToLabel = s => {
+    if (s >= 3600 && s % 3600 === 0) return (s / 3600) + 'h';
+    if (s >= 60   && s % 60 === 0)   return (s / 60)   + 'min';
+    return s + 's';
+  };
+  const _allKeys = Object.keys(curveAll).filter(k => _labelToSecs(k) !== null)
+    .sort((a, b) => _labelToSecs(a) - _labelToSecs(b));
+  // For each display duration pick the nearest stored key
+  const labels    = [];
+  const durations = [];
+  for (const target of _displayDurations) {
+    let best = null, bestDiff = Infinity;
+    for (const k of _allKeys) {
+      const diff = Math.abs(_labelToSecs(k) - target);
+      if (diff < bestDiff) { bestDiff = diff; best = k; }
+    }
+    if (best && bestDiff / target < 0.25) { labels.push(best); durations.push(_labelToSecs(best)); }
+  }
+  // Fallback to legacy fixed labels when no new-format data present
+  if (!labels.length) {
+    labels.push(...["5s","30s","1min","5min","20min","60min"]);
+    durations.push(...[5, 30, 60, 300, 1200, 3600]);
+  }
 
   const allData    = labels.map(l => curveAll[l]    ?? null);
   const recentData = labels.map(l => curveRecent[l] ?? null);
@@ -651,6 +683,90 @@
     chart.options.scales.y.max = computeMax(d0, d1);
     chart.update();
   };
+})();
+</script>
+{% endif %}
+
+{% if cp_history_json != '[]' %}
+<article>
+  <header><strong>Critical Power over time</strong></header>
+  <div style="position:relative;height:240px">
+    <canvas id="cpHistoryChart"></canvas>
+  </div>
+  <footer>
+    <small class="muted">
+      CP at each point is fitted from all power activities up to that date using the Monod–Scherrer model.
+      Upward trend = improving aerobic engine. Gaps appear when activities have no power data.
+    </small>
+  </footer>
+</article>
+
+<script src="{{ url_for('static', filename='chart.min.js') }}"></script>
+<script>
+(function () {
+  const history = {{ cp_history_json | safe }};
+  const ctx = document.getElementById('cpHistoryChart').getContext('2d');
+  new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: history.map(d => d.date),
+      datasets: [
+        {
+          label: 'Critical Power (W)',
+          data: history.map(d => d.cp),
+          borderColor: '#a259ff',
+          backgroundColor: 'rgba(162,89,255,0.08)',
+          borderWidth: 2,
+          pointRadius: 2,
+          tension: 0.3,
+          fill: true,
+          yAxisID: 'yCP',
+        },
+        {
+          label: "W' (kJ)",
+          data: history.map(d => Math.round(d.w_prime / 100) / 10),
+          borderColor: '#4fc3f7',
+          backgroundColor: 'transparent',
+          borderWidth: 1.5,
+          borderDash: [4, 3],
+          pointRadius: 0,
+          tension: 0.3,
+          fill: false,
+          yAxisID: 'yWp',
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { labels: { color: '#ccc' } },
+        tooltip: {
+          callbacks: {
+            label: item => item.datasetIndex === 0
+              ? ` CP: ${item.raw} W`
+              : ` W': ${item.raw} kJ`,
+          },
+        },
+      },
+      scales: {
+        x: { ticks: { maxTicksLimit: 12, color: '#aaa' }, grid: { color: '#2a2a35' } },
+        yCP: {
+          position: 'left',
+          ticks: { color: '#a259ff', callback: v => v + ' W' },
+          grid: { color: '#2a2a35' },
+          beginAtZero: false,
+        },
+        yWp: {
+          position: 'right',
+          ticks: { color: '#4fc3f7', callback: v => v + ' kJ' },
+          grid: { drawOnChartArea: false },
+          beginAtZero: false,
+        },
+      },
+    },
+  });
 })();
 </script>
 {% endif %}
