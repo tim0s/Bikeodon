@@ -1487,6 +1487,20 @@ def accept_following(db_path, local_username: str, actor_url: str):
         conn.close()
 
 
+def delete_feed_item(db_path, local_username: str, object_id: str, actor_url: str):
+    """Remove a feed item, but only if it was posted by actor_url (prevents spoofed deletes)."""
+    conn = _conn(db_path)
+    try:
+        conn.execute(
+            "DELETE FROM feed_items"
+            " WHERE local_username=? AND object_id=? AND actor_url=?",
+            (local_username, object_id, actor_url),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def add_feed_item(db_path, local_username: str, actor_url: str, actor_name: str | None,
                   actor_avatar: str | None, object_id: str, object_url: str | None,
                   content: str | None, published: str | None, attachments_json: str | None):

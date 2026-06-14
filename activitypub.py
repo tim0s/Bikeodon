@@ -39,6 +39,7 @@ from database import (
     get_nodeinfo_stats,
     add_feed_item,
     add_reaction, remove_reaction,
+    delete_feed_item,
     get_following as _db_get_following,
 )
 from database import _conn as _db_conn
@@ -347,6 +348,8 @@ def inbox(username):
         obj = activity.get("object", {})
         if isinstance(obj, dict) and obj.get("type") == "Note":
             _handle_create_note(username, activity, obj, db_path)
+    elif activity_type == "Delete":
+        _handle_delete_note(username, activity, db_path)
     elif activity_type == "Like":
         _handle_like(username, activity, db_path)
     elif activity_type == "Announce":
@@ -453,6 +456,15 @@ def _handle_create_note(local_username, activity, note_obj, db_path):
         object_id, object_url, content, published,
         json.dumps(attachments) if attachments else None,
     )
+
+
+def _handle_delete_note(local_username: str, activity: dict, db_path: str):
+    actor_url = activity.get("actor", "")
+    obj = activity.get("object", "")
+    object_id = obj if isinstance(obj, str) else (obj.get("id", "") if isinstance(obj, dict) else "")
+    if actor_url and object_id:
+        delete_feed_item(db_path, local_username, object_id, actor_url)
+        _log.info("Deleted feed item %s from %s", object_id, actor_url)
 
 
 def _activity_id_from_note_url(note_url: str, local_actor_base: str) -> int | None:
