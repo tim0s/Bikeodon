@@ -9,7 +9,6 @@ Usage:
   python main.py render 12345678   # render map for a specific activity ID
   python main.py charts 12345678   # generate HR/power charts
   python main.py post 12345678     # render and post to Mastodon
-  python main.py daemon            # render unrendered activities and auto-post scheduled ones
   python main.py config list       # show all per-user settings
   python main.py config get <area> <key>
   python main.py config set <area> <key> <value>
@@ -34,7 +33,7 @@ from database import (
     clear_rendered, get_activity, get_all_users, get_latest_activity_date,
     get_setting, get_site_setting, get_unposted,
     get_unrendered, get_user_by_username, init_db, list_activities, list_settings,
-    load_user_config, log_daemon_run, mark_posted, mark_rendered, save_activity_file,
+    load_user_config, mark_posted, mark_rendered, save_activity_file,
     set_admin, set_setting, set_site_setting, upsert_activity,
 )
 from fit_encoder import generate_fit
@@ -424,15 +423,6 @@ def _do_post(row, cfg, db_path: str, out_dir: str, rerender: bool = False, user_
 # Daemon
 # ---------------------------------------------------------------------------
 
-def cmd_daemon(args, cfg):
-    print("The bikeodon-daemon service is no longer needed.")
-    print("Strava sync, rendering, and Mastodon posting are all handled by the web process.")
-    print("You can disable the bikeodon-daemon systemd service.")
-    print("Sleeping to avoid a systemd restart loop — stop this service instead.")
-    while True:
-        time.sleep(3600)
-
-
 def _now():
     from datetime import datetime, timezone
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
@@ -664,8 +654,6 @@ def main():
     p_post.add_argument("--dry-run",  action="store_true", help="Preview without publishing")
     p_post.add_argument("--rerender", action="store_true", help="Re-render even if image exists")
 
-    sub.add_parser("daemon", help="Render unrendered activities and auto-post scheduled ones")
-
     p_webhook = sub.add_parser("webhook", help="Manage Strava webhook subscription")
     wh_sub = p_webhook.add_subparsers(dest="webhook_cmd")
     wh_sub.add_parser("status", help="Show current subscription")
@@ -709,7 +697,7 @@ def main():
 
     args.base_cfg = _base
 
-    if args.command in ("sync", "daemon", "invite-code", "admin", "webhook"):
+    if args.command in ("sync", "invite-code", "admin", "webhook"):
         args.user_id = None
         cfg = load_user_config(_db_path, 1, _base)
     else:
@@ -722,7 +710,6 @@ def main():
         "render":      cmd_render,
         "charts":      cmd_charts,
         "post":        cmd_post,
-        "daemon":      cmd_daemon,
         "webhook":     cmd_webhook,
         "admin":       cmd_admin,
         "invite-code": cmd_invite_code,

@@ -8,7 +8,3 @@ map:
   tiles:
     # Tile images are cached on disk to avoid re-fetching across renders.
     cache_dir: ".tile_cache"
-
-daemon:
-  # How often the daemon polls Strava for new activities (minutes).
-  interval_minutes: 15

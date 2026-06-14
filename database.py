@@ -148,17 +148,6 @@ def init_db(db_path):
             pass
 
     conn.execute("""
-        CREATE TABLE IF NOT EXISTS daemon_runs (
-            id                INTEGER PRIMARY KEY AUTOINCREMENT,
-            started_at        TEXT NOT NULL,
-            finished_at       TEXT NOT NULL,
-            duration_secs     REAL NOT NULL,
-            activities_synced INTEGER NOT NULL DEFAULT 0,
-            error             TEXT
-        )
-    """)
-
-    conn.execute("""
         CREATE TABLE IF NOT EXISTS settings (
             user_id  INTEGER NOT NULL REFERENCES users(id),
             area     TEXT NOT NULL,
@@ -334,6 +323,9 @@ def init_db(db_path):
         "  ON feed_items(local_username, published DESC)",
     ]:
         conn.execute(ddl)
+
+    # Drop tables that have been superseded
+    conn.execute("DROP TABLE IF EXISTS daemon_runs")
 
     # Drop columns that have been superseded (safe to re-run — ignored if already gone)
     for drop_col in ["points_json", "start_lat", "start_lon"]:
@@ -527,7 +519,6 @@ def load_user_config(db_path: str, user_id: int, base_cfg: dict) -> dict:
 
     cfg = {
         "database": base_cfg.get("database", {}),
-        "daemon":   base_cfg.get("daemon", {}),
         "strava": {},
         "mastodon": {
             "instance":      txt("mastodon", "instance",   "https://mastodon.social"),
@@ -1030,42 +1021,16 @@ def create_user(db_path, username: str, password_hash: str) -> int:
     return user_id
 
 
-def log_daemon_run(db_path, started_at: str, finished_at: str,
-                   duration_secs: float, activities_synced: int, error: str = None):
-    conn = _conn(db_path)
-    try:
-        conn.execute(
-            "INSERT INTO daemon_runs (started_at, finished_at, duration_secs, activities_synced, error)"
-            " VALUES (?,?,?,?,?)",
-            (started_at, finished_at, duration_secs, activities_synced, error),
-        )
-        # Keep only the last 100 runs
-        conn.execute(
-            "DELETE FROM daemon_runs WHERE id NOT IN"
-            " (SELECT id FROM daemon_runs ORDER BY id DESC LIMIT 100)"
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-
 def get_admin_stats(db_path) -> dict:
     conn = _conn(db_path)
     try:
         user_count     = conn.execute("SELECT COUNT(*) FROM users WHERE username IS NOT NULL").fetchone()[0]
         activity_count = conn.execute("SELECT COUNT(*) FROM activities").fetchone()[0]
-        recent_runs    = conn.execute(
-            "SELECT started_at, finished_at, duration_secs, activities_synced, error"
-            " FROM daemon_runs ORDER BY id DESC LIMIT 20"
-        ).fetchall()
     finally:
         conn.close()
-    interval_minutes = 15
     return {
-        "user_count":      user_count,
-        "activity_count":  activity_count,
-        "recent_runs":     [dict(r) for r in recent_runs],
-        "interval_minutes": interval_minutes,
+        "user_count":     user_count,
+        "activity_count": activity_count,
     }
 
 
