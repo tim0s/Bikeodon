@@ -406,6 +406,10 @@ def ap_post_activity(activity_id):
         flash("Activity not found.", "error")
         return redirect(url_for("index"))
 
+    if row["ap_posted_at"]:
+        flash("Already posted to followers.", "info")
+        return redirect(request.referrer or url_for("activity", activity_id=activity_id))
+
     user     = get_user_by_id(DB_PATH, uid)
     username = user["username"]
     followers = get_followers(DB_PATH, username)
@@ -426,6 +430,8 @@ def ap_post_activity(activity_id):
     ]
 
     create_activity = _activity_row_to_ap(row, actor_url, outbox_url, image_urls=image_urls)
+    # Stable unique Create ID — avoids Mastodon deduplication on retries without allowing duplicates
+    create_activity["id"] = create_activity["object"]["id"] + "/create"
     _, priv_pem = get_or_create_keypair(DB_PATH, uid)
     key_id = f"{actor_url}#main-key"
 
