@@ -13,11 +13,12 @@ _CRC_TABLE = [
 
 def _crc(data: bytes, crc: int = 0) -> int:
     for byte in data:
-        crc_new = (byte ^ crc) & 0x0F
-        crc >>= 4
-        crc ^= _CRC_TABLE[crc_new]
-        crc_new = (byte >> 4) & 0x0F
-        crc ^= _CRC_TABLE[crc_new]
+        tmp = _CRC_TABLE[crc & 0xF]
+        crc = (crc >> 4) & 0x0FFF
+        crc = crc ^ tmp ^ _CRC_TABLE[byte & 0xF]
+        tmp = _CRC_TABLE[crc & 0xF]
+        crc = (crc >> 4) & 0x0FFF
+        crc = crc ^ tmp ^ _CRC_TABLE[(byte >> 4) & 0xF]
     return crc
 
 
