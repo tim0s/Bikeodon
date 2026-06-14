@@ -1,16 +1,17 @@
 {% extends "base.html" %}
-{% block title %}Bikeodon – Bike rides on Mastodon{% endblock %}
+{% block title %}Bikeodon – Bike rides on the Fediverse{% endblock %}
 {% block content %}
 
 {# ── Hero ─────────────────────────────────────────────────────────────────── #}
 <section style="text-align:center;padding:2.5rem 1rem 2rem">
   <h1 style="font-size:clamp(1.6rem,4vw,2.4rem);margin-bottom:.5rem">
-    Your bike rides on Mastodon — beautifully.
+    Your bike rides on the Fediverse — beautifully.
   </h1>
   <p style="font-size:1.1rem;color:#555;max-width:560px;margin:.5rem auto 1.5rem">
-    Connect Strava or upload a FIT/GPX file. Bikeodon generates a route map,
-    heart rate chart, and power analysis, then posts everything to your Mastodon
-    account with one click. A private training dashboard is included.
+    Connect Strava or upload a FIT/GPX file. Bikeodon renders a route map,
+    HR and power charts, then shares your ride to Mastodon and the wider
+    Fediverse. Follow other cyclists, like and boost their posts — all from
+    your own server.
   </p>
   <div style="display:flex;gap:.75rem;justify-content:center;flex-wrap:wrap">
     <a href="{{ url_for('register') }}" role="button">Get started</a>
@@ -50,32 +51,35 @@
 
 {# ── Concept ──────────────────────────────────────────────────────────────── #}
 <section style="max-width:700px;margin:0 auto 3rem">
-  <h2>What is Mastodon?</h2>
+  <h2>What is the Fediverse?</h2>
   <p>
-    <a href="https://joinmastodon.org" target="_blank" rel="noopener">Mastodon</a> is a
-    free, open-source social network — like Twitter/X but decentralised.
-    Instead of one company controlling everything, thousands of independent servers
-    (<em>instances</em>) run the same software and talk to each other.
+    The Fediverse is a decentralised social network built on open standards.
+    <a href="https://joinmastodon.org" target="_blank" rel="noopener">Mastodon</a> is the
+    most popular server, but thousands of independent instances run compatible software
+    and talk to each other using the
+    <a href="https://activitypub.rocks" target="_blank" rel="noopener">ActivityPub</a> protocol.
     You own your account and your data. No algorithm, no ads, no engagement bait.
   </p>
   <p>
     Communities form around shared interests — cycling, running, photography, tech.
-    Posting your rides there means your followers see exactly what you share,
-    nothing more, nothing less.
+    Your followers see exactly what you share, nothing more, nothing less.
   </p>
 
   <h2 style="margin-top:2rem">How Bikeodon fits in</h2>
   <p>
-    Bikeodon is a self-hosted bridge between your training data and your Mastodon account.
-    Bring activities in via <strong>Strava</strong> (automatic webhook) or by uploading
+    Bikeodon is a self-hosted Fediverse server for cyclists. It is not just a posting
+    tool — it is a full ActivityPub actor you can follow from Mastodon or any compatible
+    app. Bring activities in via <strong>Strava</strong> (automatic webhook) or by uploading
     <strong>FIT, GPX, or TCX files</strong> directly. Bikeodon then:
   </p>
   <ul>
     <li>Renders a <strong>route map</strong> from the GPS track</li>
     <li>Generates <strong>HR and power zone charts</strong> where the data exists</li>
     <li>Computes <strong>TSS / hrTSS</strong> and tracks fitness (CTL / ATL / TSB)</li>
-    <li>Builds a <strong>Critical Power model</strong> from your mean maximal power curve</li>
-    <li>Posts to Mastodon with a fully customisable text template</li>
+    <li>Builds a <strong>Critical Power model</strong> and tracks your CP over time</li>
+    <li>Shares rides to your Fediverse followers with map and charts attached</li>
+    <li>Shows a <strong>home feed</strong> of posts from people you follow</li>
+    <li>Handles <strong>likes, boosts, and replies</strong> from anywhere on the Fediverse</li>
   </ul>
   <p>
     Everything runs on your own server — a single Oracle Cloud free-tier VM handles it
