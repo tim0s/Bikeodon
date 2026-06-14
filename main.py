@@ -121,33 +121,55 @@ def _sync_user(db_path: str, user_id: int, username: str,
         after_ts = dt.timestamp()
         print(f"  [{username}] Fetching activities after {latest[:10]}…")
     elif full:
-        print(f"  [{username}] Full sync — fetching all activities from Strava…")
+        print(f"  [{username}] Full sync — fetching in pages of 20…")
     else:
         print(f"  [{username}] No existing activities — fetching up to {count} most recent…")
 
-    if full:
-        ids = client.get_all_activity_ids(after=after_ts)
-    else:
-        ids = client.get_activity_ids(n=count, after=after_ts)
-    if not ids:
-        print(f"  [{username}] No new activities.")
-        return []
-
     files_dir = os.path.join((base_cfg or {}).get("map", {}).get("output_dir", "output"), "activity_files")
     new_ids = []
-    for activity_id in ids:
-        try:
-            data = client.get_activity(activity_id)
-            result = client.get_original_file(activity_id)
-            if result:
-                content, filename = result
-                data["source_file"], data["source_file_sha256"] = \
-                    save_activity_file(files_dir, activity_id, user_id, content, filename)
-            upsert_activity(db_path, data, user_id=user_id)
-            print(f"    + {data['name']}  ({(data.get('distance') or 0) / 1000:.1f} km)")
-            new_ids.append(activity_id)
-        except Exception as e:
-            print(f"    Failed to fetch {activity_id}: {e}")
+
+    if full:
+        # Fetch and process 20 IDs at a time so each batch is saved before the
+        # next page of IDs is requested.  This ensures no API quota is spent on
+        # IDs whose data we haven't stored yet.
+        page = 1
+        while True:
+            ids = client.get_activity_ids(n=20, after=after_ts, page=page)
+            if not ids:
+                break
+            print(f"  [{username}] Page {page}: {len(ids)} activities…")
+            for activity_id in ids:
+                try:
+                    data = client.get_activity(activity_id)
+                    result = client.get_original_file(activity_id)
+                    if result:
+                        content, filename = result
+                        data["source_file"], data["source_file_sha256"] = \
+                            save_activity_file(files_dir, activity_id, user_id, content, filename)
+                    upsert_activity(db_path, data, user_id=user_id)
+                    print(f"    + {data['name']}  ({(data.get('distance') or 0) / 1000:.1f} km)")
+                    new_ids.append(activity_id)
+                except Exception as e:
+                    print(f"    Failed {activity_id}: {e}")
+            page += 1
+    else:
+        ids = client.get_activity_ids(n=count, after=after_ts)
+        if not ids:
+            print(f"  [{username}] No new activities.")
+            return []
+        for activity_id in ids:
+            try:
+                data = client.get_activity(activity_id)
+                result = client.get_original_file(activity_id)
+                if result:
+                    content, filename = result
+                    data["source_file"], data["source_file_sha256"] = \
+                        save_activity_file(files_dir, activity_id, user_id, content, filename)
+                upsert_activity(db_path, data, user_id=user_id)
+                print(f"    + {data['name']}  ({(data.get('distance') or 0) / 1000:.1f} km)")
+                new_ids.append(activity_id)
+            except Exception as e:
+                print(f"    Failed {activity_id}: {e}")
 
     return new_ids
 

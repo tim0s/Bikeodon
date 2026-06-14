@@ -113,32 +113,16 @@ class StravaClient:
 
     # ── Public API ──────────────────────────────────────────────────────────
 
-    def get_activity_ids(self, n: int = 10, after: float | None = None) -> list[int]:
+    def get_activity_ids(self, n: int = 10, after: float | None = None,
+                         page: int = 1) -> list[int]:
         self._ensure_fresh()
-        params = {"per_page": n}
+        params = {"per_page": n, "page": page}
         if after is not None:
             params["after"] = int(after)
         resp = self._get(f"{_API}/athlete/activities", params=params)
         resp.raise_for_status()
         return [a["id"] for a in resp.json()]
 
-    def get_all_activity_ids(self, after: float | None = None) -> list[int]:
-        """Fetch all activity IDs by paginating through every page (max 200/page)."""
-        self._ensure_fresh()
-        ids = []
-        page = 1
-        while True:
-            params = {"per_page": 200, "page": page}
-            if after is not None:
-                params["after"] = int(after)
-            resp = self._get(f"{_API}/athlete/activities", params=params)
-            resp.raise_for_status()
-            batch = [a["id"] for a in resp.json()]
-            if not batch:
-                break
-            ids.extend(batch)
-            page += 1
-        return ids
 
     def get_activity(self, activity_id: int) -> dict:
         self._ensure_fresh()

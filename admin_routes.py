@@ -7,7 +7,8 @@ from flask_login import current_user, login_required
 from config import DB_PATH, _base_cfg, STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET
 from database import (
     get_activity, get_admin_stats, get_error_activities, get_recent_jobs,
-    get_setting, load_user_config, reset_metrics_computed, set_setting, upsert_activity,
+    get_setting, load_user_config, reset_metrics_computed, save_activity_file,
+    set_setting, upsert_activity,
 )
 from tasks import _backfill_lock, _render_and_track
 
@@ -59,21 +60,32 @@ def register_routes(app):
                 client_secret=STRAVA_CLIENT_SECRET, refresh_tok=refresh_tok,
                 expires_at=expires_at, on_refresh=_on_refresh,
             )
-            print(f"[full-sync] Fetching all activity IDs for user {uid}…")
-            all_ids = client.get_all_activity_ids()
-            print(f"[full-sync] {len(all_ids)} total activities found.")
+            print(f"[full-sync] Fetching and processing activities in pages of 20…")
+            files_dir = _base_cfg["map"].get("output_dir", "output") + "/activity_files"
 
             new_ids = []
-            for activity_id in all_ids:
-                if get_activity(DB_PATH, activity_id, user_id=uid):
-                    continue
-                try:
-                    data = client.get_activity(activity_id)
-                    upsert_activity(DB_PATH, data, user_id=uid)
-                    new_ids.append(activity_id)
-                    print(f"[full-sync] + {data['name']}")
-                except Exception as e:
-                    print(f"[full-sync] Failed {activity_id}: {e}")
+            page = 1
+            while True:
+                ids = client.get_activity_ids(n=20, page=page)
+                if not ids:
+                    break
+                print(f"[full-sync] Page {page}: {len(ids)} activities…")
+                for activity_id in ids:
+                    if get_activity(DB_PATH, activity_id, user_id=uid):
+                        continue
+                    try:
+                        data = client.get_activity(activity_id)
+                        result = client.get_original_file(activity_id)
+                        if result:
+                            content, filename = result
+                            data["source_file"], data["source_file_sha256"] = \
+                                save_activity_file(files_dir, activity_id, uid, content, filename)
+                        upsert_activity(DB_PATH, data, user_id=uid)
+                        new_ids.append(activity_id)
+                        print(f"[full-sync] + {data['name']}")
+                    except Exception as e:
+                        print(f"[full-sync] Failed {activity_id}: {e}")
+                page += 1
 
             if new_ids:
                 out_dir = _base_cfg["map"].get("output_dir", "output")
