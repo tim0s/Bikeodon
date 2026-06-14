@@ -1487,6 +1487,20 @@ def accept_following(db_path, local_username: str, actor_url: str):
         conn.close()
 
 
+def update_following_profile(db_path, local_username: str, actor_url: str,
+                             display_name: str | None, avatar_url: str | None):
+    conn = _conn(db_path)
+    try:
+        conn.execute(
+            "UPDATE following SET display_name=?, avatar_url=?"
+            " WHERE local_username=? AND actor_url=?",
+            (display_name, avatar_url, local_username, actor_url),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def delete_feed_item(db_path, local_username: str, object_id: str, actor_url: str):
     """Remove a feed item, but only if it was posted by actor_url (prevents spoofed deletes)."""
     conn = _conn(db_path)

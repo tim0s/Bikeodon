@@ -40,6 +40,7 @@ from database import (
     add_feed_item,
     add_reaction, remove_reaction,
     delete_feed_item,
+    update_following_profile,
     get_following as _db_get_following,
 )
 from database import _conn as _db_conn
@@ -348,6 +349,10 @@ def inbox(username):
         obj = activity.get("object", {})
         if isinstance(obj, dict) and obj.get("type") == "Note":
             _handle_create_note(username, activity, obj, db_path)
+    elif activity_type == "Update":
+        obj = activity.get("object", {})
+        if isinstance(obj, dict) and obj.get("type") in ("Person", "Service", "Application", "Group", "Organization"):
+            _handle_update_person(username, activity, obj, db_path)
     elif activity_type == "Delete":
         _handle_delete_note(username, activity, db_path)
     elif activity_type == "Like":
@@ -456,6 +461,23 @@ def _handle_create_note(local_username, activity, note_obj, db_path):
         object_id, object_url, content, published,
         json.dumps(attachments) if attachments else None,
     )
+
+
+def _handle_update_person(local_username: str, activity: dict, obj: dict, db_path: str):
+    actor_url = activity.get("actor", "")
+    # Only update if the actor is updating their own profile
+    if not actor_url or obj.get("id") != actor_url:
+        return
+    # Only update accounts we actually follow
+    following = _db_get_following(db_path, local_username)
+    if not any(f["actor_url"] == actor_url for f in following):
+        return
+    display_name = obj.get("name") or obj.get("preferredUsername") or ""
+    icon = obj.get("icon", {})
+    avatar_url = icon.get("url", "") if isinstance(icon, dict) else ""
+    update_following_profile(db_path, local_username, actor_url,
+                             display_name or None, avatar_url or None)
+    _log.info("Updated profile for %s", actor_url)
 
 
 def _handle_delete_note(local_username: str, activity: dict, db_path: str):
