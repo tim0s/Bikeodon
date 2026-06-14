@@ -153,6 +153,7 @@ def render_hr_chart(stream, cfg, out_path: str, db_path: str | None = None, user
     fig, (ax_time, ax_dist) = plt.subplots(
         2, 1, figsize=(w, h), dpi=dpi,
         gridspec_kw={"height_ratios": [2.2, 1], "hspace": 0.65},
+        constrained_layout=True,
     )
     _apply_style(fig, [ax_time, ax_dist], cfg)
 
@@ -185,8 +186,7 @@ def render_hr_chart(stream, cfg, out_path: str, db_path: str | None = None, user
     # ── zone distribution ──
     _draw_zone_bar(ax_dist, zones, pcts, cfg)
 
-    plt.tight_layout(pad=1.2)
-    fig.savefig(out_path, dpi=dpi, bbox_inches="tight", facecolor=fig.get_facecolor())
+    fig.savefig(out_path, dpi=dpi, facecolor=fig.get_facecolor())
     plt.close(fig)
     return out_path
 
@@ -225,6 +225,7 @@ def render_power_chart(stream, cfg, out_path: str, db_path: str | None = None, u
     fig, (ax_time, ax_dist) = plt.subplots(
         2, 1, figsize=(w, h), dpi=dpi,
         gridspec_kw={"height_ratios": [2.2, 1], "hspace": 0.65},
+        constrained_layout=True,
     )
     _apply_style(fig, [ax_time, ax_dist], cfg)
 
@@ -247,8 +248,7 @@ def render_power_chart(stream, cfg, out_path: str, db_path: str | None = None, u
     # ── zone distribution ──
     _draw_zone_bar(ax_dist, zones, pcts, cfg)
 
-    plt.tight_layout(pad=1.2)
-    fig.savefig(out_path, dpi=dpi, bbox_inches="tight", facecolor=fig.get_facecolor())
+    fig.savefig(out_path, dpi=dpi, facecolor=fig.get_facecolor())
     plt.close(fig)
     return out_path
 
