@@ -8,7 +8,7 @@ from flask_login import current_user, login_required
 from config import DB_PATH, _base_cfg, STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET, SYNC_COOLDOWN_SECS
 from database import (
     _conn, get_activity, get_setting, get_user_by_athlete_id,
-    load_user_config, set_setting, upsert_activity,
+    load_user_config, save_activity_file, set_setting, upsert_activity,
 )
 from strava import StravaClient, exchange_code, strava_auth_url
 from tasks import _render_and_track, request_backfill
@@ -32,6 +32,21 @@ def _make_strava_client(uid: int):
         client_secret=STRAVA_CLIENT_SECRET, refresh_tok=refresh_tok,
         expires_at=expires_at, on_refresh=_on_refresh,
     )
+
+
+def _fetch_and_save_original(client, activity_id: int, uid: int) -> str | None:
+    """Download the original file from Strava and persist it. Returns the saved path."""
+    files_dir = os.path.join(_base_cfg["map"].get("output_dir", "output"), "activity_files")
+    try:
+        result = client.get_original_file(activity_id)
+        if result is None:
+            return None
+        content, filename = result
+        path, sha256 = save_activity_file(files_dir, activity_id, uid, content, filename)
+        return path, sha256
+    except Exception as e:
+        print(f"[strava] Could not fetch original file for {activity_id}: {e}")
+        return None
 
 
 def _sync_cooldown_remaining(uid: int) -> int:
@@ -83,6 +98,9 @@ def _handle_webhook_event(event: dict):
         except Exception:
             return
 
+        file_result = _fetch_and_save_original(client, obj_id, uid)
+        if file_result:
+            data["source_file"], data["source_file_sha256"] = file_result
         upsert_activity(DB_PATH, data, user_id=uid)
         cfg     = load_user_config(DB_PATH, uid, _base_cfg)
         out_dir = _base_cfg["map"].get("output_dir", "output")
@@ -124,6 +142,9 @@ def register_routes(app):
                     continue
                 try:
                     data = client.get_activity(activity_id)
+                    file_result = _fetch_and_save_original(client, activity_id, uid)
+                    if file_result:
+                        data["source_file"], data["source_file_sha256"] = file_result
                     upsert_activity(DB_PATH, data, user_id=uid)
                     new_ids.append(activity_id)
                     print(f"[manual-sync] + {data['name']}")

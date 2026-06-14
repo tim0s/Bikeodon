@@ -135,6 +135,30 @@ class StravaClient:
         resp.raise_for_status()
         return resp.json()
 
+    def get_original_file(self, activity_id: int) -> tuple[bytes, str] | None:
+        """
+        Download the original file for an activity.
+        Returns (content, filename) or None if unavailable.
+        Strava redirects to the file; requests follows automatically.
+        """
+        self._ensure_fresh()
+        resp = self._s.get(
+            f"{_API}/activities/{activity_id}/export_originalformat",
+            allow_redirects=True,
+        )
+        if resp.status_code in (404, 403):
+            return None
+        resp.raise_for_status()
+        # Derive filename from Content-Disposition or fall back to .fit
+        cd = resp.headers.get("Content-Disposition", "")
+        filename = f"{activity_id}.fit"
+        for part in cd.split(";"):
+            part = part.strip()
+            if part.startswith("filename="):
+                filename = part.split("=", 1)[1].strip().strip('"')
+                break
+        return resp.content, filename
+
     def _get_streams(self, activity_id: int) -> dict:
         keys = "latlng,altitude,heartrate,watts,time"
         resp = self._s.get(

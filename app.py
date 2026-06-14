@@ -31,7 +31,7 @@ from database import (
     get_setting, get_site_setting, get_stream, get_user_by_id,
     get_user_by_username, get_user_stats, get_zone_totals, get_zones, init_db,
     list_activities, load_user_config, mark_ap_posted,
-    set_activity_error, set_scheduled, set_setting, upsert_activity,
+    save_activity_file, set_activity_error, set_scheduled, set_setting, upsert_activity,
 )
 from activity_parser import parse_file
 from training_load import (
@@ -633,6 +633,9 @@ def upload():
                 enriched += 1
                 continue
 
+            files_dir = os.path.join(out_dir, "activity_files")
+            act["source_file"], act["source_file_sha256"] = \
+                save_activity_file(files_dir, act["id"], uid, content, f.filename)
             upsert_activity(DB_PATH, act, user_id=uid, source="upload")
             _render_and_track(act["id"], uid, cfg, out_dir)
             imported += 1

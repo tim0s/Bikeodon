@@ -33,8 +33,8 @@ from database import (
     clear_rendered, get_activity, get_all_users, get_latest_activity_date,
     get_points, get_setting, get_site_setting, get_stream, get_unposted,
     get_unrendered, get_user_by_username, init_db, list_activities, list_settings,
-    load_user_config, log_daemon_run, mark_posted, mark_rendered, set_admin,
-    set_setting, set_site_setting, upsert_activity,
+    load_user_config, log_daemon_run, mark_posted, mark_rendered, save_activity_file,
+    set_admin, set_setting, set_site_setting, upsert_activity,
 )
 from strava import StravaClient, delete_webhook, list_webhooks, register_webhook
 from map_renderer import render_activity_map
@@ -133,10 +133,16 @@ def _sync_user(db_path: str, user_id: int, username: str,
         print(f"  [{username}] No new activities.")
         return []
 
+    files_dir = os.path.join(cfg.get("map", {}).get("output_dir", "output"), "activity_files")
     new_ids = []
     for activity_id in ids:
         try:
             data = client.get_activity(activity_id)
+            result = client.get_original_file(activity_id)
+            if result:
+                content, filename = result
+                data["source_file"], data["source_file_sha256"] = \
+                    save_activity_file(files_dir, activity_id, user_id, content, filename)
             upsert_activity(db_path, data, user_id=user_id)
             print(f"    + {data['name']}  ({(data.get('distance') or 0) / 1000:.1f} km)")
             new_ids.append(activity_id)

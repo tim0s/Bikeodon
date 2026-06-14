@@ -24,6 +24,7 @@ VIEWPORTS = {
 PAGES = [
     ("/login",              False),
     ("/",                   True),
+    ("/activity/18853021065", True),
     ("/me",                 True),
     ("/me?tab=fitness",     True),
     ("/me?tab=zones",       True),

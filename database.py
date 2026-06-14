@@ -230,6 +230,8 @@ def init_db(db_path):
         ("hr_tss",               "REAL"),
         ("breakthroughs_json",   "TEXT"),
         ("average_speed",        "REAL"),
+        ("source_file",          "TEXT"),
+        ("source_file_sha256",   "TEXT"),
     ]:
         try:
             conn.execute(f"ALTER TABLE activities ADD COLUMN {col} {typedef}")
@@ -688,6 +690,25 @@ _METRICS_INVALIDATING_FIELDS = {
 }
 
 
+def save_activity_file(files_dir: str, activity_id, user_id: int,
+                       content: bytes, filename: str) -> tuple[str, str]:
+    """
+    Write the original activity file to disk.
+    Returns (path, sha256_hex) — both are stored in the DB.
+    Layout: <files_dir>/<user_id>/<activity_id>.<ext>
+    """
+    import os as _os
+    import hashlib as _hashlib
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "fit"
+    user_dir = _os.path.join(files_dir, str(user_id))
+    _os.makedirs(user_dir, exist_ok=True)
+    dest = _os.path.join(user_dir, f"{activity_id}.{ext}")
+    with open(dest, "wb") as fh:
+        fh.write(content)
+    sha256 = _hashlib.sha256(content).hexdigest()
+    return dest, sha256
+
+
 def upsert_activity(db_path, data: dict, user_id: int, source: str = "strava"):
     conn = _conn(db_path)
     try:
@@ -719,13 +740,13 @@ def upsert_activity(db_path, data: dict, user_id: int, source: str = "strava"):
              distance, moving_time, elapsed_time, total_elevation_gain,
              average_speed, max_speed,
              average_heartrate, max_heartrate, average_watts, max_watts,
-             start_lat, start_lon, points_json, fetched_at,
+             start_lat, start_lon, fetched_at,
              strava_url, posted_at, mastodon_post_url, scheduled_for_post,
              map_rendered_at, charts_rendered_at, ap_posted_at, source,
              tss, np_watts, trimp, hr_tss, peak_power_json,
              hr_zone_secs_json, power_zone_secs_json, breakthroughs_json,
-             metrics_computed_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             metrics_computed_at, source_file, source_file_sha256)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id, user_id) DO UPDATE SET
               name                  = excluded.name,
               sport_type            = excluded.sport_type,
@@ -742,11 +763,12 @@ def upsert_activity(db_path, data: dict, user_id: int, source: str = "strava"):
               max_watts             = excluded.max_watts,
               start_lat             = excluded.start_lat,
               start_lon             = excluded.start_lon,
-              points_json           = excluded.points_json,
               fetched_at            = excluded.fetched_at,
               strava_url            = excluded.strava_url,
               source                = excluded.source,
-              metrics_computed_at   = excluded.metrics_computed_at
+              metrics_computed_at   = excluded.metrics_computed_at,
+              source_file           = COALESCE(excluded.source_file, activities.source_file),
+              source_file_sha256    = COALESCE(excluded.source_file_sha256, activities.source_file_sha256)
         """, (
             data["id"], user_id,
             data.get("name"),
@@ -764,7 +786,6 @@ def upsert_activity(db_path, data: dict, user_id: int, source: str = "strava"):
             data.get("max_watts"),
             data.get("start_lat"),
             data.get("start_lon"),
-            json.dumps(data.get("points") or []),
             datetime.now(timezone.utc).isoformat(),
             data.get("source_url"),
             existing["posted_at"]          if existing else None,
@@ -783,6 +804,8 @@ def upsert_activity(db_path, data: dict, user_id: int, source: str = "strava"):
             existing["power_zone_secs_json"] if existing else None,
             existing["breakthroughs_json"] if existing else None,
             metrics_computed_at,
+            data.get("source_file"),
+            data.get("source_file_sha256"),
         ))
         conn.commit()
     finally:
