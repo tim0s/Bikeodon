@@ -198,7 +198,6 @@ def init_db(db_path):
             max_watts            REAL,
             start_lat            REAL,
             start_lon            REAL,
-            points_json          TEXT,
             fetched_at           TEXT,
             strava_url           TEXT,
             posted_at            TEXT,
@@ -337,6 +336,13 @@ def init_db(db_path):
         "  ON feed_items(local_username, published DESC)",
     ]:
         conn.execute(ddl)
+
+    # Drop columns that have been superseded (safe to re-run — ignored if already gone)
+    for drop_col in ["points_json"]:
+        try:
+            conn.execute(f"ALTER TABLE activities DROP COLUMN {drop_col}")
+        except sqlite3.OperationalError:
+            pass
 
     conn.commit()
 
@@ -938,13 +944,6 @@ def set_scheduled(db_path, activity_id: int, user_id: int, value: bool):
         conn.close()
 
 
-def get_points(row) -> list[tuple[float, float]]:
-    raw = row["points_json"]
-    if not raw:
-        return []
-    return [(p[0], p[1]) for p in json.loads(raw) if p[0] is not None and p[1] is not None]
-
-
 def get_all_users(db_path) -> list:
     """Return all users that have a Strava access token (i.e. are connected)."""
     conn = _conn(db_path)
@@ -1123,14 +1122,6 @@ def get_user_stats(db_path, user_id: int) -> dict:
     }
 
 
-def get_stream(row) -> list[dict]:
-    raw = row["points_json"]
-    if not raw:
-        return []
-    keys = ["lat", "lon", "ele", "hr", "power", "elapsed_secs"]
-    return [dict(zip(keys, p)) for p in json.loads(raw)]
-
-
 def find_overlapping_activity(db_path, user_id: int, start_date_iso: str | None,
                                elapsed_secs: int | None,
                                start_window_secs: int = 1800,
@@ -1188,14 +1179,18 @@ def find_overlapping_activity(db_path, user_id: int, start_date_iso: str | None,
     return best
 
 
-def enrich_activity_stream(db_path, activity_id: int, user_id: int, points: list):
-    """Replace points_json for an existing activity and clear charts_rendered_at."""
+def attach_source_file(db_path, activity_id: int, user_id: int,
+                       source_file: str, source_file_sha256: str):
+    """Attach an uploaded file to an existing activity and clear rendered flags so
+    maps and charts are regenerated from the new file on next render."""
     conn = _conn(db_path)
     try:
         conn.execute(
-            "UPDATE activities SET points_json=?, charts_rendered_at=NULL"
+            "UPDATE activities"
+            " SET source_file=?, source_file_sha256=?, source_file_type='upload',"
+            "     map_rendered_at=NULL, charts_rendered_at=NULL"
             " WHERE id=? AND user_id=?",
-            (json.dumps(points), activity_id, user_id),
+            (source_file, source_file_sha256, activity_id, user_id),
         )
         conn.commit()
     finally:
@@ -1319,13 +1314,13 @@ def reset_metrics_computed(db_path, user_id: int):
 
 
 def get_activities_without_metrics(db_path, user_id: int) -> list:
-    """Return activities that have a stream but have never had metrics computed."""
+    """Return activities that have a source file but have never had metrics computed."""
     conn = _conn(db_path)
     try:
         rows = conn.execute(
             "SELECT * FROM activities"
             " WHERE user_id=? AND metrics_computed_at IS NULL"
-            " AND points_json IS NOT NULL AND points_json != '[]'",
+            " AND source_file IS NOT NULL",
             (user_id,),
         ).fetchall()
     finally:

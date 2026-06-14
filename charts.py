@@ -111,6 +111,8 @@ def _fig_px(cfg):
 
 def _draw_zone_bands(ax, zones, thresholds, alpha=0.08):
     """Shade horizontal bands for each zone."""
+    if not zones:
+        return
     low = 0
     for i, (z, hi) in enumerate(zip(zones, thresholds)):
         ax.axhspan(low, hi, facecolor=z["color"], alpha=alpha, zorder=0)
@@ -280,11 +282,12 @@ def _draw_zone_bar(ax, zones, pcts, cfg):
 
     # Legend — horizontal row beneath the bar
     patches = [mpatches.Patch(color=z["color"], label=z["name"]) for z in zones]
-    ax.legend(handles=patches, loc="upper center",
-              bbox_to_anchor=(0.5, -0.35),
-              ncol=min(len(zones), 4),
-              fontsize=8, framealpha=0.15, labelcolor=fg,
-              handlelength=1.2, columnspacing=1.0)
+    if patches:
+        ax.legend(handles=patches, loc="upper center",
+                  bbox_to_anchor=(0.5, -0.35),
+                  ncol=min(len(zones), 4),
+                  fontsize=8, framealpha=0.15, labelcolor=fg,
+                  handlelength=1.2, columnspacing=1.0)
 
 
 # ---------------------------------------------------------------------------

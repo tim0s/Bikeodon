@@ -28,10 +28,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+from activity_parser import points_from_file, stream_from_file
 from charts import generate_charts
 from database import (
     clear_rendered, get_activity, get_all_users, get_latest_activity_date,
-    get_points, get_setting, get_site_setting, get_stream, get_unposted,
+    get_setting, get_site_setting, get_unposted,
     get_unrendered, get_user_by_username, init_db, list_activities, list_settings,
     load_user_config, log_daemon_run, mark_posted, mark_rendered, save_activity_file,
     set_admin, set_setting, set_site_setting, upsert_activity,
@@ -40,6 +41,7 @@ from fit_encoder import generate_fit
 from strava import StravaClient, delete_webhook, list_webhooks, register_webhook
 from map_renderer import render_activity_map
 from mastodon_client import MastodonClient
+from tasks import _render_and_track
 from database import (
     get_activities_without_metrics, reset_metrics_computed,
     update_activity_metrics, get_zones, get_all_peak_powers,
@@ -199,10 +201,11 @@ def _render_activities(ids: list[int], db_path: str, user_id: int, cfg: dict,
 
         need_map    = force_map    or not row["map_rendered_at"]
         need_charts = force_charts or not row["charts_rendered_at"]
+        source_file = row["source_file"]
 
         if need_map:
             map_path = os.path.join(out_dir, f"{activity_id}.png")
-            points = get_points(row)
+            points = points_from_file(source_file) if source_file else []
             if points:
                 try:
                     img = render_activity_map(points, dict(row), cfg)
@@ -216,7 +219,7 @@ def _render_activities(ids: list[int], db_path: str, user_id: int, cfg: dict,
                 mark_rendered(db_path, activity_id, user_id, map=True)
 
         if need_charts:
-            stream = get_stream(row)
+            stream = stream_from_file(source_file) if source_file else []
             try:
                 paths = generate_charts(activity_id, stream, cfg, out_dir, db_path=db_path, user_id=user_id)
                 for p in paths:
@@ -291,7 +294,8 @@ def cmd_render(args, cfg):
     os.makedirs(out_dir, exist_ok=True)
 
     for row in rows:
-        points = get_points(row)
+        source_file = row["source_file"]
+        points = points_from_file(source_file) if source_file else []
         print(f"Rendering [{row['id']}] {row['name']}…")
         if not points:
             print("  No GPS data for this activity, skipping.")
@@ -311,7 +315,8 @@ def cmd_charts(args, cfg):
     if not row:
         print(f"Activity {args.activity_id} not found.")
         sys.exit(1)
-    stream  = get_stream(row)
+    source_file = row["source_file"]
+    stream  = stream_from_file(source_file) if source_file else []
     out_dir = cfg["map"].get("output_dir", "output")
     print(f"Generating charts for [{row['id']}] {row['name']}…")
     paths = generate_charts(row["id"], stream, cfg, out_dir, db_path=db_path, user_id=args.user_id)
@@ -386,20 +391,16 @@ def _do_post(row, cfg, db_path: str, out_dir: str, rerender: bool = False, user_
     img_path    = os.path.join(out_dir, f"{activity_id}.png")
 
     if not os.path.exists(img_path) or rerender:
-        points = get_points(row)
-        if not points:
-            print(f"  [{activity_id}] No GPS data — skipping.")
+        _render_and_track(activity_id, user_id, cfg, out_dir, row=row)
+        row = get_activity(db_path, activity_id, user_id=user_id)
+        if not row or not os.path.exists(img_path):
+            print(f"  [{activity_id}] No GPS data or render failed — skipping.")
             return None
-        os.makedirs(out_dir, exist_ok=True)
-        img = render_activity_map(points, dict(row), cfg)
-        if img is None:
-            print(f"  [{activity_id}] Render failed — skipping.")
-            return None
-        img.save(img_path)
 
     text        = _build_post_text(dict(row), cfg["mastodon"].get("post_template", "{name}\n#cycling"))
-    stream      = get_stream(row)
-    chart_paths = generate_charts(activity_id, stream, cfg, out_dir, db_path=db_path, user_id=uid)
+    source_file = row["source_file"]
+    stream      = stream_from_file(source_file) if source_file else []
+    chart_paths = generate_charts(activity_id, stream, cfg, out_dir, db_path=db_path, user_id=user_id)
     all_images  = ([img_path] + chart_paths)[:4]
 
     client    = MastodonClient.from_cfg(cfg)
@@ -488,7 +489,8 @@ def cmd_metrics(args, cfg):
         done = errors = 0
         for i, row in enumerate(pending, 1):
             try:
-                stream       = get_stream(row)
+                source_file  = row["source_file"]
+                stream       = stream_from_file(source_file) if source_file else []
                 watts_list   = [p.get("power")        for p in stream]
                 hr_list      = [p.get("hr")           for p in stream]
                 elapsed_list = [p.get("elapsed_secs") for p in stream]

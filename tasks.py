@@ -15,12 +15,12 @@ from config import DB_PATH, _base_cfg
 
 from database import (
     _conn, get_activities_without_metrics, get_activity, get_all_peak_powers,
-    get_setting, get_stream, job_finish, job_start,
+    get_setting, job_finish, job_start,
     load_user_config, mark_rendered, mark_posted,
     set_activity_error, set_scheduled, set_setting,
     update_activity_metrics,
 )
-from database import get_points as _gp
+from activity_parser import points_from_file, stream_from_file
 from charts import generate_charts
 from map_renderer import render_activity_map
 from mastodon_client import MastodonClient
@@ -75,7 +75,8 @@ def _render_and_track(activity_id: int, uid: int, cfg: dict, out_dir: str, row=N
     os.makedirs(out_dir, exist_ok=True)
     errors = []
 
-    pts = _gp(row)
+    source_file = row["source_file"]
+    pts = points_from_file(source_file) if source_file else []
     if pts:
         try:
             img = render_activity_map(pts, dict(row), cfg)
@@ -97,7 +98,7 @@ def _render_and_track(activity_id: int, uid: int, cfg: dict, out_dir: str, row=N
         if v:
             cfg["charts"]["heart_rate"]["max_hr"] = float(v)
 
-    stream = get_stream(row)
+    stream = stream_from_file(source_file) if source_file else []
     try:
         generate_charts(activity_id, stream, cfg, out_dir, db_path=DB_PATH, user_id=uid)
         mark_rendered(DB_PATH, activity_id, uid, charts=True)
@@ -240,8 +241,9 @@ def run_metrics_backfill(uid: int):
         done = 0
         for brow in pending:
             try:
-                bcfg    = load_user_config(DB_PATH, uid, _base_cfg)
-                bstream = get_stream(brow)
+                bcfg        = load_user_config(DB_PATH, uid, _base_cfg)
+                source_file = brow["source_file"]
+                bstream     = stream_from_file(source_file) if source_file else []
                 _compute_and_store_metrics(brow["id"], uid, bcfg, bstream, brow)
                 done += 1
             except Exception as e:
@@ -285,7 +287,8 @@ def _collect_activity_images(activity_id: int, uid: int, cfg: dict, out_dir: str
     else:
         img_path_exists = True
 
-    stream      = get_stream(row)
+    source_file = row["source_file"]
+    stream      = stream_from_file(source_file) if source_file else []
     chart_paths = generate_charts(activity_id, stream, cfg, out_dir, db_path=DB_PATH, user_id=uid)
     images      = ([img_path] if img_path_exists else []) + chart_paths
     return images[:4]

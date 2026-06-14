@@ -27,6 +27,30 @@ def parse_file(filename: str, content: bytes) -> list[dict]:
     raise ValueError(f"Unsupported file type: .{ext}")
 
 
+def stream_from_file(path: str) -> list[dict]:
+    """Parse a FIT/GPX/TCX file and return a stream list in the same format as
+    database.get_stream(): one dict per sample with keys lat, lon, ele, hr,
+    power, elapsed_secs."""
+    import os as _os
+    with open(path, "rb") as f:
+        content = f.read()
+    acts = parse_file(_os.path.basename(path), content)
+    if not acts:
+        return []
+    keys = ["lat", "lon", "ele", "hr", "power", "elapsed_secs"]
+    return [dict(zip(keys, p)) for p in acts[0]["points"]]
+
+
+def points_from_file(path: str) -> list[tuple[float, float]]:
+    """Return (lat, lon) tuples from a FIT/GPX/TCX file, omitting samples
+    without valid GPS coordinates."""
+    return [
+        (p["lat"], p["lon"])
+        for p in stream_from_file(path)
+        if p.get("lat") is not None and p.get("lon") is not None
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Stable ID generation
 # ---------------------------------------------------------------------------

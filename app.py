@@ -25,15 +25,15 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 from config import DB_PATH, _base_cfg, STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET, SYNC_COOLDOWN_SECS
 from database import (
-    _conn, clear_rendered, count_activities, create_user, enrich_activity_stream,
+    _conn, attach_source_file, clear_rendered, count_activities, create_user,
     find_overlapping_activity, get_activity, get_all_peak_powers,
     get_daily_loads, get_followers, get_following,
-    get_setting, get_site_setting, get_stream, get_user_by_id,
+    get_setting, get_site_setting, get_user_by_id,
     get_user_by_username, get_user_stats, get_zone_totals, get_zones, init_db,
     list_activities, load_user_config, mark_ap_posted,
     save_activity_file, set_activity_error, set_scheduled, set_setting, upsert_activity,
 )
-from activity_parser import parse_file
+from activity_parser import parse_file, stream_from_file
 from training_load import (
     aggregate_power_curve, compute_pmc, compute_wbal,
     fit_critical_power, weekly_load,
@@ -333,7 +333,8 @@ def activity(activity_id):
     _wprime_v = get_setting(DB_PATH, uid, "inference", "w_prime")
     if row["average_watts"] and _cp_v and _wprime_v:
         try:
-            _stream = get_stream(row)
+            _source_file = row["source_file"]
+            _stream = stream_from_file(_source_file) if _source_file else []
             _wbal   = compute_wbal(_stream, float(_cp_v), float(_wprime_v))
             if _wbal:
                 wbal_json   = json.dumps(_wbal)
@@ -618,18 +619,12 @@ def upload():
                 act.get("elapsed_time") or act.get("moving_time"),
             )
             if overlap_row:
-                file_points = act.get("points") or []
-                enrich_activity_stream(DB_PATH, overlap_row["id"], uid, file_points)
-                enriched_row = get_activity(DB_PATH, overlap_row["id"], user_id=uid)
-                if enriched_row:
-                    file_has_gps = any(p[0] is not None for p in file_points)
-                    map_path = os.path.join(out_dir, f"{overlap_row['id']}.png")
-                    if file_has_gps and not os.path.exists(map_path):
-                        clear_rendered(DB_PATH, overlap_row["id"], uid)
-                        _render_and_track(overlap_row["id"], uid, cfg, out_dir, row=enriched_row)
-                    else:
-                        clear_rendered(DB_PATH, overlap_row["id"], uid, map=False, charts=True)
-                        _render_and_track(overlap_row["id"], uid, cfg, out_dir, row=enriched_row)
+                files_dir = os.path.join(out_dir, "activity_files")
+                path, sha256 = save_activity_file(
+                    files_dir, overlap_row["id"], uid, content, f.filename
+                )
+                attach_source_file(DB_PATH, overlap_row["id"], uid, path, sha256)
+                _render_and_track(overlap_row["id"], uid, cfg, out_dir)
                 enriched += 1
                 continue
 
