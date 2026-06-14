@@ -429,15 +429,46 @@ def _handle_create_note(local_username, activity, note_obj, db_path):
 
     following = _db_get_following(db_path, local_username)
     known_actors = {f["actor_url"] for f in following}
-    if actor_url not in known_actors:
-        return
+    is_following = actor_url in known_actors
+
+    # Accept notes from followed accounts, or replies to our own posts
+    if not is_following:
+        in_reply_to = note_obj.get("inReplyTo")
+        if not in_reply_to:
+            return
+        actor_base = url_for("activitypub.actor", username=local_username, _external=True)
+        replies_to_us = (
+            in_reply_to.startswith(f"{actor_base}/activities/")
+            if isinstance(in_reply_to, str)
+            else any(r.startswith(f"{actor_base}/activities/")
+                     for r in in_reply_to if isinstance(r, str))
+        )
+        if not replies_to_us:
+            return
 
     actor_info = next((f for f in following if f["actor_url"] == actor_url), {})
-    actor_name   = actor_info.get("display_name") or actor_info.get("actor_url", "")
+    actor_name   = actor_info.get("display_name") or ""
     actor_avatar = actor_info.get("avatar_url") or ""
 
-    object_id  = note_obj.get("id", "")
-    object_url = note_obj.get("url") or object_id
+    # For unknown actors (repliers we don't follow), fetch their profile
+    if not is_following:
+        try:
+            resp = requests.get(actor_url, headers={"Accept": _AP_MIME}, timeout=5)
+            if resp.ok:
+                doc = resp.json()
+                actor_name   = doc.get("name") or doc.get("preferredUsername") or actor_url
+                icon = doc.get("icon", {})
+                actor_avatar = icon.get("url", "") if isinstance(icon, dict) else ""
+        except Exception:
+            pass
+    if not actor_name:
+        actor_name = actor_url
+
+    object_id   = note_obj.get("id", "")
+    object_url  = note_obj.get("url") or object_id
+    in_reply_to = note_obj.get("inReplyTo")
+    if isinstance(in_reply_to, list):
+        in_reply_to = in_reply_to[0] if in_reply_to else None
     raw_content = note_obj.get("content", "") or ""
     content = nh3.clean(
         raw_content,
@@ -447,6 +478,10 @@ def _handle_create_note(local_username, activity, note_obj, db_path):
         link_rel=None,
     )
     published  = note_obj.get("published", "")
+    if in_reply_to:
+        content = (f'<p style="color:var(--pico-muted-color);font-size:.85rem">'
+                   f'↩ <a href="{in_reply_to}" target="_blank" rel="noopener">In reply to</a>'
+                   f'</p>') + content
 
     raw_attachments = note_obj.get("attachment") or []
     if isinstance(raw_attachments, dict):
