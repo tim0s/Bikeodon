@@ -520,44 +520,50 @@
   const wpkAll      = {{ wpk_all | safe }};
   const wpkRecent   = {{ wpk_recent | safe }};
 
-  // Build display labels from the keys actually present in the data.
-  // We use a fixed set of "display" durations (seconds) and pick the closest
-  // stored key for each, so the x-axis is readable regardless of MMP grid version.
-  const _displayDurations = [5, 15, 30, 60, 120, 300, 600, 1200, 1800, 3600];
+  // Display durations (seconds) for x-axis ticks — always clean, readable values.
+  // For each we find the nearest stored MMP key to use as the data source.
+  const _displayDurations = [5, 10, 15, 30, 60, 120, 300, 600, 1200, 1800, 3600];
+  const _displayLabels    = ["5s","10s","15s","30s","1min","2min","5min","10min","20min","30min","1h"];
+
   const _labelToSecs = l => {
     if (l.endsWith('min')) return parseInt(l) * 60;
     if (l.endsWith('h'))   return parseInt(l) * 3600;
     if (l.endsWith('s'))   return parseInt(l);
     return null;
   };
-  const _secsToLabel = s => {
-    if (s >= 3600 && s % 3600 === 0) return (s / 3600) + 'h';
-    if (s >= 60   && s % 60 === 0)   return (s / 60)   + 'min';
-    return s + 's';
-  };
+
   const _allKeys = Object.keys(curveAll).filter(k => _labelToSecs(k) !== null)
     .sort((a, b) => _labelToSecs(a) - _labelToSecs(b));
-  // For each display duration pick the nearest stored key
-  const labels    = [];
-  const durations = [];
-  for (const target of _displayDurations) {
+
+  // For each display duration, find the nearest stored key (within 25% tolerance)
+  const labels      = [];   // display labels shown on x-axis
+  const durations   = [];   // seconds (for CP model curve)
+  const _dataKeys   = [];   // actual stored keys used for data lookup
+
+  for (let i = 0; i < _displayDurations.length; i++) {
+    const target = _displayDurations[i];
     let best = null, bestDiff = Infinity;
     for (const k of _allKeys) {
       const diff = Math.abs(_labelToSecs(k) - target);
       if (diff < bestDiff) { bestDiff = diff; best = k; }
     }
-    if (best && bestDiff / target < 0.25) { labels.push(best); durations.push(_labelToSecs(best)); }
+    if (best && bestDiff / target < 0.25) {
+      labels.push(_displayLabels[i]);
+      durations.push(target);
+      _dataKeys.push(best);
+    }
   }
   // Fallback to legacy fixed labels when no new-format data present
   if (!labels.length) {
-    labels.push(...["5s","30s","1min","5min","20min","60min"]);
+    labels.push(...["5s","30s","1min","5min","20min","1h"]);
     durations.push(...[5, 30, 60, 300, 1200, 3600]);
+    _dataKeys.push(...["5s","30s","1min","5min","20min","60min"]);
   }
 
-  const allData    = labels.map(l => curveAll[l]    ?? null);
-  const recentData = labels.map(l => curveRecent[l] ?? null);
-  const wpkAllData    = labels.map(l => wpkAll[l]    ?? null);
-  const wpkRecentData = labels.map(l => wpkRecent[l] ?? null);
+  const allData       = _dataKeys.map(k => curveAll[k]    ?? null);
+  const recentData    = _dataKeys.map(k => curveRecent[k] ?? null);
+  const wpkAllData    = _dataKeys.map(k => wpkAll[k]      ?? null);
+  const wpkRecentData = _dataKeys.map(k => wpkRecent[k]   ?? null);
 
   const cp      = {{ cp if cp else 'null' }};
   const wPrime  = {{ w_prime if w_prime else 'null' }};
@@ -638,7 +644,8 @@
               if (showWpk) {
                 return ` ${item.dataset.label.split(' (')[0]}: ${v.toFixed(2)} W/kg`;
               }
-              const wpk = isAll ? wpkAll[item.label] : wpkRecent[item.label];
+              const dataKey = _dataKeys[item.dataIndex];
+              const wpk = isAll ? wpkAll[dataKey] : wpkRecent[dataKey];
               return ` ${item.dataset.label.split(' (')[0]}: ${v.toFixed(0)} W` +
                 (wpk ? `  (${wpk.toFixed(2)} W/kg)` : '');
             },
