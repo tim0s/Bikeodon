@@ -93,6 +93,24 @@ class StravaClient:
         if self._on_refresh:
             self._on_refresh(data["access_token"], data["refresh_token"], data["expires_at"])
 
+    def _get(self, url, **kwargs):
+        """GET with automatic retry after a 429 rate-limit response.
+
+        Strava rate-limit windows are fixed 15-minute slots (:00, :15, :30, :45).
+        On a 429 we sleep until the next slot boundary (plus a small buffer) and
+        retry once.  If the retry is also rate-limited we raise immediately so the
+        caller knows the daily limit may be exhausted.
+        """
+        resp = self._s.get(url, **kwargs)
+        if resp.status_code != 429:
+            return resp
+        # Calculate seconds to the next 15-minute boundary.
+        window = 15 * 60
+        wait = int(window - (time.time() % window)) + 5  # +5 s buffer
+        print(f"[strava] Rate-limited — sleeping {wait}s until next window…", flush=True)
+        time.sleep(wait)
+        return self._s.get(url, **kwargs)
+
     # ── Public API ──────────────────────────────────────────────────────────
 
     def get_activity_ids(self, n: int = 10, after: float | None = None) -> list[int]:
@@ -100,7 +118,7 @@ class StravaClient:
         params = {"per_page": n}
         if after is not None:
             params["after"] = int(after)
-        resp = self._s.get(f"{_API}/athlete/activities", params=params)
+        resp = self._get(f"{_API}/athlete/activities", params=params)
         resp.raise_for_status()
         return [a["id"] for a in resp.json()]
 
@@ -113,7 +131,7 @@ class StravaClient:
             params = {"per_page": 200, "page": page}
             if after is not None:
                 params["after"] = int(after)
-            resp = self._s.get(f"{_API}/athlete/activities", params=params)
+            resp = self._get(f"{_API}/athlete/activities", params=params)
             resp.raise_for_status()
             batch = [a["id"] for a in resp.json()]
             if not batch:
@@ -131,7 +149,7 @@ class StravaClient:
     # ── Private helpers ─────────────────────────────────────────────────────
 
     def _get_detail(self, activity_id: int) -> dict:
-        resp = self._s.get(f"{_API}/activities/{activity_id}")
+        resp = self._get(f"{_API}/activities/{activity_id}")
         resp.raise_for_status()
         return resp.json()
 
@@ -142,7 +160,7 @@ class StravaClient:
         Strava redirects to the file; requests follows automatically.
         """
         self._ensure_fresh()
-        resp = self._s.get(
+        resp = self._get(
             f"{_API}/activities/{activity_id}/export_originalformat",
             allow_redirects=True,
         )
@@ -161,7 +179,7 @@ class StravaClient:
 
     def _get_streams(self, activity_id: int) -> dict:
         keys = "latlng,altitude,heartrate,watts,time"
-        resp = self._s.get(
+        resp = self._get(
             f"{_API}/activities/{activity_id}/streams",
             params={"keys": keys, "key_by_type": "true"},
         )
