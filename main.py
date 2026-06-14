@@ -131,31 +131,35 @@ def _sync_user(db_path: str, user_id: int, username: str,
     new_ids = []
 
     if full:
-        # Fetch and process 20 IDs at a time so each batch is saved before the
-        # next page of IDs is requested.  This ensures no API quota is spent on
-        # IDs whose data we haven't stored yet.
+        # Collect all IDs first (Strava returns newest-first), then reverse so
+        # activities are stored oldest-first — required for CP history to build
+        # up correctly over time.
+        all_ids = []
         page = 1
         while True:
             ids = client.get_activity_ids(n=20, after=after_ts, page=page)
             if not ids:
                 break
-            print(f"  [{username}] Page {page}: {len(ids)} activities…")
-            for activity_id in ids:
-                try:
-                    data, streams = client.get_activity(activity_id)
-                    try:
-                        fit_bytes = generate_fit(data, streams)
-                        data["source_file"], data["source_file_sha256"] = \
-                            save_activity_file(files_dir, activity_id, user_id, fit_bytes, f"{activity_id}.fit")
-                        data["source_file_type"] = "generated"
-                    except Exception as fe:
-                        print(f"    FIT generation failed for {activity_id}: {fe}")
-                    upsert_activity(db_path, data, user_id=user_id)
-                    print(f"    + {data['name']}  ({(data.get('distance') or 0) / 1000:.1f} km)")
-                    new_ids.append(activity_id)
-                except Exception as e:
-                    print(f"    Failed {activity_id}: {e}")
+            print(f"  [{username}] Listing page {page}: {len(ids)} activities…")
+            all_ids.extend(ids)
             page += 1
+        all_ids.reverse()
+        print(f"  [{username}] Fetching {len(all_ids)} activities oldest-first…")
+        for activity_id in all_ids:
+            try:
+                data, streams = client.get_activity(activity_id)
+                try:
+                    fit_bytes = generate_fit(data, streams)
+                    data["source_file"], data["source_file_sha256"] = \
+                        save_activity_file(files_dir, activity_id, user_id, fit_bytes, f"{activity_id}.fit")
+                    data["source_file_type"] = "generated"
+                except Exception as fe:
+                    print(f"    FIT generation failed for {activity_id}: {fe}")
+                upsert_activity(db_path, data, user_id=user_id)
+                print(f"    + {data['name']}  ({(data.get('distance') or 0) / 1000:.1f} km)")
+                new_ids.append(activity_id)
+            except Exception as e:
+                print(f"    Failed {activity_id}: {e}")
     else:
         ids = client.get_activity_ids(n=count, after=after_ts)
         if not ids:
