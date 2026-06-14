@@ -636,6 +636,7 @@ def upload():
             files_dir = os.path.join(out_dir, "activity_files")
             act["source_file"], act["source_file_sha256"] = \
                 save_activity_file(files_dir, act["id"], uid, content, f.filename)
+            act["source_file_type"] = "upload"
             upsert_activity(DB_PATH, act, user_id=uid, source="upload")
             _render_and_track(act["id"], uid, cfg, out_dir)
             imported += 1

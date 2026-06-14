@@ -124,11 +124,16 @@ class StravaClient:
         return [a["id"] for a in resp.json()]
 
 
-    def get_activity(self, activity_id: int) -> dict:
+    def get_activity(self, activity_id: int) -> tuple[dict, dict]:
+        """Return (activity_dict, raw_streams).
+
+        raw_streams is the full Strava streams response keyed by type;
+        pass it to fit_encoder.generate_fit() to build a FIT file.
+        """
         self._ensure_fresh()
         detail  = self._get_detail(activity_id)
         streams = self._get_streams(activity_id)
-        return _build_activity(detail, streams)
+        return _build_activity(detail, streams), streams
 
     # ── Private helpers ─────────────────────────────────────────────────────
 
@@ -137,32 +142,8 @@ class StravaClient:
         resp.raise_for_status()
         return resp.json()
 
-    def get_original_file(self, activity_id: int) -> tuple[bytes, str] | None:
-        """
-        Download the original file for an activity.
-        Returns (content, filename) or None if unavailable.
-        Strava redirects to the file; requests follows automatically.
-        """
-        self._ensure_fresh()
-        resp = self._get(
-            f"{_API}/activities/{activity_id}/export_originalformat",
-            allow_redirects=True,
-        )
-        if resp.status_code in (404, 403):
-            return None
-        resp.raise_for_status()
-        # Derive filename from Content-Disposition or fall back to .fit
-        cd = resp.headers.get("Content-Disposition", "")
-        filename = f"{activity_id}.fit"
-        for part in cd.split(";"):
-            part = part.strip()
-            if part.startswith("filename="):
-                filename = part.split("=", 1)[1].strip().strip('"')
-                break
-        return resp.content, filename
-
     def _get_streams(self, activity_id: int) -> dict:
-        keys = "latlng,altitude,heartrate,watts,time"
+        keys = "latlng,altitude,heartrate,watts,time,cadence,temp,distance,velocity_smooth,grade_smooth"
         resp = self._get(
             f"{_API}/activities/{activity_id}/streams",
             params={"keys": keys, "key_by_type": "true"},

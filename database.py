@@ -232,6 +232,7 @@ def init_db(db_path):
         ("average_speed",        "REAL"),
         ("source_file",          "TEXT"),
         ("source_file_sha256",   "TEXT"),
+        ("source_file_type",     "TEXT"),
     ]:
         try:
             conn.execute(f"ALTER TABLE activities ADD COLUMN {col} {typedef}")
@@ -745,8 +746,8 @@ def upsert_activity(db_path, data: dict, user_id: int, source: str = "strava"):
              map_rendered_at, charts_rendered_at, ap_posted_at, source,
              tss, np_watts, trimp, hr_tss, peak_power_json,
              hr_zone_secs_json, power_zone_secs_json, breakthroughs_json,
-             metrics_computed_at, source_file, source_file_sha256)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             metrics_computed_at, source_file, source_file_sha256, source_file_type)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id, user_id) DO UPDATE SET
               name                  = excluded.name,
               sport_type            = excluded.sport_type,
@@ -767,8 +768,15 @@ def upsert_activity(db_path, data: dict, user_id: int, source: str = "strava"):
               strava_url            = excluded.strava_url,
               source                = excluded.source,
               metrics_computed_at   = excluded.metrics_computed_at,
-              source_file           = COALESCE(excluded.source_file, activities.source_file),
-              source_file_sha256    = COALESCE(excluded.source_file_sha256, activities.source_file_sha256)
+              source_file           = CASE WHEN activities.source_file_type = 'upload'
+                                          THEN activities.source_file
+                                          ELSE COALESCE(excluded.source_file, activities.source_file) END,
+              source_file_sha256    = CASE WHEN activities.source_file_type = 'upload'
+                                          THEN activities.source_file_sha256
+                                          ELSE COALESCE(excluded.source_file_sha256, activities.source_file_sha256) END,
+              source_file_type      = CASE WHEN activities.source_file_type = 'upload'
+                                          THEN 'upload'
+                                          ELSE COALESCE(excluded.source_file_type, activities.source_file_type) END
         """, (
             data["id"], user_id,
             data.get("name"),
@@ -806,6 +814,7 @@ def upsert_activity(db_path, data: dict, user_id: int, source: str = "strava"):
             metrics_computed_at,
             data.get("source_file"),
             data.get("source_file_sha256"),
+            data.get("source_file_type"),
         ))
         conn.commit()
     finally:

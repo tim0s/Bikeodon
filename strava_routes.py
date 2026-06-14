@@ -10,6 +10,7 @@ from database import (
     _conn, get_activity, get_setting, get_user_by_athlete_id,
     load_user_config, save_activity_file, set_setting, upsert_activity,
 )
+from fit_encoder import generate_fit
 from strava import StravaClient, exchange_code, strava_auth_url
 from tasks import _render_and_track, request_backfill
 
@@ -34,19 +35,17 @@ def _make_strava_client(uid: int):
     )
 
 
-def _fetch_and_save_original(client, activity_id: int, uid: int) -> str | None:
-    """Download the original file from Strava and persist it. Returns the saved path."""
+def _generate_and_save_fit(activity: dict, streams: dict, activity_id: int, uid: int) -> None:
+    """Generate a FIT file from Strava streams and populate source_file fields on activity."""
     files_dir = os.path.join(_base_cfg["map"].get("output_dir", "output"), "activity_files")
     try:
-        result = client.get_original_file(activity_id)
-        if result is None:
-            return None
-        content, filename = result
-        path, sha256 = save_activity_file(files_dir, activity_id, uid, content, filename)
-        return path, sha256
+        fit_bytes = generate_fit(activity, streams)
+        path, sha256 = save_activity_file(files_dir, activity_id, uid, fit_bytes, f"{activity_id}.fit")
+        activity["source_file"]      = path
+        activity["source_file_sha256"] = sha256
+        activity["source_file_type"] = "generated"
     except Exception as e:
-        print(f"[strava] Could not fetch original file for {activity_id}: {e}")
-        return None
+        print(f"[strava] Could not generate FIT for {activity_id}: {e}")
 
 
 def _sync_cooldown_remaining(uid: int) -> int:
@@ -94,13 +93,11 @@ def _handle_webhook_event(event: dict):
         if not client:
             return
         try:
-            data = client.get_activity(obj_id)
+            data, streams = client.get_activity(obj_id)
         except Exception:
             return
 
-        file_result = _fetch_and_save_original(client, obj_id, uid)
-        if file_result:
-            data["source_file"], data["source_file_sha256"] = file_result
+        _generate_and_save_fit(data, streams, obj_id, uid)
         upsert_activity(DB_PATH, data, user_id=uid)
         cfg     = load_user_config(DB_PATH, uid, _base_cfg)
         out_dir = _base_cfg["map"].get("output_dir", "output")
@@ -141,10 +138,8 @@ def register_routes(app):
                 if get_activity(DB_PATH, activity_id, user_id=uid):
                     continue
                 try:
-                    data = client.get_activity(activity_id)
-                    file_result = _fetch_and_save_original(client, activity_id, uid)
-                    if file_result:
-                        data["source_file"], data["source_file_sha256"] = file_result
+                    data, streams = client.get_activity(activity_id)
+                    _generate_and_save_fit(data, streams, activity_id, uid)
                     upsert_activity(DB_PATH, data, user_id=uid)
                     new_ids.append(activity_id)
                     print(f"[manual-sync] + {data['name']}")

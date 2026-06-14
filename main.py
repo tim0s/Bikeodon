@@ -36,6 +36,7 @@ from database import (
     load_user_config, log_daemon_run, mark_posted, mark_rendered, save_activity_file,
     set_admin, set_setting, set_site_setting, upsert_activity,
 )
+from fit_encoder import generate_fit
 from strava import StravaClient, delete_webhook, list_webhooks, register_webhook
 from map_renderer import render_activity_map
 from mastodon_client import MastodonClient
@@ -140,12 +141,14 @@ def _sync_user(db_path: str, user_id: int, username: str,
             print(f"  [{username}] Page {page}: {len(ids)} activities…")
             for activity_id in ids:
                 try:
-                    data = client.get_activity(activity_id)
-                    result = client.get_original_file(activity_id)
-                    if result:
-                        content, filename = result
+                    data, streams = client.get_activity(activity_id)
+                    try:
+                        fit_bytes = generate_fit(data, streams)
                         data["source_file"], data["source_file_sha256"] = \
-                            save_activity_file(files_dir, activity_id, user_id, content, filename)
+                            save_activity_file(files_dir, activity_id, user_id, fit_bytes, f"{activity_id}.fit")
+                        data["source_file_type"] = "generated"
+                    except Exception as fe:
+                        print(f"    FIT generation failed for {activity_id}: {fe}")
                     upsert_activity(db_path, data, user_id=user_id)
                     print(f"    + {data['name']}  ({(data.get('distance') or 0) / 1000:.1f} km)")
                     new_ids.append(activity_id)
@@ -159,12 +162,14 @@ def _sync_user(db_path: str, user_id: int, username: str,
             return []
         for activity_id in ids:
             try:
-                data = client.get_activity(activity_id)
-                result = client.get_original_file(activity_id)
-                if result:
-                    content, filename = result
+                data, streams = client.get_activity(activity_id)
+                try:
+                    fit_bytes = generate_fit(data, streams)
                     data["source_file"], data["source_file_sha256"] = \
-                        save_activity_file(files_dir, activity_id, user_id, content, filename)
+                        save_activity_file(files_dir, activity_id, user_id, fit_bytes, f"{activity_id}.fit")
+                    data["source_file_type"] = "generated"
+                except Exception as fe:
+                    print(f"    FIT generation failed for {activity_id}: {fe}")
                 upsert_activity(db_path, data, user_id=user_id)
                 print(f"    + {data['name']}  ({(data.get('distance') or 0) / 1000:.1f} km)")
                 new_ids.append(activity_id)

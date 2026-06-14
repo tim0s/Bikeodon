@@ -5,6 +5,7 @@ from flask import flash, redirect, render_template, url_for
 from flask_login import current_user, login_required
 
 from config import DB_PATH, _base_cfg, STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET
+from fit_encoder import generate_fit
 from database import (
     get_activity, get_admin_stats, get_error_activities, get_recent_jobs,
     get_setting, load_user_config, reset_metrics_computed, save_activity_file,
@@ -74,12 +75,14 @@ def register_routes(app):
                     if get_activity(DB_PATH, activity_id, user_id=uid):
                         continue
                     try:
-                        data = client.get_activity(activity_id)
-                        result = client.get_original_file(activity_id)
-                        if result:
-                            content, filename = result
+                        data, streams = client.get_activity(activity_id)
+                        try:
+                            fit_bytes = generate_fit(data, streams)
                             data["source_file"], data["source_file_sha256"] = \
-                                save_activity_file(files_dir, activity_id, uid, content, filename)
+                                save_activity_file(files_dir, activity_id, uid, fit_bytes, f"{activity_id}.fit")
+                            data["source_file_type"] = "generated"
+                        except Exception as fe:
+                            print(f"[full-sync] FIT generation failed for {activity_id}: {fe}")
                         upsert_activity(DB_PATH, data, user_id=uid)
                         new_ids.append(activity_id)
                         print(f"[full-sync] + {data['name']}")

@@ -1,12 +1,13 @@
 """
-Tests for original activity file storage.
+Tests for activity file storage.
 
 Covers:
   - save_activity_file() writes bytes to the expected path
-  - upsert_activity() stores and preserves source_file via COALESCE
-  - /upload route saves raw bytes to disk and records source_file in DB
-  - _handle_webhook_event() fetches and saves the original file from Strava
-  - /sync route fetches and saves the original file for new activities
+  - upsert_activity() stores and preserves source_file / source_file_type
+  - /upload route saves raw bytes to disk and records source_file_type='upload'
+  - _handle_webhook_event() generates and saves a FIT file (source_file_type='generated')
+  - /sync route generates and saves a FIT file for new activities
+  - upload type is not overwritten by a subsequent Strava sync
 """
 
 import io
@@ -224,6 +225,32 @@ class TestUpsertSourceFile:
         conn.close()
         assert row["source_file"] == "/data/activity_files/1/55001.gpx"
 
+    def test_upload_type_protects_file_from_generated_overwrite(self, db_env, uid):
+        from database import upsert_activity, _conn
+        upsert_activity(db_env["db_path"], {
+            "id": 55010, "name": "Upload Ride", "sport_type": "Ride",
+            "start_date": "2026-01-25T07:00:00Z",
+            "source_file": "/data/55010.fit",
+            "source_file_sha256": "abc",
+            "source_file_type": "upload",
+        }, user_id=uid)
+        # Simulate a Strava sync that would overwrite with a generated file
+        upsert_activity(db_env["db_path"], {
+            "id": 55010, "name": "Upload Ride", "sport_type": "Ride",
+            "start_date": "2026-01-25T07:00:00Z",
+            "source_file": "/data/generated_55010.fit",
+            "source_file_sha256": "def",
+            "source_file_type": "generated",
+        }, user_id=uid)
+        conn = _conn(db_env["db_path"])
+        row = conn.execute(
+            "SELECT source_file, source_file_type FROM activities WHERE id=55010 AND user_id=?",
+            (uid,),
+        ).fetchone()
+        conn.close()
+        assert row["source_file_type"] == "upload"
+        assert row["source_file"] == "/data/55010.fit"
+
 
 # ---------------------------------------------------------------------------
 # Upload route
@@ -256,7 +283,7 @@ class TestUploadRoute:
         activity_id = _gpx_activity_id()
         conn = _conn(app_cfg["db_path"])
         row = conn.execute(
-            "SELECT source_file, source_file_sha256 FROM activities WHERE id=? AND user_id=?",
+            "SELECT source_file, source_file_sha256, source_file_type FROM activities WHERE id=? AND user_id=?",
             (activity_id, uid),
         ).fetchone()
         conn.close()
@@ -264,6 +291,7 @@ class TestUploadRoute:
         assert row["source_file"] is not None
         assert os.path.isfile(row["source_file"])
         assert row["source_file_sha256"] == hashlib.sha256(_GPX).hexdigest()
+        assert row["source_file_type"] == "upload"
 
     def test_upload_second_time_skips(self, client, uid):
         """Re-uploading the same file should report 'already in your library'."""
@@ -280,9 +308,11 @@ class TestUploadRoute:
 
 class TestWebhookFileStorage:
 
+    _FIT_MAGIC = b".FIT"  # bytes 8-12 of any valid FIT file
+
     def _make_mock_client(self, activity_id=77001):
         client = MagicMock()
-        client.get_activity.return_value = {
+        activity = {
             "id": activity_id,
             "name": "Webhook Ride",
             "sport_type": "Ride",
@@ -291,23 +321,24 @@ class TestWebhookFileStorage:
             "moving_time": 3600,
             "elapsed_time": 3700,
         }
-        client.get_original_file.return_value = (b"FIT_BYTES", f"{activity_id}.fit")
+        streams = {
+            "time":  {"data": [0, 60, 120]},
+            "latlng": {"data": [[48.0, 11.0], [48.01, 11.01], [48.02, 11.02]]},
+        }
+        client.get_activity.return_value = (activity, streams)
         return client
 
-    def test_webhook_fetches_original_file(self, db_env, uid, flask_app):
+    def test_webhook_generates_fit_file(self, db_env, uid, flask_app):
         from strava_routes import _handle_webhook_event
-        from database import get_user_by_id
+        from database import _conn
 
         mock_client = self._make_mock_client(77001)
 
         with flask_app.app_context():
             with patch("strava_routes._make_strava_client", return_value=mock_client), \
-                 patch("strava_routes.get_user_by_athlete_id") as mock_get_user, \
+                 patch("strava_routes.get_user_by_athlete_id", return_value={"id": uid}), \
                  patch("strava_routes._render_and_track"), \
                  patch("strava_routes.request_backfill"):
-                # Simulate the user lookup returning our test user
-                mock_get_user.return_value = {"id": uid}
-
                 _handle_webhook_event({
                     "object_type": "activity",
                     "aspect_type": "create",
@@ -315,9 +346,18 @@ class TestWebhookFileStorage:
                     "owner_id": 99,
                 })
 
-        mock_client.get_original_file.assert_called_once_with(77001)
+        conn = _conn(db_env["db_path"])
+        row = conn.execute(
+            "SELECT source_file, source_file_type FROM activities WHERE id=77001 AND user_id=?",
+            (uid,),
+        ).fetchone()
+        conn.close()
+        assert row is not None
+        assert row["source_file_type"] == "generated"
+        assert row["source_file"] is not None
+        assert os.path.isfile(row["source_file"])
 
-    def test_webhook_saves_file_to_disk(self, db_env, uid, flask_app):
+    def test_webhook_saves_fit_to_disk(self, db_env, uid, flask_app):
         from strava_routes import _handle_webhook_event
 
         mock_client = self._make_mock_client(77002)
@@ -341,22 +381,28 @@ class TestWebhookFileStorage:
                 for fn in filenames:
                     if "77002" in fn:
                         saved.append(os.path.join(dirpath, fn))
-        assert saved, "Original file not saved after webhook event"
-        assert open(saved[0], "rb").read() == b"FIT_BYTES"
+        assert saved, "FIT file not saved after webhook event"
+        content = open(saved[0], "rb").read()
+        assert content[8:12] == self._FIT_MAGIC, "Saved file is not a valid FIT file"
 
-    def test_webhook_tolerates_missing_original_file(self, db_env, uid, flask_app):
-        """get_original_file returning None must not crash the webhook handler."""
+    def test_webhook_handles_empty_streams(self, db_env, uid, flask_app):
+        """Empty stream dict (e.g. manual entry) must not crash the webhook handler."""
         from strava_routes import _handle_webhook_event
+        from database import _conn
 
         mock_client = self._make_mock_client(77003)
-        mock_client.get_original_file.return_value = None
+        activity = {
+            "id": 77003, "name": "Manual Entry", "sport_type": "Ride",
+            "start_date": "2026-02-01T10:00:00Z", "distance": 10000.0,
+            "moving_time": 1800, "elapsed_time": 1900,
+        }
+        mock_client.get_activity.return_value = (activity, {})
 
         with flask_app.app_context():
             with patch("strava_routes._make_strava_client", return_value=mock_client), \
                  patch("strava_routes.get_user_by_athlete_id", return_value={"id": uid}), \
                  patch("strava_routes._render_and_track"), \
                  patch("strava_routes.request_backfill"):
-                # Should not raise
                 _handle_webhook_event({
                     "object_type": "activity",
                     "aspect_type": "create",
@@ -364,24 +410,38 @@ class TestWebhookFileStorage:
                     "owner_id": 99,
                 })
 
-    def test_webhook_tolerates_strava_error(self, db_env, uid, flask_app):
-        """get_original_file raising must not crash the webhook handler."""
+        conn = _conn(db_env["db_path"])
+        row = conn.execute("SELECT id FROM activities WHERE id=77003 AND user_id=?", (uid,)).fetchone()
+        conn.close()
+        assert row is not None, "Activity with empty streams should still be saved"
+
+    def test_webhook_tolerates_fit_error(self, db_env, uid, flask_app):
+        """FIT generation failure must not crash the webhook handler; activity still saved."""
         from strava_routes import _handle_webhook_event
+        from database import _conn
 
         mock_client = self._make_mock_client(77004)
-        mock_client.get_original_file.side_effect = Exception("network error")
 
         with flask_app.app_context():
             with patch("strava_routes._make_strava_client", return_value=mock_client), \
                  patch("strava_routes.get_user_by_athlete_id", return_value={"id": uid}), \
                  patch("strava_routes._render_and_track"), \
-                 patch("strava_routes.request_backfill"):
+                 patch("strava_routes.request_backfill"), \
+                 patch("strava_routes.generate_fit", side_effect=Exception("encoder error")):
                 _handle_webhook_event({
                     "object_type": "activity",
                     "aspect_type": "create",
                     "object_id": 77004,
                     "owner_id": 99,
                 })
+
+        conn = _conn(db_env["db_path"])
+        row = conn.execute(
+            "SELECT id, source_file FROM activities WHERE id=77004 AND user_id=?", (uid,)
+        ).fetchone()
+        conn.close()
+        assert row is not None, "Activity should be saved even when FIT generation fails"
+        assert row["source_file"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -400,10 +460,12 @@ class _SyncThread:
 
 class TestManualSyncFileStorage:
 
+    _FIT_MAGIC = b".FIT"
+
     def _make_mock_client(self, activity_id=88001):
         c = MagicMock()
         c.get_activity_ids.return_value = [activity_id]
-        c.get_activity.return_value = {
+        activity = {
             "id": activity_id,
             "name": "Sync Ride",
             "sport_type": "Ride",
@@ -412,10 +474,15 @@ class TestManualSyncFileStorage:
             "moving_time": 4500,
             "elapsed_time": 4600,
         }
-        c.get_original_file.return_value = (b"SYNC_FIT", f"{activity_id}.fit")
+        streams = {
+            "time":  {"data": [0, 60, 120]},
+            "latlng": {"data": [[48.0, 11.0], [48.01, 11.01], [48.02, 11.02]]},
+            "heartrate": {"data": [130, 135, 140]},
+        }
+        c.get_activity.return_value = (activity, streams)
         return c
 
-    def test_manual_sync_saves_original_file(self, client, app_cfg, uid):
+    def test_manual_sync_generates_fit_file(self, client, app_cfg, uid):
         _login(client)
         mock_strava = self._make_mock_client(88001)
 
@@ -427,9 +494,17 @@ class TestManualSyncFileStorage:
             r = client.post("/sync", follow_redirects=True)
 
         assert r.status_code == 200
-        mock_strava.get_original_file.assert_called_once_with(88001)
+        from database import _conn
+        conn = _conn(app_cfg["db_path"])
+        row = conn.execute(
+            "SELECT source_file, source_file_type FROM activities WHERE id=88001 AND user_id=?",
+            (uid,),
+        ).fetchone()
+        conn.close()
+        assert row is not None
+        assert row["source_file_type"] == "generated"
 
-    def test_manual_sync_file_on_disk(self, client, app_cfg, uid):
+    def test_manual_sync_fit_on_disk(self, client, app_cfg, uid):
         _login(client)
         mock_strava = self._make_mock_client(88002)
 
@@ -447,5 +522,6 @@ class TestManualSyncFileStorage:
                 for fn in filenames:
                     if "88002" in fn:
                         saved.append(os.path.join(dirpath, fn))
-        assert saved, "Original file not saved after manual sync"
-        assert open(saved[0], "rb").read() == b"SYNC_FIT"
+        assert saved, "FIT file not saved after manual sync"
+        content = open(saved[0], "rb").read()
+        assert content[8:12] == self._FIT_MAGIC, "Saved file is not a valid FIT file"
