@@ -449,7 +449,6 @@ def screenshot(filename):
 
 
 @app.route("/output/<path:filename>")
-@login_required
 def output_file(filename):
     out_dir = os.path.abspath(_base_cfg["map"].get("output_dir", "output"))
     response = send_from_directory(out_dir, filename)
