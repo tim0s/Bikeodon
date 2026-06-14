@@ -30,7 +30,7 @@ from database import (
     get_cp_history, get_daily_loads, get_followers, get_following,
     get_setting, get_site_setting, get_user_by_id,
     get_user_by_username, get_user_stats, get_zone_totals, get_zones, init_db,
-    list_activities, load_user_config, mark_ap_posted,
+    add_feed_item, list_activities, load_user_config, mark_ap_posted,
     save_activity_file, set_activity_error, set_scheduled, set_setting, upsert_activity,
 )
 from activity_parser import parse_file, stream_from_file
@@ -441,6 +441,29 @@ def ap_post_activity(activity_id):
             _deliver_activity(inbox_url, create_activity, key_id, DB_PATH)
 
     mark_ap_posted(DB_PATH, activity_id, uid)
+
+    # Add to own feed so the post appears in the Bikeodon home feed
+    note        = create_activity["object"]
+    user_avatar = dict(user).get("avatar_filename")
+    avatar_url  = url_for("user_avatar", username=username, _external=True) if user_avatar else None
+    dist_m  = dict(row).get("distance") or 0
+    elev_m  = dict(row).get("total_elevation_gain") or 0
+    name    = dict(row).get("name", "Activity")
+    content = f"<p>{name}</p>"
+    if dist_m:
+        content += f"<p>📍 {dist_m/1000:.1f} km  🏔 {elev_m:.0f} m</p>"
+    attachments = [{"url": u, "mediaType": "image/png", "type": "Document"} for u in image_urls]
+    add_feed_item(
+        DB_PATH, username, actor_url,
+        dict(user).get("display_name") or username,
+        avatar_url,
+        note["id"],
+        url_for("activity", activity_id=activity_id, _external=True),
+        content,
+        note.get("published"),
+        json.dumps(attachments) if attachments else None,
+    )
+
     flash(f"Activity queued for delivery to {len(followers)} follower(s).", "success")
     return redirect(request.referrer or url_for("activity", activity_id=activity_id))
 
