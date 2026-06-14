@@ -38,6 +38,7 @@ from database import (
     count_activities, list_activities,
     get_nodeinfo_stats,
     add_feed_item,
+    add_reaction, remove_reaction,
     get_following as _db_get_following,
 )
 from database import _conn as _db_conn
@@ -342,14 +343,23 @@ def inbox(username):
             remote_actor = activity.get("actor", "")
             if remote_actor:
                 accept_following(db_path, username, remote_actor)
-    elif activity_type == "Undo":
-        obj = activity.get("object", {})
-        if isinstance(obj, dict) and obj.get("type") == "Follow":
-            _handle_undo_follow(username, activity, db_path)
     elif activity_type == "Create":
         obj = activity.get("object", {})
         if isinstance(obj, dict) and obj.get("type") == "Note":
             _handle_create_note(username, activity, obj, db_path)
+    elif activity_type == "Like":
+        _handle_like(username, activity, db_path)
+    elif activity_type == "Announce":
+        _handle_announce(username, activity, db_path)
+    elif activity_type == "Undo":
+        obj = activity.get("object", {})
+        if isinstance(obj, dict):
+            if obj.get("type") == "Follow":
+                _handle_undo_follow(username, activity, db_path)
+            elif obj.get("type") == "Like":
+                _handle_undo_reaction(username, obj, db_path, "like")
+            elif obj.get("type") == "Announce":
+                _handle_undo_reaction(username, obj, db_path, "boost")
 
     return "", 202
 
@@ -443,6 +453,56 @@ def _handle_create_note(local_username, activity, note_obj, db_path):
         object_id, object_url, content, published,
         json.dumps(attachments) if attachments else None,
     )
+
+
+def _activity_id_from_note_url(note_url: str, local_actor_base: str) -> int | None:
+    """Extract the numeric activity ID from a bikeodon note URL, or None if not ours."""
+    prefix = f"{local_actor_base}/activities/"
+    if not note_url.startswith(prefix):
+        return None
+    try:
+        return int(note_url[len(prefix):].split("/")[0])
+    except (ValueError, IndexError):
+        return None
+
+
+def _handle_like(local_username: str, activity: dict, db_path: str):
+    actor_url = activity.get("actor", "")
+    obj = activity.get("object", "")
+    note_url = obj if isinstance(obj, str) else (obj.get("id", "") if isinstance(obj, dict) else "")
+    if not actor_url or not note_url:
+        return
+    actor_base = url_for("activitypub.actor", username=local_username, _external=True)
+    activity_id = _activity_id_from_note_url(note_url, actor_base)
+    if activity_id:
+        add_reaction(db_path, activity_id, actor_url, "like")
+        _log.info("Like on activity %s from %s", activity_id, actor_url)
+
+
+def _handle_announce(local_username: str, activity: dict, db_path: str):
+    actor_url = activity.get("actor", "")
+    obj = activity.get("object", "")
+    note_url = obj if isinstance(obj, str) else (obj.get("id", "") if isinstance(obj, dict) else "")
+    if not actor_url or not note_url:
+        return
+    actor_base = url_for("activitypub.actor", username=local_username, _external=True)
+    activity_id = _activity_id_from_note_url(note_url, actor_base)
+    if activity_id:
+        add_reaction(db_path, activity_id, actor_url, "boost")
+        _log.info("Boost on activity %s from %s", activity_id, actor_url)
+
+
+def _handle_undo_reaction(local_username: str, obj: dict, db_path: str, reaction_type: str):
+    actor_url = obj.get("actor", "")
+    target = obj.get("object", "")
+    note_url = target if isinstance(target, str) else (target.get("id", "") if isinstance(target, dict) else "")
+    if not actor_url or not note_url:
+        return
+    actor_base = url_for("activitypub.actor", username=local_username, _external=True)
+    activity_id = _activity_id_from_note_url(note_url, actor_base)
+    if activity_id:
+        remove_reaction(db_path, activity_id, actor_url, reaction_type)
+        _log.info("Undo %s on activity %s from %s", reaction_type, activity_id, actor_url)
 
 
 def webfinger_lookup(handle: str) -> dict | None:

@@ -344,10 +344,14 @@ def activity(activity_id):
         except Exception as _e:
             print(f"[wbal] Failed for activity {activity_id}: {_e}")
 
+    from database import get_reaction_counts
+    reactions = get_reaction_counts(DB_PATH, activity_id)
+
     return render_template("activity.html", activity=act, map_url=map_url,
                            chart_urls=chart_urls, mastodon_configured=mastodon_configured,
                            has_avg_watts=has_avg_watts, has_power_chart=has_power_chart,
-                           wbal_json=wbal_json, cp=act_cp, w_prime=act_w_prime)
+                           wbal_json=wbal_json, cp=act_cp, w_prime=act_w_prime,
+                           reactions=reactions)
 
 
 @app.route("/activity/<int:activity_id>/rerender", methods=["POST"])

@@ -321,6 +321,17 @@ def init_db(db_path):
         )
     """)
 
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS activity_reactions (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            activity_id INTEGER NOT NULL,
+            actor_url   TEXT NOT NULL,
+            type        TEXT NOT NULL CHECK(type IN ('like','boost')),
+            created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(activity_id, actor_url, type)
+        )
+    """)
+
     # Indexes — safe to run on existing DBs (IF NOT EXISTS)
     for ddl in [
         "CREATE INDEX IF NOT EXISTS idx_activities_user_date"
@@ -335,6 +346,8 @@ def init_db(db_path):
         "  ON feed_items(local_username, published DESC)",
         "CREATE INDEX IF NOT EXISTS idx_cp_history_user_date"
         "  ON cp_history(user_id, activity_date ASC)",
+        "CREATE INDEX IF NOT EXISTS idx_reactions_activity"
+        "  ON activity_reactions(activity_id)",
     ]:
         conn.execute(ddl)
 
@@ -1668,3 +1681,43 @@ def get_zone_totals(db_path, user_id: int) -> tuple:
                 except (json.JSONDecodeError, TypeError):
                     pass
     return hr_totals, power_totals
+
+
+def add_reaction(db_path, activity_id: int, actor_url: str, reaction_type: str):
+    conn = _conn(db_path)
+    try:
+        conn.execute(
+            "INSERT OR IGNORE INTO activity_reactions (activity_id, actor_url, type)"
+            " VALUES (?,?,?)",
+            (activity_id, actor_url, reaction_type),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def remove_reaction(db_path, activity_id: int, actor_url: str, reaction_type: str):
+    conn = _conn(db_path)
+    try:
+        conn.execute(
+            "DELETE FROM activity_reactions WHERE activity_id=? AND actor_url=? AND type=?",
+            (activity_id, actor_url, reaction_type),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_reaction_counts(db_path, activity_id: int) -> dict:
+    conn = _conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT type, COUNT(*) AS n FROM activity_reactions WHERE activity_id=? GROUP BY type",
+            (activity_id,),
+        ).fetchall()
+        counts = {"like": 0, "boost": 0}
+        for r in rows:
+            counts[r[0]] = r[1]
+        return counts
+    finally:
+        conn.close()
