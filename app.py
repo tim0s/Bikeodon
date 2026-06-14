@@ -344,14 +344,10 @@ def activity(activity_id):
         except Exception as _e:
             print(f"[wbal] Failed for activity {activity_id}: {_e}")
 
-    from database import get_reaction_counts
-    reactions = get_reaction_counts(DB_PATH, activity_id)
-
     return render_template("activity.html", activity=act, map_url=map_url,
                            chart_urls=chart_urls, mastodon_configured=mastodon_configured,
                            has_avg_watts=has_avg_watts, has_power_chart=has_power_chart,
-                           wbal_json=wbal_json, cp=act_cp, w_prime=act_w_prime,
-                           reactions=reactions)
+                           wbal_json=wbal_json, cp=act_cp, w_prime=act_w_prime)
 
 
 @app.route("/activity/<int:activity_id>/rerender", methods=["POST"])
@@ -585,12 +581,16 @@ def ap_unfollow():
 @app.route("/feed")
 @login_required
 def feed():
-    from database import get_feed_items, count_feed_items
+    from database import get_feed_items, count_feed_items, get_reaction_counts
     page     = max(1, request.args.get("page", 1, type=int))
     per_page = 20
     offset   = (page - 1) * per_page
     items    = get_feed_items(DB_PATH, current_user.username, limit=per_page, offset=offset)
     total    = count_feed_items(DB_PATH, current_user.username)
+
+    actor_url = url_for("activitypub.actor", username=current_user.username, _external=True)
+    note_prefix = f"{actor_url}/activities/"
+
     parsed_items = []
     for item in items:
         row = dict(item)
@@ -598,6 +598,16 @@ def feed():
             row["attachments"] = json.loads(row.get("attachments_json") or "[]")
         except Exception:
             row["attachments"] = []
+        # Attach reaction counts for own posts (note URL contains the activity ID)
+        object_id = row.get("object_id", "")
+        if object_id.startswith(note_prefix):
+            try:
+                activity_id = int(object_id[len(note_prefix):].split("/")[0])
+                row["reactions"] = get_reaction_counts(DB_PATH, activity_id)
+            except (ValueError, IndexError):
+                row["reactions"] = None
+        else:
+            row["reactions"] = None
         parsed_items.append(row)
     return render_template(
         "feed.html",

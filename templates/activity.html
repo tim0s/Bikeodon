@@ -230,15 +230,7 @@
 {% endif %}
 
 {% if activity.ap_posted_at %}
-<p style="margin-bottom:1rem;color:var(--pico-muted-color)">
-  ✓ Posted to your feed on {{ activity.ap_posted_at[:10] }}
-  {% if reactions.like or reactions.boost %}
-  &nbsp;·&nbsp;
-  {% if reactions.like %}❤️ {{ reactions.like }}{% endif %}
-  {% if reactions.like and reactions.boost %} &nbsp;{% endif %}
-  {% if reactions.boost %}🔁 {{ reactions.boost }}{% endif %}
-  {% endif %}
-</p>
+<p style="margin-bottom:1rem;color:var(--pico-muted-color)">✓ Posted to your feed on {{ activity.ap_posted_at[:10] }}</p>
 {% else %}
 <form method="post" action="{{ url_for('ap_post_activity', activity_id=activity.id) }}" style="margin-bottom:1rem">
   <button type="submit" class="secondary">Post in my Feed</button>

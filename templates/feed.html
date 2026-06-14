@@ -45,6 +45,14 @@
     {% endfor %}
   </div>
   {% endif %}
+
+  {% if item.reactions and (item.reactions.like or item.reactions.boost) %}
+  <p style="margin-top:.5rem;margin-bottom:0;color:var(--pico-muted-color);font-size:.9rem">
+    {% if item.reactions.like %}❤️ {{ item.reactions.like }}{% endif %}
+    {% if item.reactions.like and item.reactions.boost %} &nbsp;{% endif %}
+    {% if item.reactions.boost %}🔁 {{ item.reactions.boost }}{% endif %}
+  </p>
+  {% endif %}
 </article>
 {% endfor %}
 
