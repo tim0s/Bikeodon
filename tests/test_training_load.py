@@ -192,11 +192,12 @@ class TestComputePeakPowers:
         assert "1min" in result
 
     def test_peak_is_higher_for_sprint_interval(self):
-        # 100 W base with a 30 s sprint at 400 W
-        stream = [{"elapsed_secs": t, "power": 400 if 100 <= t < 130 else 100}
+        # 100 W base with a 33 s sprint at 400 W — use labels from the new grid
+        stream = [{"elapsed_secs": t, "power": 400 if 100 <= t < 133 else 100}
                   for t in range(3700)]
         result = compute_peak_powers(stream)
-        assert result["30s"] > result["5min"]
+        # 33s is the grid label closest to 30s; 318s is closest to 5min
+        assert result["33s"] > result["318s"]
 
     def test_skips_none_power_values(self):
         stream = self._stream(300)

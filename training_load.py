@@ -12,9 +12,39 @@ import math
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
-# Durations (seconds) for peak mean power computation
-PEAK_DURATIONS = [5, 30, 60, 300, 1200, 3600]
-PEAK_LABELS    = ["5s", "30s", "1min", "5min", "20min", "60min"]
+def _make_peak_durations() -> list[tuple[int, str]]:
+    """~50 log-spaced durations from 1 s to 3600 s with human-readable labels."""
+    import numpy as np
+    seen, result = set(), []
+    for x in np.logspace(0, np.log10(3600), 55):
+        s = int(round(x))
+        if s < 1 or s in seen:
+            continue
+        seen.add(s)
+        if s < 60:
+            label = f"{s}s"
+        elif s % 60 == 0:
+            label = f"{s // 60}min"
+        else:
+            label = f"{s}s"
+        result.append((s, label))
+    return result
+
+
+def _label_to_secs(label: str) -> int | None:
+    """Parse a duration label back to seconds. Returns None for unrecognised labels."""
+    if label.endswith("min"):
+        return int(label[:-3]) * 60
+    if label.endswith("h"):
+        return int(label[:-1]) * 3600
+    if label.endswith("s"):
+        return int(label[:-1])
+    return None
+
+
+_PEAK_DURATION_PAIRS = _make_peak_durations()
+PEAK_DURATIONS = [p[0] for p in _PEAK_DURATION_PAIRS]
+PEAK_LABELS    = [p[1] for p in _PEAK_DURATION_PAIRS]
 
 
 def compute_np(watts_list: list) -> float | None:
@@ -326,25 +356,22 @@ def compute_zone_times(
 def aggregate_power_curve(peak_list: list) -> dict:
     """
     Best power at each duration across a list of per-activity peak dicts.
-    Returns {label: watts} for PEAK_LABELS.
+    Aggregates over whatever labels are present in the data, so old activities
+    with the 6-label format and new ones with the 48-label format are merged
+    correctly.
     """
     result = {}
-    for label in PEAK_LABELS:
-        best = None
-        for peaks in peak_list:
-            if peaks and label in peaks:
-                v = peaks[label]
-                if best is None or v > best:
-                    best = v
-        if best is not None:
-            result[label] = best
+    for peaks in peak_list:
+        if not peaks:
+            continue
+        for label, v in peaks.items():
+            if v is not None and (label not in result or v > result[label]):
+                result[label] = v
     return result
 
 
 # Map from MMP label to duration in seconds — only the aerobic range used for CP fitting.
 # 5s/30s are excluded because they are neuromuscular and violate the CP model's assumptions.
-_CP_FIT_DURATIONS = {"1min": 60, "5min": 300, "20min": 1200, "60min": 3600}
-
 
 def fit_critical_power(mmp_dict: dict) -> tuple:
     """
@@ -354,7 +381,10 @@ def fit_critical_power(mmp_dict: dict) -> tuple:
         Work(t) = P(t) × t = CP × t + W'
     Ordinary least-squares regression on (t, Work) gives slope=CP, intercept=W'.
 
-    Uses only durations ≥ 1 min where the severe-intensity domain applies.
+    Uses all durations ≥ 60 s present in mmp_dict where the severe-intensity
+    domain applies. With a dense MMP curve (~50 points) this gives a much more
+    stable fit than using only a handful of hand-picked durations.
+
     Returns (cp_watts, w_prime_joules) rounded, or (None, None) if the fit is
     invalid (fewer than 2 points, or non-positive CP / W').
 
@@ -362,11 +392,15 @@ def fit_critical_power(mmp_dict: dict) -> tuple:
       Monod & Scherrer (1965). "The work capacity of a synergic muscular group."
       Ergonomics, 8(3), 329-338.
     """
-    points = [
-        (t, mmp_dict[label] * t)
-        for label, t in _CP_FIT_DURATIONS.items()
-        if label in mmp_dict and mmp_dict[label] is not None
-    ]
+    points = []
+    for label, power in mmp_dict.items():
+        if power is None:
+            continue
+        t = _label_to_secs(label)
+        if t is None or t < 60:
+            continue
+        points.append((t, power * t))
+
     if len(points) < 2:
         return None, None
 
