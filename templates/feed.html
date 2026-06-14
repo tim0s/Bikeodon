@@ -3,6 +3,7 @@
 {% block content %}
 
 <style>
+.hidden { display:none; }
 .media-grid { display:grid; gap:2px; margin-top:.5rem; border-radius:8px; overflow:hidden; }
 .media-grid a { display:block; overflow:hidden; min-height:0; background:#fff; }
 .media-grid img { width:100%; height:100%; object-fit:contain; display:block; }
@@ -100,6 +101,21 @@
       <button type="submit" style="padding:.25rem .6rem;font-size:.9rem;{% if item.my_reactions.boost %}background:#2d7a3a;border-color:#2d7a3a;color:#fff{% else %}background:transparent;border:1px solid var(--pico-muted-border-color);color:var(--pico-muted-color){% endif %}">
         🔁{% if item.reactions and item.reactions.boost %} {{ item.reactions.boost }}{% endif %}
       </button>
+    </form>
+    <button type="button"
+            onclick="this.closest('article').querySelector('.reply-box').classList.toggle('hidden')"
+            style="padding:.25rem .6rem;font-size:.9rem;background:transparent;border:1px solid var(--pico-muted-border-color);color:var(--pico-muted-color)">
+      💬
+    </button>
+  </div>
+
+  <div class="reply-box hidden" style="margin-top:.75rem">
+    <form method="post" action="{{ url_for('feed_reply') }}" style="margin:0">
+      <input type="hidden" name="object_id" value="{{ item.object_id }}">
+      <input type="hidden" name="actor_url" value="{{ item.actor_url }}">
+      <textarea name="content" rows="3" placeholder="Write a reply…"
+                style="width:100%;font-size:.9rem;margin-bottom:.4rem" required></textarea>
+      <button type="submit" style="font-size:.9rem;padding:.3rem .8rem">Send reply</button>
     </form>
   </div>
 </article>

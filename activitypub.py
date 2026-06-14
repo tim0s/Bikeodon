@@ -768,6 +768,50 @@ def _resolve_inbox(actor_url: str, db_path: str, local_username: str) -> str | N
     return None
 
 
+def send_reply(local_username: str, local_user, object_id: str, actor_url: str,
+               content: str, db_path: str):
+    """Send a Create{Note} reply to object_id from local_username."""
+    inbox_url = _resolve_inbox(actor_url, db_path, local_username)
+    if not inbox_url:
+        _log.warning("send_reply: could not resolve inbox for %s", actor_url)
+        return
+
+    actor_ap_url = url_for("activitypub.actor", username=local_username, _external=True)
+    _, priv_pem = get_or_create_keypair(db_path, local_user["id"])
+    key_id = f"{actor_ap_url}#main-key"
+    followers_url = f"{actor_ap_url}/followers"
+
+    published = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    reply_id = f"{actor_ap_url}/replies/{abs(hash(object_id + content + published)):016x}"
+
+    # Wrap plain text in paragraph tags, preserving line breaks
+    safe = nh3.clean(content, tags={"p", "br", "a", "strong", "em"}, link_rel=None)
+    if not safe:
+        safe = "<p>" + content.replace("\n\n", "</p><p>").replace("\n", "<br>") + "</p>"
+
+    note = {
+        "id": reply_id,
+        "type": "Note",
+        "attributedTo": actor_ap_url,
+        "inReplyTo": object_id,
+        "content": safe,
+        "published": published,
+        "to": ["https://www.w3.org/ns/activitystreams#Public"],
+        "cc": [followers_url, actor_url],
+    }
+    create = {
+        "@context": "https://www.w3.org/ns/activitystreams",
+        "id": f"{reply_id}/create",
+        "type": "Create",
+        "actor": actor_ap_url,
+        "published": published,
+        "to": ["https://www.w3.org/ns/activitystreams#Public"],
+        "cc": [followers_url, actor_url],
+        "object": note,
+    }
+    _deliver_activity(inbox_url, create, key_id, db_path)
+
+
 def send_like(local_username: str, local_user, object_id: str, actor_url: str, db_path: str):
     inbox_url = _resolve_inbox(actor_url, db_path, local_username)
     if not inbox_url:

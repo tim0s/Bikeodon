@@ -655,6 +655,20 @@ def feed_react():
     return redirect(request.referrer or url_for("feed"))
 
 
+@app.route("/feed/reply", methods=["POST"])
+@login_required
+def feed_reply():
+    from activitypub import send_reply
+    object_id = request.form.get("object_id", "").strip()
+    actor_url = request.form.get("actor_url", "").strip()
+    content   = request.form.get("content", "").strip()
+    if not object_id or not actor_url or not content:
+        abort(400)
+    user = get_user_by_id(DB_PATH, int(current_user.id))
+    send_reply(current_user.username, user, object_id, actor_url, content, DB_PATH)
+    return redirect(request.referrer or url_for("feed"))
+
+
 # ---------------------------------------------------------------------------
 # Upload
 # ---------------------------------------------------------------------------
