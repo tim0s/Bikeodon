@@ -309,6 +309,16 @@ def init_db(db_path):
         )
     """)
     conn.execute("""
+        CREATE TABLE IF NOT EXISTS local_reactions (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            local_username TEXT NOT NULL,
+            object_id      TEXT NOT NULL,
+            type           TEXT NOT NULL CHECK(type IN ('like','boost')),
+            created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(local_username, object_id, type)
+        )
+    """)
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS cp_history (
             id                 INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id            INTEGER NOT NULL,
@@ -1709,6 +1719,53 @@ def get_zone_totals(db_path, user_id: int) -> tuple:
                 except (json.JSONDecodeError, TypeError):
                     pass
     return hr_totals, power_totals
+
+
+def add_local_reaction(db_path, local_username: str, object_id: str, reaction_type: str):
+    conn = _conn(db_path)
+    try:
+        conn.execute(
+            "INSERT OR IGNORE INTO local_reactions (local_username, object_id, type)"
+            " VALUES (?,?,?)",
+            (local_username, object_id, reaction_type),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def remove_local_reaction(db_path, local_username: str, object_id: str, reaction_type: str):
+    conn = _conn(db_path)
+    try:
+        conn.execute(
+            "DELETE FROM local_reactions WHERE local_username=? AND object_id=? AND type=?",
+            (local_username, object_id, reaction_type),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_local_reactions(db_path, local_username: str, object_ids: list) -> dict:
+    """Return {object_id: {'like': bool, 'boost': bool}} for the given object IDs."""
+    if not object_ids:
+        return {}
+    conn = _conn(db_path)
+    try:
+        placeholders = ",".join("?" * len(object_ids))
+        rows = conn.execute(
+            f"SELECT object_id, type FROM local_reactions"
+            f" WHERE local_username=? AND object_id IN ({placeholders})",
+            [local_username] + list(object_ids),
+        ).fetchall()
+    finally:
+        conn.close()
+    result = {}
+    for object_id, rtype in rows:
+        if object_id not in result:
+            result[object_id] = {"like": False, "boost": False}
+        result[object_id][rtype] = True
+    return result
 
 
 def add_reaction(db_path, activity_id: int, actor_url: str, reaction_type: str):

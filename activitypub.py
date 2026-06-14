@@ -753,6 +753,96 @@ def send_profile_update(local_username: str, local_user, db_path: str):
     _log.info("Queued profile Update for %s to %d follower(s)", local_username, len(followers))
 
 
+def _resolve_inbox(actor_url: str, db_path: str, local_username: str) -> str | None:
+    """Return inbox URL for actor_url: check following table first, then fetch actor doc."""
+    following = _db_get_following(db_path, local_username)
+    match = next((f for f in following if f["actor_url"] == actor_url), None)
+    if match and match.get("inbox_url"):
+        return match["inbox_url"]
+    try:
+        resp = requests.get(actor_url, headers={"Accept": _AP_MIME}, timeout=5)
+        if resp.ok:
+            return resp.json().get("inbox")
+    except Exception:
+        pass
+    return None
+
+
+def send_like(local_username: str, local_user, object_id: str, actor_url: str, db_path: str):
+    inbox_url = _resolve_inbox(actor_url, db_path, local_username)
+    if not inbox_url:
+        return
+    actor_ap_url = url_for("activitypub.actor", username=local_username, _external=True)
+    _, priv_pem = get_or_create_keypair(db_path, local_user["id"])
+    key_id = f"{actor_ap_url}#main-key"
+    like_id = f"{actor_ap_url}/likes/{abs(hash(object_id)):016x}"
+    activity = {
+        "@context": "https://www.w3.org/ns/activitystreams",
+        "id":     like_id,
+        "type":   "Like",
+        "actor":  actor_ap_url,
+        "object": object_id,
+    }
+    _deliver_activity(inbox_url, activity, key_id, db_path)
+
+
+def send_unlike(local_username: str, local_user, object_id: str, actor_url: str, db_path: str):
+    inbox_url = _resolve_inbox(actor_url, db_path, local_username)
+    if not inbox_url:
+        return
+    actor_ap_url = url_for("activitypub.actor", username=local_username, _external=True)
+    _, priv_pem = get_or_create_keypair(db_path, local_user["id"])
+    key_id = f"{actor_ap_url}#main-key"
+    like_id = f"{actor_ap_url}/likes/{abs(hash(object_id)):016x}"
+    activity = {
+        "@context": "https://www.w3.org/ns/activitystreams",
+        "id":     f"{like_id}/undo",
+        "type":   "Undo",
+        "actor":  actor_ap_url,
+        "object": {"id": like_id, "type": "Like", "actor": actor_ap_url, "object": object_id},
+    }
+    _deliver_activity(inbox_url, activity, key_id, db_path)
+
+
+def send_boost(local_username: str, local_user, object_id: str, actor_url: str, db_path: str):
+    inbox_url = _resolve_inbox(actor_url, db_path, local_username)
+    if not inbox_url:
+        return
+    actor_ap_url = url_for("activitypub.actor", username=local_username, _external=True)
+    _, priv_pem = get_or_create_keypair(db_path, local_user["id"])
+    key_id = f"{actor_ap_url}#main-key"
+    boost_id = f"{actor_ap_url}/boosts/{abs(hash(object_id)):016x}"
+    followers_url = f"{actor_ap_url}/followers"
+    activity = {
+        "@context": "https://www.w3.org/ns/activitystreams",
+        "id":      boost_id,
+        "type":    "Announce",
+        "actor":   actor_ap_url,
+        "object":  object_id,
+        "to":      ["https://www.w3.org/ns/activitystreams#Public"],
+        "cc":      [followers_url],
+    }
+    _deliver_activity(inbox_url, activity, key_id, db_path)
+
+
+def send_unboost(local_username: str, local_user, object_id: str, actor_url: str, db_path: str):
+    inbox_url = _resolve_inbox(actor_url, db_path, local_username)
+    if not inbox_url:
+        return
+    actor_ap_url = url_for("activitypub.actor", username=local_username, _external=True)
+    _, priv_pem = get_or_create_keypair(db_path, local_user["id"])
+    key_id = f"{actor_ap_url}#main-key"
+    boost_id = f"{actor_ap_url}/boosts/{abs(hash(object_id)):016x}"
+    activity = {
+        "@context": "https://www.w3.org/ns/activitystreams",
+        "id":     f"{boost_id}/undo",
+        "type":   "Undo",
+        "actor":  actor_ap_url,
+        "object": {"id": boost_id, "type": "Announce", "actor": actor_ap_url, "object": object_id},
+    }
+    _deliver_activity(inbox_url, activity, key_id, db_path)
+
+
 def _deliver_activity(inbox_url, activity_doc, key_id, db_path):
     """Enqueue an activity for async delivery. Returns immediately."""
     enqueue_delivery(db_path, inbox_url, json.dumps(activity_doc), key_id)

@@ -30,7 +30,8 @@ from database import (
     get_cp_history, get_daily_loads, get_followers, get_following,
     get_setting, get_site_setting, get_user_by_id,
     get_user_by_username, get_user_stats, get_zone_totals, get_zones, init_db,
-    add_feed_item, list_activities, load_user_config, mark_ap_posted,
+    add_feed_item, add_local_reaction, remove_local_reaction, get_local_reactions,
+    list_activities, load_user_config, mark_ap_posted,
     save_activity_file, set_activity_error, set_scheduled, set_setting, upsert_activity,
 )
 from activity_parser import parse_file, stream_from_file
@@ -591,6 +592,9 @@ def feed():
     actor_url = url_for("activitypub.actor", username=current_user.username, _external=True)
     note_prefix = f"{actor_url}/activities/"
 
+    object_ids = [dict(i).get("object_id", "") for i in items]
+    local_rxns  = get_local_reactions(DB_PATH, current_user.username, object_ids)
+
     parsed_items = []
     for item in items:
         row = dict(item)
@@ -598,7 +602,6 @@ def feed():
             row["attachments"] = json.loads(row.get("attachments_json") or "[]")
         except Exception:
             row["attachments"] = []
-        # Attach reaction counts for own posts (note URL contains the activity ID)
         object_id = row.get("object_id", "")
         if object_id.startswith(note_prefix):
             try:
@@ -608,6 +611,7 @@ def feed():
                 row["reactions"] = None
         else:
             row["reactions"] = None
+        row["my_reactions"] = local_rxns.get(object_id, {"like": False, "boost": False})
         parsed_items.append(row)
     return render_template(
         "feed.html",
@@ -618,6 +622,37 @@ def feed():
         has_prev=page > 1,
         has_next=(offset + per_page) < total,
     )
+
+
+@app.route("/feed/react", methods=["POST"])
+@login_required
+def feed_react():
+    from activitypub import send_like, send_unlike, send_boost, send_unboost
+    object_id     = request.form.get("object_id", "").strip()
+    actor_url     = request.form.get("actor_url", "").strip()
+    reaction_type = request.form.get("type", "")
+    if not object_id or not actor_url or reaction_type not in ("like", "boost"):
+        abort(400)
+
+    uid  = int(current_user.id)
+    user = get_user_by_id(DB_PATH, uid)
+    existing = get_local_reactions(DB_PATH, current_user.username, [object_id])
+    already  = existing.get(object_id, {}).get(reaction_type, False)
+
+    if already:
+        remove_local_reaction(DB_PATH, current_user.username, object_id, reaction_type)
+        if reaction_type == "like":
+            send_unlike(current_user.username, user, object_id, actor_url, DB_PATH)
+        else:
+            send_unboost(current_user.username, user, object_id, actor_url, DB_PATH)
+    else:
+        add_local_reaction(DB_PATH, current_user.username, object_id, reaction_type)
+        if reaction_type == "like":
+            send_like(current_user.username, user, object_id, actor_url, DB_PATH)
+        else:
+            send_boost(current_user.username, user, object_id, actor_url, DB_PATH)
+
+    return redirect(request.referrer or url_for("feed"))
 
 
 # ---------------------------------------------------------------------------
