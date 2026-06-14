@@ -211,8 +211,6 @@ def _build_activity(detail: dict, streams: dict) -> dict:
             _at(time_s, i),
         ])
 
-    start_latlng = detail.get("start_latlng") or [None, None]
-
     return {
         "id":                   detail["id"],
         "source_url":           f"https://www.strava.com/activities/{detail['id']}",
@@ -228,7 +226,5 @@ def _build_activity(detail: dict, streams: dict) -> dict:
         "max_heartrate":        detail.get("max_heartrate"),
         "average_watts":        detail.get("average_watts"),
         "max_watts":            detail.get("max_watts"),
-        "start_lat":            start_latlng[0],
-        "start_lon":            start_latlng[1],
         "points":               points,
     }

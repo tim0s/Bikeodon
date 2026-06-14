@@ -196,8 +196,6 @@ def init_db(db_path):
             max_heartrate        REAL,
             average_watts        REAL,
             max_watts            REAL,
-            start_lat            REAL,
-            start_lon            REAL,
             fetched_at           TEXT,
             strava_url           TEXT,
             posted_at            TEXT,
@@ -338,7 +336,7 @@ def init_db(db_path):
         conn.execute(ddl)
 
     # Drop columns that have been superseded (safe to re-run — ignored if already gone)
-    for drop_col in ["points_json"]:
+    for drop_col in ["points_json", "start_lat", "start_lon"]:
         try:
             conn.execute(f"ALTER TABLE activities DROP COLUMN {drop_col}")
         except sqlite3.OperationalError:
@@ -747,13 +745,13 @@ def upsert_activity(db_path, data: dict, user_id: int, source: str = "strava"):
              distance, moving_time, elapsed_time, total_elevation_gain,
              average_speed, max_speed,
              average_heartrate, max_heartrate, average_watts, max_watts,
-             start_lat, start_lon, fetched_at,
+             fetched_at,
              strava_url, posted_at, mastodon_post_url, scheduled_for_post,
              map_rendered_at, charts_rendered_at, ap_posted_at, source,
              tss, np_watts, trimp, hr_tss, peak_power_json,
              hr_zone_secs_json, power_zone_secs_json, breakthroughs_json,
              metrics_computed_at, source_file, source_file_sha256, source_file_type)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id, user_id) DO UPDATE SET
               name                  = excluded.name,
               sport_type            = excluded.sport_type,
@@ -768,8 +766,6 @@ def upsert_activity(db_path, data: dict, user_id: int, source: str = "strava"):
               max_heartrate         = excluded.max_heartrate,
               average_watts         = excluded.average_watts,
               max_watts             = excluded.max_watts,
-              start_lat             = excluded.start_lat,
-              start_lon             = excluded.start_lon,
               fetched_at            = excluded.fetched_at,
               strava_url            = excluded.strava_url,
               source                = excluded.source,
@@ -798,8 +794,6 @@ def upsert_activity(db_path, data: dict, user_id: int, source: str = "strava"):
             data.get("max_heartrate"),
             data.get("average_watts"),
             data.get("max_watts"),
-            data.get("start_lat"),
-            data.get("start_lon"),
             datetime.now(timezone.utc).isoformat(),
             data.get("source_url"),
             existing["posted_at"]          if existing else None,
