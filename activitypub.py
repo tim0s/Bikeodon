@@ -280,6 +280,7 @@ def _build_actor_doc(username: str, user, pub_pem: str) -> dict:
         "outbox":            outbox_url,
         "followers":         foll_url,
         "following":         fing_url,
+        "endpoints":         {"sharedInbox": url_for("activitypub.shared_inbox", _external=True)},
         "publicKey": {
             "id":           f"{actor_url}#main-key",
             "owner":        actor_url,
@@ -314,6 +315,48 @@ def _avatar_media_type(filename: str | None) -> str:
 # Inbox  POST /users/<username>/inbox
 # ---------------------------------------------------------------------------
 
+@bp.route("/inbox", methods=["POST"])
+def shared_inbox():
+    db_path = current_app.config["DB_PATH"]
+    raw = request.get_data()
+
+    ok, reason = _verify_http_signature(request, raw)
+    if not ok:
+        _log.warning("Shared inbox: rejected — %s", reason)
+        abort(401)
+
+    try:
+        activity = json.loads(raw)
+        if not isinstance(activity, dict):
+            abort(400)
+    except (ValueError, TypeError):
+        abort(400)
+
+    # Determine which local users this activity is addressed to
+    from database import get_all_users as _get_all_users
+    all_users = _get_all_users(db_path)
+    addressed = set()
+    for field in ("to", "cc"):
+        val = activity.get(field, [])
+        if isinstance(val, str):
+            val = [val]
+        for url in val:
+            for u in all_users:
+                actor_url = url_for("activitypub.actor", username=u["username"], _external=True)
+                if url in (actor_url, f"{actor_url}/followers"):
+                    addressed.add(u["username"])
+
+    # Fall back to all local users (e.g. public activities with no explicit addressing)
+    targets = addressed or {u["username"] for u in all_users}
+
+    for username in targets:
+        user = get_user_by_username(db_path, username)
+        if user:
+            _dispatch_inbox(username, user, activity, db_path)
+
+    return "", 202
+
+
 @bp.route("/users/<username>/inbox", methods=["POST"])
 def inbox(username):
     db_path = current_app.config["DB_PATH"]
@@ -335,8 +378,12 @@ def inbox(username):
     except (ValueError, TypeError):
         abort(400)
 
-    activity_type = activity.get("type")
+    _dispatch_inbox(username, user, activity, db_path)
+    return "", 202
 
+
+def _dispatch_inbox(username, user, activity, db_path):
+    activity_type = activity.get("type")
     if activity_type == "Follow":
         _handle_follow(username, user, activity, db_path)
     elif activity_type == "Accept":
@@ -351,7 +398,8 @@ def inbox(username):
             _handle_create_note(username, activity, obj, db_path)
     elif activity_type == "Update":
         obj = activity.get("object", {})
-        if isinstance(obj, dict) and obj.get("type") in ("Person", "Service", "Application", "Group", "Organization"):
+        if isinstance(obj, dict) and obj.get("type") in (
+                "Person", "Service", "Application", "Group", "Organization"):
             _handle_update_person(username, activity, obj, db_path)
     elif activity_type == "Delete":
         _handle_delete_note(username, activity, db_path)
@@ -368,8 +416,6 @@ def inbox(username):
                 _handle_undo_reaction(username, obj, db_path, "like")
             elif obj.get("type") == "Announce":
                 _handle_undo_reaction(username, obj, db_path, "boost")
-
-    return "", 202
 
 
 def _handle_follow(local_username, local_user, activity, db_path):
