@@ -926,6 +926,7 @@ def _activity_row_to_ap(row, actor_url: str, outbox_url: str,
     note = {
         "id": note_id,
         "type": "Note",
+        "url": f"{base_url}/activity/{row['id']}",
         "attributedTo": actor_url,
         "content": content,
         "tag": tag_objects,
