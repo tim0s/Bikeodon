@@ -2,6 +2,17 @@
 {% block title %}Feed – Bikeodon{% endblock %}
 {% block content %}
 
+<style>
+.media-grid { display:grid; gap:2px; margin-top:.5rem; border-radius:8px; overflow:hidden; }
+.media-grid img { width:100%; height:100%; object-fit:cover; display:block; cursor:pointer; }
+.media-grid.n1 { grid-template-columns:1fr; max-height:400px; }
+.media-grid.n1 img { max-height:400px; }
+.media-grid.n2 { grid-template-columns:1fr 1fr; height:240px; }
+.media-grid.n3 { grid-template-columns:2fr 1fr; height:280px; }
+.media-grid.n3 .col { display:grid; grid-template-rows:1fr 1fr; gap:2px; height:280px; }
+.media-grid.n4 { grid-template-columns:1fr 1fr; grid-template-rows:1fr 1fr; height:320px; }
+</style>
+
 <h2>Home Feed</h2>
 
 {% if not items %}
@@ -32,16 +43,44 @@
   </header>
 
   {% if item.content %}
-  {# content is sanitized via nh3 before storage — safe to render as HTML #}
   <div style="margin-bottom:.5rem">{{ item.content | safe }}</div>
   {% endif %}
 
-  {% if item.attachments %}
-  <div style="display:flex;flex-wrap:wrap;gap:.5rem;margin-top:.5rem">
-    {% for att in item.attachments %}
+  {% set imgs = item.attachments | selectattr("mediaType", "defined") | selectattr("mediaType", "string") | list %}
+  {% set imgs = imgs | selectattr("mediaType") | list %}
+  {# filter to images only #}
+  {% set image_atts = [] %}
+  {% for att in item.attachments %}
     {% if att.mediaType and att.mediaType.startswith("image/") %}
-    <img src="{{ att.url }}" alt="" style="max-width:100%;max-height:300px;border-radius:4px;object-fit:cover">
+      {% set _ = image_atts.append(att) %}
     {% endif %}
+  {% endfor %}
+  {% set n = image_atts | length %}
+
+  {% if n == 1 %}
+  <div class="media-grid n1">
+    <a href="{{ image_atts[0].url }}" target="_blank" rel="noopener">
+      <img src="{{ image_atts[0].url }}" alt="">
+    </a>
+  </div>
+  {% elif n == 2 %}
+  <div class="media-grid n2">
+    {% for att in image_atts %}
+    <a href="{{ att.url }}" target="_blank" rel="noopener"><img src="{{ att.url }}" alt=""></a>
+    {% endfor %}
+  </div>
+  {% elif n == 3 %}
+  <div class="media-grid n3">
+    <a href="{{ image_atts[0].url }}" target="_blank" rel="noopener"><img src="{{ image_atts[0].url }}" alt=""></a>
+    <div class="col">
+      <a href="{{ image_atts[1].url }}" target="_blank" rel="noopener"><img src="{{ image_atts[1].url }}" alt=""></a>
+      <a href="{{ image_atts[2].url }}" target="_blank" rel="noopener"><img src="{{ image_atts[2].url }}" alt=""></a>
+    </div>
+  </div>
+  {% elif n >= 4 %}
+  <div class="media-grid n4">
+    {% for att in image_atts[:4] %}
+    <a href="{{ att.url }}" target="_blank" rel="noopener"><img src="{{ att.url }}" alt=""></a>
     {% endfor %}
   </div>
   {% endif %}
