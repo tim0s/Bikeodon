@@ -853,6 +853,41 @@ def outbox(username):
 
 
 # ---------------------------------------------------------------------------
+# Individual activity  GET /users/<username>/activities/<activity_id>
+# ---------------------------------------------------------------------------
+
+@bp.route("/users/<username>/activities/<int:activity_id>")
+def activity_object(username, activity_id):
+    db_path = current_app.config["DB_PATH"]
+    user = get_user_by_username(db_path, username)
+    if not user:
+        abort(404)
+
+    from database import get_activity as _get_activity
+    row = _get_activity(db_path, activity_id, user_id=user["id"])
+    if not row:
+        abort(404)
+
+    actor_url  = url_for("activitypub.actor",  username=username, _external=True)
+    outbox_url = url_for("activitypub.outbox", username=username, _external=True)
+
+    out_dir = current_app.config.get("OUTPUT_DIR", "output")
+    import os as _os
+    image_urls = [
+        url_for("output_file", filename=f"{activity_id}{s}.png", _external=True)
+        for s in ["", "_hr", "_power"]
+        if _os.path.exists(_os.path.join(_os.path.abspath(out_dir), f"{activity_id}{s}.png"))
+    ]
+
+    create_activity = _activity_row_to_ap(row, actor_url, outbox_url, image_urls=image_urls)
+    note = create_activity["object"]
+
+    resp = jsonify(note)
+    resp.content_type = _AP_MIME
+    return resp
+
+
+# ---------------------------------------------------------------------------
 # Following  GET /users/<username>/following
 # ---------------------------------------------------------------------------
 

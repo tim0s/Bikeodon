@@ -58,6 +58,7 @@ if _secret_key == "dev-key-change-me-in-production" and not app.debug:
     raise RuntimeError("FLASK_SECRET_KEY must be set in production (DEBUG=False)")
 app.secret_key = _secret_key
 app.config["DB_PATH"]              = DB_PATH
+app.config["OUTPUT_DIR"]           = _base_cfg["map"].get("output_dir", "output")
 app.config["PREFERRED_URL_SCHEME"] = "https"
 
 init_db(DB_PATH)
