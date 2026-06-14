@@ -102,7 +102,7 @@ def _strava_client_for(db_path: str, user_id: int) -> "StravaClient":
 
 
 def _sync_user(db_path: str, user_id: int, username: str,
-               count: int = 20, full: bool = False) -> list[int]:
+               count: int = 20, full: bool = False, base_cfg: dict | None = None) -> list[int]:
     """
     Fetch new activities for one user from Strava and store them.
     Returns the list of newly stored activity IDs.
@@ -133,7 +133,7 @@ def _sync_user(db_path: str, user_id: int, username: str,
         print(f"  [{username}] No new activities.")
         return []
 
-    files_dir = os.path.join(cfg.get("map", {}).get("output_dir", "output"), "activity_files")
+    files_dir = os.path.join((base_cfg or {}).get("map", {}).get("output_dir", "output"), "activity_files")
     new_ids = []
     for activity_id in ids:
         try:
@@ -214,7 +214,8 @@ def cmd_sync(args, cfg):
     total = 0
     for user in users:
         new_ids = _sync_user(db_path, user["id"], user["username"] or f"user:{user['id']}",
-                             count=args.count, full=getattr(args, "full", False))
+                             count=args.count, full=getattr(args, "full", False),
+                             base_cfg=args.base_cfg)
         total += len(new_ids)
         if new_ids:
             user_cfg = load_user_config(db_path, user["id"], args.base_cfg)
