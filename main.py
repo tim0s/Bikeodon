@@ -43,12 +43,10 @@ from mastodon_client import MastodonClient
 from tasks import _render_and_track
 from database import (
     get_activities_without_metrics, reset_metrics_computed,
-    update_activity_metrics, get_zones, get_all_peak_powers,
+    get_all_peak_powers,
 )
-from inference import infer_training_params
 from training_load import (
-    aggregate_power_curve, compute_hr_tss, compute_np, compute_peak_powers,
-    compute_pmc, compute_trimp, compute_tss, compute_zone_times, fit_critical_power,
+    aggregate_power_curve, compute_pmc, fit_critical_power,
 )
 
 STRAVA_CLIENT_ID     = os.environ.get("STRAVA_CLIENT_ID", "")
@@ -450,77 +448,8 @@ def cmd_metrics(args, cfg):
         set_setting(db_path, uid, "inference", "cp",       "")
         set_setting(db_path, uid, "inference", "w_prime",  "")
 
-    pending = get_activities_without_metrics(db_path, uid)
-    if not pending:
-        print("No activities need metrics computation.")
-    else:
-        print(f"{len(pending)} activities to process…")
-
-        # Run inference once upfront
-        user_cfg = load_user_config(db_path, uid, args.base_cfg)
-        ftp    = user_cfg["charts"]["power"]["ftp"]
-        hr_max = user_cfg["charts"]["heart_rate"]["max_hr"]
-
-        if not ftp or not hr_max:
-            print("Running inference (FTP, max HR)…")
-            inferred = infer_training_params(db_path, uid)
-            if inferred["ftp"] and not ftp:
-                ftp = inferred["ftp"]
-                set_setting(db_path, uid, "inference", "ftp", str(round(ftp, 1)))
-                print(f"  Inferred FTP:    {ftp:.0f} W")
-            if inferred["max_hr"] and not hr_max:
-                hr_max = inferred["max_hr"]
-                set_setting(db_path, uid, "inference", "max_hr", str(round(hr_max, 1)))
-                print(f"  Inferred max HR: {hr_max:.0f} bpm")
-
-        hr_rest     = float(get_setting(db_path, uid, "training", "hr_rest") or 0) or None
-        lthr        = float(get_setting(db_path, uid, "training", "lthr")     or 0) or None
-        if not lthr and hr_max:
-            lthr = hr_max * 0.88
-        hr_zones    = get_zones(db_path, uid, "hr")
-        power_zones = get_zones(db_path, uid, "power")
-
-        done = errors = 0
-        for i, row in enumerate(pending, 1):
-            try:
-                source_file  = row["source_file"]
-                stream       = stream_from_file(source_file) if source_file else []
-                watts_list   = [p.get("power")        for p in stream]
-                hr_list      = [p.get("hr")           for p in stream]
-                elapsed_list = [p.get("elapsed_secs") for p in stream]
-                duration     = row["moving_time"] or row["elapsed_time"]
-
-                np_w  = compute_np(watts_list)
-                tss   = compute_tss(np_w, duration, ftp) if np_w else None
-                trimp = compute_trimp(hr_list, elapsed_list, hr_max, hr_rest) if hr_max and hr_rest else None
-                peaks = compute_peak_powers(stream)
-
-                hr_tss = None
-                if tss is None and hr_max and hr_rest and lthr:
-                    hr_tss = compute_hr_tss(hr_list, elapsed_list, hr_max, hr_rest, lthr)
-
-                hr_zone_secs, power_zone_secs = compute_zone_times(
-                    stream, hr_zones, power_zones, hr_max, ftp
-                )
-
-                update_activity_metrics(
-                    db_path, row["id"], uid,
-                    tss, np_w, trimp,
-                    _json.dumps(peaks) if peaks else None,
-                    _json.dumps(hr_zone_secs)    if hr_zone_secs    else None,
-                    _json.dumps(power_zone_secs) if power_zone_secs else None,
-                    hr_tss=hr_tss,
-                )
-                done += 1
-                print(f"  [{i}/{len(pending)}] {row['name'] or row['id']}"
-                      + (f"  TSS={tss:.0f}" if tss else "")
-                      + (f"  hrTSS={hr_tss:.0f}" if hr_tss else "")
-                      + (f"  NP={np_w:.0f}W" if np_w else ""))
-            except Exception as e:
-                errors += 1
-                print(f"  [{i}/{len(pending)}] ERROR {row['id']}: {e}")
-
-        print(f"\nDone — {done} computed, {errors} errors.")
+    from tasks import run_metrics_backfill
+    run_metrics_backfill(uid)
 
     # Fit CP/W' from the now-populated MMP curve
     all_peaks   = get_all_peak_powers(db_path, uid)
