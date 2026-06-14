@@ -792,6 +792,8 @@ def _activity_row_to_ap(row, actor_url: str, outbox_url: str,
         for u in (image_urls or [])
     ]
 
+    followers_url = f"{actor_url}/followers"
+
     note = {
         "id": note_id,
         "type": "Note",
@@ -800,6 +802,7 @@ def _activity_row_to_ap(row, actor_url: str, outbox_url: str,
         "tag": tag_objects,
         "published": published,
         "to": ["https://www.w3.org/ns/activitystreams#Public"],
+        "cc": [followers_url],
     }
     if attachments:
         note["attachment"] = attachments
@@ -811,6 +814,7 @@ def _activity_row_to_ap(row, actor_url: str, outbox_url: str,
         "actor": actor_url,
         "published": published,
         "to": ["https://www.w3.org/ns/activitystreams#Public"],
+        "cc": [followers_url],
         "object": note,
     }
 
