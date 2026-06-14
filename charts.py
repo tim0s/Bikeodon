@@ -21,9 +21,9 @@ import numpy as np
 def _apply_style(fig, ax_list, cfg):
     """Apply dark theme from config to a figure and its axes."""
     style = cfg.get("charts", {}).get("style", {})
-    bg    = style.get("background_color", "#16161a")
-    fg    = style.get("text_color",       "#eeeeee")
-    grid  = style.get("grid_color",       "#2e2e3a")
+    bg    = style.get("background_color", "#ffffff")
+    fg    = style.get("text_color",       "#222222")
+    grid  = style.get("grid_color",       "#dddddd")
 
     fig.patch.set_facecolor(bg)
     for ax in ax_list:
@@ -177,7 +177,7 @@ def render_hr_chart(stream, cfg, out_path: str, db_path: str | None = None, user
     ax_r.set_yticks(thresh)
     ax_r.set_yticklabels(
         [f"{t:.0f}" for t in thresh],
-        fontsize=9, color=style.get("text_color", "#eeeeee"),
+        fontsize=9, color=style.get("text_color", "#222222"),
     )
     for spine in ax_r.spines.values():
         spine.set_visible(False)
@@ -242,7 +242,7 @@ def render_power_chart(stream, cfg, out_path: str, db_path: str | None = None, u
     pwr_pad = (power.max() - power.min()) * 0.10
     ax_time.set_ylim(power.min() - pwr_pad, power.max() + pwr_pad)
     ax_time.legend(fontsize=9, framealpha=0.2,
-                   labelcolor=style.get("text_color", "#eeeeee"))
+                   labelcolor=style.get("text_color", "#222222"))
 
     # ── zone distribution ──
     _draw_zone_bar(ax_dist, zones, pcts, cfg)
