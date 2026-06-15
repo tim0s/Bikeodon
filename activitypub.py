@@ -812,7 +812,15 @@ def send_reply(local_username: str, local_user, object_id: str, actor_url: str,
     _deliver_activity(inbox_url, create, key_id, db_path)
 
 
+def _is_local_actor(actor_url: str) -> bool:
+    """True if actor_url belongs to this server — no federation needed."""
+    local_base = url_for("activitypub.actor", username="_", _external=True).rsplit("/_", 1)[0]
+    return actor_url.startswith(local_base)
+
+
 def send_like(local_username: str, local_user, object_id: str, actor_url: str, db_path: str):
+    if _is_local_actor(actor_url):
+        return
     inbox_url = _resolve_inbox(actor_url, db_path, local_username)
     if not inbox_url:
         return
@@ -831,6 +839,8 @@ def send_like(local_username: str, local_user, object_id: str, actor_url: str, d
 
 
 def send_unlike(local_username: str, local_user, object_id: str, actor_url: str, db_path: str):
+    if _is_local_actor(actor_url):
+        return
     inbox_url = _resolve_inbox(actor_url, db_path, local_username)
     if not inbox_url:
         return
@@ -849,6 +859,8 @@ def send_unlike(local_username: str, local_user, object_id: str, actor_url: str,
 
 
 def send_boost(local_username: str, local_user, object_id: str, actor_url: str, db_path: str):
+    if _is_local_actor(actor_url):
+        return
     inbox_url = _resolve_inbox(actor_url, db_path, local_username)
     if not inbox_url:
         return
@@ -870,6 +882,8 @@ def send_boost(local_username: str, local_user, object_id: str, actor_url: str, 
 
 
 def send_unboost(local_username: str, local_user, object_id: str, actor_url: str, db_path: str):
+    if _is_local_actor(actor_url):
+        return
     inbox_url = _resolve_inbox(actor_url, db_path, local_username)
     if not inbox_url:
         return
