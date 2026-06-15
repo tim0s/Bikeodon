@@ -2,13 +2,13 @@
 """
 Bikeodon – CLI
 Usage:
-  python main.py sync              # fetch 10 most recent Strava activities
+  python main.py sync              # fetch recent Strava activities
   python main.py sync --count 20   # fetch more
   python main.py list              # list activities stored in the database
   python main.py render            # render map for the most recent activity
   python main.py render 12345678   # render map for a specific activity ID
   python main.py charts 12345678   # generate HR/power charts
-  python main.py post 12345678     # render and post to Mastodon
+  python main.py metrics           # compute training metrics
   python main.py config list       # show all per-user settings
   python main.py config get <area> <key>
   python main.py config set <area> <key> <value>
@@ -30,16 +30,14 @@ load_dotenv()
 from activity_parser import points_from_file, stream_from_file
 from charts import generate_charts
 from database import (
-    clear_rendered, get_activity, get_all_users, get_latest_activity_date,
-    get_setting, get_site_setting, get_unposted,
-    get_unrendered, get_user_by_username, init_db, list_activities, list_settings,
-    load_user_config, mark_posted, mark_rendered, save_activity_file,
-    set_admin, set_setting, set_site_setting, upsert_activity,
+    get_activity, get_all_users, get_latest_activity_date,
+    get_setting, get_unrendered, get_user_by_username, init_db,
+    list_activities, list_settings, load_user_config, mark_rendered,
+    save_activity_file, set_setting, upsert_activity,
 )
 from fit_encoder import generate_fit
-from strava import StravaClient, delete_webhook, list_webhooks, register_webhook
+from strava import StravaClient
 from map_renderer import render_activity_map
-from mastodon_client import MastodonClient
 from tasks import _render_and_track
 from database import (
     get_activities_without_metrics, reset_metrics_computed,
@@ -327,109 +325,6 @@ def cmd_charts(args, cfg):
         print(f"  → {p}")
 
 
-def _build_post_text(activity: dict, template: str) -> str:
-    def fmt_time(secs):
-        if not secs:
-            return "?"
-        h, m = divmod(int(secs) // 60, 60)
-        return f"{h}h {m:02d}m" if h else f"{m}m"
-
-    return template.format(
-        name          = activity.get("name", "Activity"),
-        distance_km   = (activity.get("distance") or 0) / 1000,
-        elevation_m   = activity.get("total_elevation_gain") or 0,
-        moving_time   = fmt_time(activity.get("moving_time")),
-        average_speed = (activity.get("average_speed") or 0) * 3.6,
-        date          = (activity.get("start_date") or "")[:10],
-        sport_type    = activity.get("sport_type") or "",
-    )
-
-
-def cmd_post(args, cfg):
-    db_path = cfg["database"]["path"]
-    out_dir = cfg["map"].get("output_dir", "output")
-
-    row = get_activity(db_path, args.activity_id, user_id=args.user_id)
-    if not row:
-        print(f"Activity {args.activity_id} not found. Run 'sync' first.")
-        sys.exit(1)
-
-    text = _build_post_text(dict(row), cfg["mastodon"].get("post_template", "{name}\n#cycling"))
-    print(f"Post preview:\n{'─' * 40}")
-    print(text)
-    print("─" * 40)
-
-    if args.dry_run:
-        print("(dry run — nothing posted)")
-        return
-
-    confirm = input("\nPost to Mastodon? [y/N] ").strip().lower()
-    if confirm != "y":
-        print("Aborted.")
-        return
-
-    try:
-        url = _do_post(row, cfg, db_path, out_dir, rerender=args.rerender, user_id=args.user_id)
-    except Exception as e:
-        print(f"Error: {e}")
-        sys.exit(1)
-
-    if url:
-        print(f"\nPosted! {url}")
-
-
-# ---------------------------------------------------------------------------
-# Shared posting logic (used by cmd_post and cmd_daemon)
-# ---------------------------------------------------------------------------
-
-def _do_post(row, cfg, db_path: str, out_dir: str, rerender: bool = False, user_id: int = 1) -> str | None:
-    """
-    Render, upload, and post a single activity. Returns the Mastodon post URL
-    on success, or None if posting was skipped (no GPS data, render failure).
-    Raises on network/API errors.
-    """
-    activity_id = row["id"]
-    img_path    = os.path.join(out_dir, f"{activity_id}.png")
-
-    if not os.path.exists(img_path) or rerender:
-        _render_and_track(activity_id, user_id, cfg, out_dir, row=row)
-        row = get_activity(db_path, activity_id, user_id=user_id)
-        if not row or not os.path.exists(img_path):
-            print(f"  [{activity_id}] No GPS data or render failed — skipping.")
-            return None
-
-    text        = _build_post_text(dict(row), cfg["mastodon"].get("post_template", "{name}\n#cycling"))
-    source_file = row["source_file"]
-    stream      = stream_from_file(source_file) if source_file else []
-    chart_paths = generate_charts(activity_id, stream, cfg, out_dir, db_path=db_path, user_id=user_id)
-    all_images  = ([img_path] + chart_paths)[:4]
-
-    client    = MastodonClient.from_cfg(cfg)
-    media_ids = [client.upload_image(p) for p in all_images]
-
-    resp = client._session.post(
-        f"{client._base}/api/v1/statuses",
-        json={
-            "status":     text,
-            "media_ids":  media_ids,
-            "visibility": cfg["mastodon"].get("visibility", "public"),
-        },
-    )
-    resp.raise_for_status()
-    post_url = resp.json().get("url", "")
-    mark_posted(db_path, activity_id, post_url, user_id=user_id)
-    return post_url
-
-
-# ---------------------------------------------------------------------------
-# Daemon
-# ---------------------------------------------------------------------------
-
-def _now():
-    from datetime import datetime, timezone
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-
-
 # ---------------------------------------------------------------------------
 # Metrics backfill
 # ---------------------------------------------------------------------------
@@ -461,63 +356,6 @@ def cmd_metrics(args, cfg):
         print(f"\nCritical Power fit:  CP={cp:.0f} W   W'={w_prime/1000:.1f} kJ")
     else:
         print("\nCould not fit CP model (need MMP data at ≥2 durations ≥1 min).")
-
-
-# ---------------------------------------------------------------------------
-# Config management
-# ---------------------------------------------------------------------------
-
-def cmd_webhook(args, cfg):
-    verify_token = os.environ.get("STRAVA_WEBHOOK_VERIFY_TOKEN", "")
-
-    if args.webhook_cmd == "status":
-        subs = list_webhooks(STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET)
-        if not subs:
-            print("No webhook subscription registered.")
-        for s in subs:
-            print(f"  ID {s['id']}  callback: {s['callback_url']}")
-
-    elif args.webhook_cmd == "subscribe":
-        if not verify_token:
-            print("STRAVA_WEBHOOK_VERIFY_TOKEN not set in .env")
-            sys.exit(1)
-        result = register_webhook(
-            STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET,
-            args.callback_url, verify_token,
-        )
-        print(f"Subscribed. ID: {result.get('id')}")
-
-    elif args.webhook_cmd == "unsubscribe":
-        subs = list_webhooks(STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET)
-        if not subs:
-            print("No subscription to remove.")
-            return
-        for s in subs:
-            delete_webhook(STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET, s["id"])
-            print(f"Deleted subscription {s['id']}.")
-
-
-def cmd_admin(args, cfg):
-    db_path = cfg["database"]["path"]
-    user = get_user_by_username(db_path, args.username)
-    if not user:
-        print(f"User '{args.username}' not found.")
-        sys.exit(1)
-    set_admin(db_path, args.username, True)
-    print(f"'{args.username}' is now an admin.")
-
-
-def cmd_invite_code(args, cfg):
-    db_path = cfg["database"]["path"]
-    if args.code:
-        set_site_setting(db_path, "invite_code", args.code)
-        print(f"Invite code set.")
-    else:
-        code = get_site_setting(db_path, "invite_code")
-        if code:
-            print(f"Current invite code: {code}")
-        else:
-            print("No invite code set — registration is open to anyone.")
 
 
 def cmd_config(args, cfg):
@@ -582,27 +420,9 @@ def main():
     p_charts = sub.add_parser("charts", help="Generate HR/power charts for an activity")
     p_charts.add_argument("activity_id", type=int)
 
-    p_post = sub.add_parser("post", help="Render and post an activity to Mastodon")
-    p_post.add_argument("activity_id", type=int, help="Strava activity ID to post")
-    p_post.add_argument("--dry-run",  action="store_true", help="Preview without publishing")
-    p_post.add_argument("--rerender", action="store_true", help="Re-render even if image exists")
-
-    p_webhook = sub.add_parser("webhook", help="Manage Strava webhook subscription")
-    wh_sub = p_webhook.add_subparsers(dest="webhook_cmd")
-    wh_sub.add_parser("status", help="Show current subscription")
-    p_wh_sub = wh_sub.add_parser("subscribe", help="Register webhook with Strava")
-    p_wh_sub.add_argument("callback_url", help="Public URL e.g. https://bikeodon.org/strava/webhook")
-    wh_sub.add_parser("unsubscribe", help="Remove webhook subscription")
-
-    p_admin = sub.add_parser("admin", help="Grant admin privileges to a user")
-    p_admin.add_argument("username", help="Username to promote")
-
     p_metrics = sub.add_parser("metrics", help="Compute training metrics for all activities")
     p_metrics.add_argument("--all", action="store_true",
                            help="Recompute even already-processed activities")
-
-    p_invite = sub.add_parser("invite-code", help="Set or show the registration invite code")
-    p_invite.add_argument("code", nargs="?", help="New invite code (omit to show current)")
 
     p_cfg = sub.add_parser("config", help="View or update per-user settings")
     cfg_sub = p_cfg.add_subparsers(dest="config_cmd")
@@ -630,7 +450,7 @@ def main():
 
     args.base_cfg = _base
 
-    if args.command in ("sync", "invite-code", "admin", "webhook"):
+    if args.command == "sync":
         args.user_id = None
         cfg = load_user_config(_db_path, 1, _base)
     else:
@@ -638,16 +458,12 @@ def main():
         cfg = load_user_config(_db_path, args.user_id, _base)
 
     {
-        "sync":        cmd_sync,
-        "list":        cmd_list,
-        "render":      cmd_render,
-        "charts":      cmd_charts,
-        "post":        cmd_post,
-        "webhook":     cmd_webhook,
-        "admin":       cmd_admin,
-        "invite-code": cmd_invite_code,
-        "config":      cmd_config,
-        "metrics":     cmd_metrics,
+        "sync":    cmd_sync,
+        "list":    cmd_list,
+        "render":  cmd_render,
+        "charts":  cmd_charts,
+        "config":  cmd_config,
+        "metrics": cmd_metrics,
     }[args.command](args, cfg)
 
 

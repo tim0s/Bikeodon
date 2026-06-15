@@ -1336,6 +1336,40 @@ def set_wbal_json(db_path, activity_id: int, user_id: int, wbal_json: str) -> No
         conn.close()
 
 
+def get_latest_cp(db_path, user_id: int, as_of: str | None = None):
+    """Return (cp_watts, w_prime_joules) from the most recent cp_history row,
+    optionally restricted to rows with activity_date <= as_of. Returns (None, None) if none."""
+    conn = _conn(db_path)
+    try:
+        if as_of:
+            row = conn.execute(
+                "SELECT cp_watts, w_prime_joules FROM cp_history"
+                " WHERE user_id=? AND activity_date<=?"
+                " ORDER BY activity_date DESC LIMIT 1",
+                (user_id, as_of),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT cp_watts, w_prime_joules FROM cp_history"
+                " WHERE user_id=? ORDER BY activity_date DESC LIMIT 1",
+                (user_id,),
+            ).fetchone()
+        if row:
+            return row["cp_watts"], row["w_prime_joules"]
+        return None, None
+    finally:
+        conn.close()
+
+
+def clear_cp_history(db_path, user_id: int) -> None:
+    conn = _conn(db_path)
+    try:
+        conn.execute("DELETE FROM cp_history WHERE user_id=?", (user_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def get_prev_cp_history(db_path, user_id: int, before_date: str):
     """Return the most recent cp_history row strictly before before_date, or None."""
     conn = _conn(db_path)

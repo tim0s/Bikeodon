@@ -27,17 +27,16 @@ from config import DB_PATH, _base_cfg, STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET, S
 from database import (
     _conn, attach_source_file, clear_rendered, count_activities, create_user,
     find_overlapping_activity, get_activity, get_all_peak_powers,
-    get_cp_history, get_daily_loads, get_followers, get_following,
+    get_cp_history, get_daily_loads, get_followers, get_following, get_latest_cp,
     get_setting, get_site_setting, get_user_by_id,
     get_user_by_username, get_user_stats, get_zone_totals, get_zones, init_db,
     add_feed_item, add_local_reaction, remove_local_reaction, get_local_reactions,
     list_activities, load_user_config, mark_ap_posted,
-    save_activity_file, set_activity_error, set_scheduled, set_setting, upsert_activity,
+    save_activity_file, set_activity_error, set_scheduled, upsert_activity,
 )
 from activity_parser import parse_file
 from training_load import (
-    aggregate_power_curve, compute_pmc,
-    fit_critical_power, weekly_load,
+    aggregate_power_curve, compute_pmc, weekly_load,
 )
 from tasks import (
     _collect_activity_images, _do_post_activity,
@@ -332,11 +331,7 @@ def activity(activity_id):
     wbal_json = row["wbal_json"] if row["wbal_json"] else None
     act_cp = act_w_prime = None
     if wbal_json:
-        _cp_v     = get_setting(DB_PATH, uid, "inference", "cp")
-        _wprime_v = get_setting(DB_PATH, uid, "inference", "w_prime")
-        if _cp_v and _wprime_v:
-            act_cp      = float(_cp_v)
-            act_w_prime = float(_wprime_v)
+        act_cp, act_w_prime = get_latest_cp(DB_PATH, uid, as_of=(row["start_date"] or "")[:10])
 
     return render_template("activity.html", activity=act, map_url=map_url,
                            chart_urls=chart_urls, mastodon_configured=mastodon_configured,
@@ -915,10 +910,7 @@ def me():
     curve_all    = aggregate_power_curve(all_peaks)
     curve_recent = aggregate_power_curve(recent_peaks)
 
-    cp, w_prime = fit_critical_power(curve_all)
-    if cp:
-        set_setting(DB_PATH, uid, "inference", "cp",      str(cp))
-        set_setting(DB_PATH, uid, "inference", "w_prime", str(w_prime))
+    cp, w_prime = get_latest_cp(DB_PATH, uid)
 
     if body_weight:
         wpk_all    = {k: round(v / body_weight, 2) for k, v in curve_all.items()}

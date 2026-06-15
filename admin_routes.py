@@ -1,18 +1,19 @@
 import threading
 from functools import wraps
 
-from flask import flash, redirect, render_template, url_for
+from flask import abort, flash, redirect, render_template, url_for
 from flask_login import current_user, login_required
 
 from config import DB_PATH, _base_cfg, STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET
 from fit_encoder import generate_fit
 from flask import request
+from strava import delete_webhook, list_webhooks, register_webhook
 import glob, os
 from database import (
-    get_activity, get_admin_stats, get_all_users_for_admin, get_error_activities,
-    get_setting, get_site_setting, set_site_setting, delete_site_setting,
-    load_user_config, reset_metrics_computed, save_activity_file,
-    set_admin, set_setting, upsert_activity,
+    clear_cp_history, get_activity, get_admin_stats, get_all_users_for_admin,
+    get_error_activities, get_setting, get_site_setting, set_site_setting,
+    delete_site_setting, load_user_config, reset_metrics_computed,
+    save_activity_file, set_admin, set_setting, upsert_activity,
 )
 from tasks import _backfill_lock, _render_and_track
 
@@ -71,9 +72,18 @@ def register_routes(app):
             ) if os.path.isdir(fit_dir) else 0
             u["disk_bytes"] = fit_bytes + png_bytes_by_user.get(uid_, 0)
 
+        try:
+            webhook_subs = list_webhooks(STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET)
+        except Exception:
+            webhook_subs = None  # Strava unreachable or credentials missing
+
+        default_callback = url_for("strava_webhook_verify", _external=True)
+
         return render_template("admin.html", stats=stats, errors=errors,
                                backfill_running=backfill_running,
-                               invite_code=invite_code, users=users)
+                               invite_code=invite_code, users=users,
+                               webhook_subs=webhook_subs,
+                               default_callback=default_callback)
 
     @app.route("/admin/full-sync", methods=["POST"])
     @login_required
@@ -145,6 +155,7 @@ def register_routes(app):
     def admin_recompute_metrics():
         uid = int(current_user.id)
         reset_metrics_computed(DB_PATH, uid)
+        clear_cp_history(DB_PATH, uid)
         set_setting(DB_PATH, uid, "inference", "ftp", "")
         set_setting(DB_PATH, uid, "inference", "max_hr", "")
         flash("Metrics reset. Visit the You page to trigger recomputation.", "success")
@@ -170,8 +181,43 @@ def register_routes(app):
         code = request.form.get("invite_code", "").strip()
         if code:
             set_site_setting(DB_PATH, "invite_code", code)
-            flash(f"Invite code set to "{code}".", "success")
+            flash(f"Invite code set to '{code}'.", "success")
         else:
             delete_site_setting(DB_PATH, "invite_code")
             flash("Invite code cleared — registration is now open to anyone.", "success")
+        return redirect(url_for("admin"))
+
+    @app.route("/admin/webhook/subscribe", methods=["POST"])
+    @login_required
+    @admin_required
+    def admin_webhook_subscribe():
+        verify_token = os.environ.get("STRAVA_WEBHOOK_VERIFY_TOKEN", "").strip()
+        callback_url = request.form.get("callback_url", "").strip()
+        if not verify_token:
+            flash("STRAVA_WEBHOOK_VERIFY_TOKEN is not set in environment.", "error")
+            return redirect(url_for("admin"))
+        if not callback_url:
+            flash("Callback URL is required.", "error")
+            return redirect(url_for("admin"))
+        try:
+            result = register_webhook(STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET,
+                                      callback_url, verify_token)
+            flash(f"Webhook subscribed. ID: {result.get('id')}", "success")
+        except Exception as e:
+            flash(f"Subscription failed: {e}", "error")
+        return redirect(url_for("admin"))
+
+    @app.route("/admin/webhook/unsubscribe", methods=["POST"])
+    @login_required
+    @admin_required
+    def admin_webhook_unsubscribe():
+        sub_id = request.form.get("sub_id")
+        if not sub_id:
+            flash("No subscription ID provided.", "error")
+            return redirect(url_for("admin"))
+        try:
+            delete_webhook(STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET, int(sub_id))
+            flash(f"Webhook subscription {sub_id} deleted.", "success")
+        except Exception as e:
+            flash(f"Unsubscribe failed: {e}", "error")
         return redirect(url_for("admin"))

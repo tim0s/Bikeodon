@@ -56,6 +56,35 @@
 </article>
 
 <article style="margin-bottom:2rem">
+  <header><strong>Strava webhook</strong></header>
+  {% if webhook_subs is none %}
+  <p class="muted"><small>Could not reach Strava API — check credentials.</small></p>
+  {% elif webhook_subs %}
+  {% for s in webhook_subs %}
+  <p><small>ID <strong>{{ s.id }}</strong> → <code>{{ s.callback_url }}</code></small></p>
+  <form method="post" action="{{ url_for('admin_webhook_unsubscribe') }}" style="margin:.25rem 0 0">
+    <input type="hidden" name="sub_id" value="{{ s.id }}">
+    <button type="submit" class="secondary outline"
+            style="padding:.2rem .6rem;font-size:.8rem;color:#c0392b;border-color:#c0392b"
+            onclick="return confirm('Delete webhook subscription {{ s.id }}?')">
+      Unsubscribe
+    </button>
+  </form>
+  {% endfor %}
+  {% else %}
+  <p class="muted"><small>No webhook subscription registered.</small></p>
+  {% endif %}
+  <form method="post" action="{{ url_for('admin_webhook_subscribe') }}"
+        style="display:flex;gap:.5rem;align-items:center;margin-top:.75rem">
+    <input type="url" name="callback_url" value="{{ default_callback }}"
+           placeholder="https://example.com/strava/webhook"
+           style="margin:0;width:26rem;font-size:.9rem" required>
+    <button type="submit" class="secondary outline" style="margin:0">Subscribe</button>
+  </form>
+  <small class="muted">Requires <code>STRAVA_WEBHOOK_VERIFY_TOKEN</code> in environment.</small>
+</article>
+
+<article style="margin-bottom:2rem">
   <header><strong>Users</strong></header>
   <table>
     <thead>
