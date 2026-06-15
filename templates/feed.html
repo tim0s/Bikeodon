@@ -107,6 +107,13 @@
             style="padding:.25rem .6rem;font-size:.9rem;background:transparent;border:1px solid var(--pico-muted-border-color);color:var(--pico-muted-color)">
       💬
     </button>
+    {% if item.actor_url == current_user_actor_url and item.local_activity_id %}
+    <form method="post" action="{{ url_for('ap_delete_activity', activity_id=item.local_activity_id) }}"
+          style="margin:0;margin-left:auto"
+          onsubmit="return confirm('Delete this post and notify followers?')">
+      <button type="submit" style="padding:.25rem .6rem;font-size:.9rem;background:transparent;border:1px solid var(--pico-muted-border-color);color:var(--pico-muted-color)">🗑️</button>
+    </form>
+    {% endif %}
   </div>
 
   <div class="reply-box hidden" style="margin-top:.75rem">

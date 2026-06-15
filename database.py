@@ -1681,6 +1681,18 @@ def mark_ap_posted(db_path, activity_id: int, user_id: int):
         conn.close()
 
 
+def clear_ap_posted(db_path, activity_id: int, user_id: int):
+    conn = _conn(db_path)
+    try:
+        conn.execute(
+            "UPDATE activities SET ap_posted_at=NULL WHERE id=? AND user_id=?",
+            (activity_id, user_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def mark_delivery_failed(db_path, delivery_id: int, error: str):
     conn = _conn(db_path)
     try:
