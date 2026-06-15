@@ -449,7 +449,7 @@ def compute_wbal(stream: list, cp: float, w_prime: float) -> list | None:
 
     wbal        = float(w_prime)
     result      = []
-    sample_step = 10          # output point every ~10 s
+    sample_step = 30          # output point every ~30 s
     next_sample = pairs[0][0]
 
     for i in range(1, len(pairs)):
