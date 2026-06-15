@@ -234,14 +234,6 @@ def init_db(db_path):
     """)
 
     conn.execute("""
-        CREATE TABLE IF NOT EXISTS job_log (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            started_at  TEXT NOT NULL,
-            finished_at TEXT,
-            job_type    TEXT NOT NULL,
-            status      TEXT NOT NULL DEFAULT 'running',
-            details     TEXT
-        )
     """)
 
     conn.execute("""
@@ -1407,48 +1399,6 @@ def get_activities_without_metrics(db_path, user_id: int) -> list:
     return rows
 
 
-def job_start(db_path, job_type: str, details: str = "") -> int:
-    """Log the start of a background job. Returns the job id."""
-    conn = _conn(db_path)
-    try:
-        cur = conn.execute(
-            "INSERT INTO job_log (started_at, job_type, status, details) VALUES (?,?,?,?)",
-            (datetime.now(timezone.utc).isoformat(), job_type, "running", details),
-        )
-        job_id = cur.lastrowid
-        conn.commit()
-    finally:
-        conn.close()
-    return job_id
-
-
-def job_finish(db_path, job_id: int, status: str = "done", details: str = ""):
-    conn = _conn(db_path)
-    try:
-        conn.execute(
-            "UPDATE job_log SET finished_at=?, status=?, details=? WHERE id=?",
-            (datetime.now(timezone.utc).isoformat(), status, details, job_id),
-        )
-        # Keep only last 200 entries
-        conn.execute(
-            "DELETE FROM job_log WHERE id NOT IN (SELECT id FROM job_log ORDER BY id DESC LIMIT 200)"
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def get_recent_jobs(db_path, limit: int = 30) -> list:
-    conn = _conn(db_path)
-    try:
-        rows = conn.execute(
-            "SELECT id, started_at, finished_at, job_type, status, details"
-            " FROM job_log ORDER BY id DESC LIMIT ?",
-            (limit,),
-        ).fetchall()
-    finally:
-        conn.close()
-    return [dict(r) for r in rows]
 
 
 def add_follower(db_path, local_username: str, actor_url: str, inbox_url: str,

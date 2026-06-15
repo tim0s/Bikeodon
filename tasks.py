@@ -15,7 +15,7 @@ from config import DB_PATH, _base_cfg
 
 from database import (
     _conn, get_activities_without_metrics, get_activity, get_all_peak_powers,
-    get_cp_history, get_prev_cp_history, get_setting, job_finish, job_start,
+    get_cp_history, get_prev_cp_history, get_setting,
     load_user_config, mark_rendered, mark_posted,
     set_activity_error, set_scheduled, set_setting, set_wbal_json,
     update_activity_metrics, upsert_cp_history,
@@ -258,8 +258,6 @@ def run_metrics_backfill(uid: int):
     if not pending:
         return
     try:
-        job_id = job_start(DB_PATH, "metrics_backfill",
-                           f"Starting — {len(pending)} activities pending")
         print(f"[backfill] Starting metrics for {len(pending)} activities (user {uid})")
 
         bcfg_pre = load_user_config(DB_PATH, uid, _base_cfg)
@@ -283,8 +281,6 @@ def run_metrics_backfill(uid: int):
             except Exception as e:
                 print(f"[backfill] Error on activity {brow['id']}: {e}")
             _time.sleep(0.05)
-        job_finish(DB_PATH, job_id, "done",
-                   f"Computed metrics for {done}/{len(pending)} activities")
         print(f"[backfill] Done — {done}/{len(pending)} activities processed")
     except Exception as e:
         print(f"[backfill] Fatal error: {e}")
