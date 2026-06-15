@@ -7,7 +7,7 @@ from flask_login import current_user, login_required
 from config import DB_PATH, _base_cfg, STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET
 from fit_encoder import generate_fit
 from database import (
-    get_activity, get_admin_stats, get_error_activities, get_recent_jobs,
+    get_activity, get_admin_stats, get_error_activities,
     get_setting, load_user_config, reset_metrics_computed, save_activity_file,
     set_setting, upsert_activity,
 )
@@ -32,10 +32,9 @@ def register_routes(app):
     def admin():
         stats            = get_admin_stats(DB_PATH)
         errors           = get_error_activities(DB_PATH)
-        recent_jobs      = get_recent_jobs(DB_PATH)
         backfill_running = _backfill_lock.locked()
         return render_template("admin.html", stats=stats, errors=errors,
-                               recent_jobs=recent_jobs, backfill_running=backfill_running)
+                               backfill_running=backfill_running)
 
     @app.route("/admin/full-sync", methods=["POST"])
     @login_required
