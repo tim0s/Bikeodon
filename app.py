@@ -621,6 +621,7 @@ def feed():
         per_page=per_page,
         has_prev=page > 1,
         has_next=(offset + per_page) < total,
+        current_user_actor_url=actor_url,
     )
 
 
@@ -666,6 +667,40 @@ def feed_reply():
         abort(400)
     user = get_user_by_id(DB_PATH, int(current_user.id))
     send_reply(current_user.username, user, object_id, actor_url, content, DB_PATH)
+    return redirect(request.referrer or url_for("feed"))
+
+
+@app.route("/feed/reply/delete", methods=["POST"])
+@login_required
+def feed_reply_delete():
+    from database import delete_feed_item
+    from activitypub import _is_local_actor
+    object_id = request.form.get("object_id", "").strip()
+    parent_actor_url = request.form.get("parent_actor_url", "").strip()
+    if not object_id:
+        abort(400)
+    uid = int(current_user.id)
+    actor_ap_url = url_for("activitypub.actor", username=current_user.username, _external=True)
+    delete_feed_item(DB_PATH, current_user.username, object_id, actor_ap_url)
+    # Federate a Delete to the post author's inbox so remote servers remove it too
+    if parent_actor_url and not _is_local_actor(parent_actor_url):
+        from activitypub import _resolve_inbox, _deliver_activity, get_or_create_keypair
+        from datetime import datetime, timezone
+        inbox_url = _resolve_inbox(parent_actor_url, DB_PATH, current_user.username)
+        if inbox_url:
+            _, priv_pem = get_or_create_keypair(DB_PATH, uid)
+            key_id = f"{actor_ap_url}#main-key"
+            now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            delete_activity = {
+                "@context": "https://www.w3.org/ns/activitystreams",
+                "id": f"{object_id}/delete",
+                "type": "Delete",
+                "actor": actor_ap_url,
+                "published": now,
+                "to": ["https://www.w3.org/ns/activitystreams#Public"],
+                "object": {"id": object_id, "type": "Tombstone"},
+            }
+            _deliver_activity(inbox_url, delete_activity, key_id, DB_PATH)
     return redirect(request.referrer or url_for("feed"))
 
 

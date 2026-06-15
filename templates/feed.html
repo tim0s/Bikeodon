@@ -130,8 +130,17 @@
       <div style="width:28px;height:28px;border-radius:50%;background:var(--pico-secondary-background);flex-shrink:0;margin-top:2px"></div>
       {% endif %}
       <div style="flex:1;min-width:0">
-        <strong style="font-size:.85rem">{{ reply.actor_name or reply.actor_url }}</strong>
-        <span style="color:var(--pico-muted-color);font-size:.8rem;margin-left:.4rem">{{ reply.published[:10] if reply.published else "" }}</span>
+        <span style="display:flex;align-items:baseline;gap:.4rem">
+          <strong style="font-size:.85rem">{{ reply.actor_name or reply.actor_url }}</strong>
+          <span style="color:var(--pico-muted-color);font-size:.8rem">{{ reply.published[:10] if reply.published else "" }}</span>
+          {% if reply.actor_url == current_user_actor_url %}
+          <form method="post" action="{{ url_for('feed_reply_delete') }}" style="margin:0;margin-left:auto">
+            <input type="hidden" name="object_id" value="{{ reply.object_id }}">
+            <input type="hidden" name="parent_actor_url" value="{{ item.actor_url }}">
+            <button type="submit" style="padding:0 .3rem;font-size:.75rem;background:transparent;border:none;color:var(--pico-muted-color);cursor:pointer" title="Delete reply">✕</button>
+          </form>
+          {% endif %}
+        </span>
         <div style="font-size:.9rem;margin-top:.2rem">{{ reply.content | safe }}</div>
       </div>
     </div>
