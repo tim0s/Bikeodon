@@ -771,16 +771,8 @@ def _resolve_inbox(actor_url: str, db_path: str, local_username: str) -> str | N
 def send_reply(local_username: str, local_user, object_id: str, actor_url: str,
                content: str, db_path: str):
     """Send a Create{Note} reply to object_id from local_username."""
-    inbox_url = _resolve_inbox(actor_url, db_path, local_username)
-    if not inbox_url:
-        _log.warning("send_reply: could not resolve inbox for %s", actor_url)
-        return
-
     actor_ap_url = url_for("activitypub.actor", username=local_username, _external=True)
-    _, priv_pem = get_or_create_keypair(db_path, local_user["id"])
-    key_id = f"{actor_ap_url}#main-key"
     followers_url = f"{actor_ap_url}/followers"
-
     published = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     reply_id = f"{actor_ap_url}/replies/{abs(hash(object_id + content + published)):016x}"
 
@@ -799,6 +791,29 @@ def send_reply(local_username: str, local_user, object_id: str, actor_url: str,
         "to": ["https://www.w3.org/ns/activitystreams#Public"],
         "cc": [followers_url, actor_url],
     }
+
+    # Add reply to local feed immediately so the author sees it
+    feed_content = (
+        f'<p style="color:var(--pico-muted-color);font-size:.85rem">'
+        f'↩ <a href="{object_id}" target="_blank" rel="noopener">In reply to</a>'
+        f'</p>'
+    ) + safe
+    display_name = local_user.get("display_name") or local_username
+    avatar_url = url_for("user_avatar", username=local_username, _external=True) if local_user.get("avatar_filename") else None
+    add_feed_item(db_path, local_username, actor_ap_url, display_name, avatar_url,
+                  reply_id, reply_id, feed_content, published, None)
+
+    # Federate to the post author's inbox (skip if they're local — no HTTP round-trip needed)
+    if _is_local_actor(actor_url):
+        return
+
+    inbox_url = _resolve_inbox(actor_url, db_path, local_username)
+    if not inbox_url:
+        _log.warning("send_reply: could not resolve inbox for %s", actor_url)
+        return
+
+    _, priv_pem = get_or_create_keypair(db_path, local_user["id"])
+    key_id = f"{actor_ap_url}#main-key"
     create = {
         "@context": "https://www.w3.org/ns/activitystreams",
         "id": f"{reply_id}/create",
