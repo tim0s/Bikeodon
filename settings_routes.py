@@ -5,7 +5,7 @@ from config import DB_PATH, _base_cfg, STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET
 from database import (
     apply_zone_preset, get_setting, get_zones,
     HR_ZONE_PRESETS, POWER_ZONE_PRESETS,
-    load_user_config, set_setting, _conn,
+    load_user_config, set_athlete_param, set_setting, _conn,
 )
 
 _STAT_FIELDS = [
@@ -101,6 +101,13 @@ def register_routes(app):
         for key in ("max_hr", "ftp"):
             val = request.form.get(key, "").strip()
             set_setting(DB_PATH, uid, "charts", key, val if val else "")
+            # Mirror to athlete_params for time-series tracking
+            if val:
+                try:
+                    param = "max_hr" if key == "max_hr" else "ftp"
+                    set_athlete_param(DB_PATH, uid, param, float(val), source="manual")
+                except ValueError:
+                    pass
         flash("Chart settings saved.", "success")
         return redirect(url_for("settings", section="charts"))
 
@@ -111,6 +118,15 @@ def register_routes(app):
         for key in ("body_weight_kg", "hr_rest", "lthr"):
             val = request.form.get(key, "").strip()
             set_setting(DB_PATH, uid, "training", key, val)
+        # Mirror to athlete_params for time-series tracking
+        _param_map = {"body_weight_kg": "weight_kg", "hr_rest": "rest_hr"}
+        for form_key, param in _param_map.items():
+            val = request.form.get(form_key, "").strip()
+            if val:
+                try:
+                    set_athlete_param(DB_PATH, uid, param, float(val), source="manual")
+                except ValueError:
+                    pass
         flash("Training settings saved.", "success")
         return redirect(url_for("settings", section="training"))
 

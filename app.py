@@ -33,7 +33,8 @@ from database import (
     get_user_by_username, get_user_stats, get_zone_totals, get_zones, init_db,
     add_feed_item, add_local_reaction, remove_local_reaction, get_local_reactions,
     list_activities, load_user_config, mark_ap_posted,
-    save_activity_file, set_activity_error, set_scheduled, upsert_activity,
+    save_activity_file, set_activity_error, set_athlete_param, set_scheduled,
+    set_setting, upsert_activity,
 )
 from activity_parser import parse_file
 from training_load import (
@@ -648,6 +649,44 @@ def save_profile():
     return redirect(url_for("me", tab="profile"))
 
 
+@app.route("/profile/physio", methods=["POST"])
+@login_required
+def save_physio_param():
+    uid   = int(current_user.id)
+    param = request.form.get("param", "").strip()
+    value = request.form.get("value", "").strip()
+
+    _FLOAT_PARAMS   = {"weight_kg", "rest_hr", "max_hr", "height_cm"}
+    _ALLOWED_PARAMS = _FLOAT_PARAMS | {"birthday"}
+    if param not in _ALLOWED_PARAMS or not value:
+        abort(400)
+
+    if param == "birthday":
+        set_setting(DB_PATH, uid, "profile", "birthday", value)
+    elif param == "height_cm":
+        try:
+            set_setting(DB_PATH, uid, "profile", "height_cm", str(float(value)))
+        except ValueError:
+            abort(400)
+    else:
+        try:
+            fval = float(value)
+        except ValueError:
+            abort(400)
+        set_athlete_param(DB_PATH, uid, param, fval, source="manual")
+        # Keep settings in sync so the rest of the app still sees the value
+        _settings_map = {
+            "weight_kg": ("training", "body_weight_kg"),
+            "rest_hr":   ("training", "hr_rest"),
+            "max_hr":    ("charts",   "max_hr"),
+        }
+        area, key = _settings_map[param]
+        set_setting(DB_PATH, uid, area, key, str(fval))
+
+    flash("Updated.", "success")
+    return redirect(url_for("me", tab="profile"))
+
+
 @app.route("/ap/follow", methods=["POST"])
 @login_required
 def ap_follow():
@@ -927,6 +966,13 @@ def me():
     hr_max      = cfg["charts"]["heart_rate"]["max_hr"]
     hr_rest     = float(get_setting(DB_PATH, uid, "training", "hr_rest") or 0) or None
 
+    # Physiological profile — prefer athlete_params (time-series), fall back to settings
+    phys_max_hr   = get_athlete_param(DB_PATH, uid, "max_hr")  or hr_max
+    phys_rest_hr  = get_athlete_param(DB_PATH, uid, "rest_hr") or hr_rest
+    phys_weight   = get_athlete_param(DB_PATH, uid, "weight_kg") or body_weight
+    phys_height   = float(get_setting(DB_PATH, uid, "profile", "height_cm") or 0) or None
+    phys_birthday = get_setting(DB_PATH, uid, "profile", "birthday") or None
+
     hr_totals, power_totals = get_zone_totals(DB_PATH, uid)
 
     def _zone_chart_data(zones, totals):
@@ -996,6 +1042,11 @@ def me():
         ftp_history_json=json.dumps(ftp_history),
         hr_history_json=json.dumps({"max_hr": max_hr_history, "rest_hr": rest_hr_history}),
         has_hr_history=bool(max_hr_history or rest_hr_history),
+        phys_max_hr=phys_max_hr,
+        phys_rest_hr=phys_rest_hr,
+        phys_weight=phys_weight,
+        phys_height=phys_height,
+        phys_birthday=phys_birthday,
         weight_history_json=json.dumps(weight_history),
         followers=followers,
         following=following,

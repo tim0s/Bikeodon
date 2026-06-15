@@ -1125,6 +1125,65 @@
   </footer>
 </article>
 
+{% macro phys_field(label, id, param, value, unit, input_type, input_attrs) %}
+<tr>
+  <td style="padding:.4rem .6rem;white-space:nowrap"><strong>{{ label }}</strong></td>
+  <td style="padding:.4rem .6rem">
+    <span id="show-{{ id }}" style="display:inline-flex;align-items:center;gap:.4rem">
+      <span id="disp-{{ id }}">
+        {%- if value %}{{ value }}{% if unit %} {{ unit }}{% endif %}
+        {%- else %}<span style="color:#e53935">Unknown</span>{% endif -%}
+      </span>
+      <button type="button" class="outline" style="padding:.1rem .4rem;font-size:.85rem;line-height:1"
+              onclick="startEdit('{{ id }}')">✏</button>
+    </span>
+    <form id="edit-{{ id }}" style="display:none;align-items:center;gap:.4rem"
+          method="POST" action="{{ url_for('save_physio_param') }}">
+      <input type="hidden" name="param" value="{{ param }}">
+      <input type="{{ input_type }}" name="value"
+             value="{{ value or '' }}"
+             {{ input_attrs }}
+             style="width:120px;margin:0;padding:.2rem .4rem">
+      {% if unit %}<small>{{ unit }}</small>{% endif %}
+      <button type="submit" class="outline" style="padding:.1rem .5rem;font-size:.85rem">Save</button>
+      <button type="button" class="outline" style="padding:.1rem .5rem;font-size:.85rem"
+              onclick="cancelEdit('{{ id }}')">✕</button>
+    </form>
+  </td>
+</tr>
+{% endmacro %}
+
+<article style="max-width:520px">
+  <header><strong>Physiological profile</strong></header>
+  <table style="width:100%;border-collapse:collapse">
+    {{ phys_field("Birthday",   "birthday", "birthday",   phys_birthday, "",    "date",   'placeholder="YYYY-MM-DD"') }}
+    {{ phys_field("Height",     "height",   "height_cm",  phys_height|round(1) if phys_height else '', "cm", "number", 'min="100" max="250" step="0.5" placeholder="cm"') }}
+    {{ phys_field("Weight",     "weight",   "weight_kg",  phys_weight|round(1) if phys_weight else '',  "kg", "number", 'min="20"  max="300" step="0.1" placeholder="kg"') }}
+    {{ phys_field("Max HR",     "max_hr",   "max_hr",     phys_max_hr|round(0)|int if phys_max_hr else '', "bpm", "number", 'min="100" max="220" step="1"   placeholder="bpm"') }}
+    {{ phys_field("Rest HR",    "rest_hr",  "rest_hr",    phys_rest_hr|round(0)|int if phys_rest_hr else '', "bpm", "number", 'min="20"  max="100" step="1"   placeholder="bpm"') }}
+  </table>
+  <footer>
+    <small class="muted">
+      Weight, max HR and rest HR are tracked over time — each save creates a dated entry used in
+      TSS and W-bal calculations. Birthday and height are stored as single values.
+    </small>
+  </footer>
+</article>
+
+<script>
+function startEdit(name) {
+  document.getElementById('show-' + name).style.display = 'none';
+  const form = document.getElementById('edit-' + name);
+  form.style.display = 'inline-flex';
+  const inp = form.querySelector('input[type=number],input[type=date]');
+  if (inp) inp.focus();
+}
+function cancelEdit(name) {
+  document.getElementById('show-' + name).style.display = 'inline-flex';
+  document.getElementById('edit-' + name).style.display = 'none';
+}
+</script>
+
 {% endif %}{# end tab switch #}
 
 {% endblock %}
