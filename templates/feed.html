@@ -118,6 +118,26 @@
       <button type="submit" style="font-size:.9rem;padding:.3rem .8rem">Send reply</button>
     </form>
   </div>
+
+  {% if item.replies %}
+  <div style="margin-top:.75rem;border-top:1px solid var(--pico-muted-border-color);padding-top:.75rem">
+    {% for reply in item.replies %}
+    <div style="display:flex;gap:.6rem;margin-bottom:.6rem">
+      {% if reply.actor_avatar %}
+      <img src="{{ reply.actor_avatar }}" alt=""
+           style="width:28px;height:28px;border-radius:50%;object-fit:cover;flex-shrink:0;margin-top:2px">
+      {% else %}
+      <div style="width:28px;height:28px;border-radius:50%;background:var(--pico-secondary-background);flex-shrink:0;margin-top:2px"></div>
+      {% endif %}
+      <div style="flex:1;min-width:0">
+        <strong style="font-size:.85rem">{{ reply.actor_name or reply.actor_url }}</strong>
+        <span style="color:var(--pico-muted-color);font-size:.8rem;margin-left:.4rem">{{ reply.published[:10] if reply.published else "" }}</span>
+        <div style="font-size:.9rem;margin-top:.2rem">{{ reply.content | safe }}</div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
 </article>
 {% endfor %}
 

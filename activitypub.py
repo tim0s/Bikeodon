@@ -541,6 +541,7 @@ def _handle_create_note(local_username, activity, note_obj, db_path):
         db_path, local_username, actor_url, actor_name, actor_avatar,
         object_id, object_url, content, published,
         json.dumps(attachments) if attachments else None,
+        in_reply_to=in_reply_to if isinstance(in_reply_to, str) else None,
     )
 
 
@@ -801,7 +802,7 @@ def send_reply(local_username: str, local_user, object_id: str, actor_url: str,
     display_name = local_user.get("display_name") or local_username
     avatar_url = url_for("user_avatar", username=local_username, _external=True) if local_user.get("avatar_filename") else None
     add_feed_item(db_path, local_username, actor_ap_url, display_name, avatar_url,
-                  reply_id, reply_id, feed_content, published, None)
+                  reply_id, reply_id, feed_content, published, None, in_reply_to=object_id)
 
     # Federate to the post author's inbox (skip if they're local — no HTTP round-trip needed)
     if _is_local_actor(actor_url):

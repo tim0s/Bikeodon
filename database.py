@@ -284,6 +284,7 @@ def init_db(db_path):
             published        TEXT,
             received_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             attachments_json TEXT,
+            in_reply_to      TEXT,
             UNIQUE(local_username, object_id)
         )
     """)
@@ -1504,16 +1505,17 @@ def delete_feed_item(db_path, local_username: str, object_id: str, actor_url: st
 
 def add_feed_item(db_path, local_username: str, actor_url: str, actor_name: str | None,
                   actor_avatar: str | None, object_id: str, object_url: str | None,
-                  content: str | None, published: str | None, attachments_json: str | None):
+                  content: str | None, published: str | None, attachments_json: str | None,
+                  in_reply_to: str | None = None):
     conn = _conn(db_path)
     try:
         conn.execute(
             "INSERT OR IGNORE INTO feed_items"
             " (local_username, actor_url, actor_name, actor_avatar, object_id, object_url,"
-            "  content, published, attachments_json)"
-            " VALUES (?,?,?,?,?,?,?,?,?)",
+            "  content, published, attachments_json, in_reply_to)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?)",
             (local_username, actor_url, actor_name, actor_avatar, object_id, object_url,
-             content, published, attachments_json),
+             content, published, attachments_json, in_reply_to),
         )
         conn.commit()
     finally:
@@ -1524,7 +1526,7 @@ def get_feed_items(db_path, local_username: str, limit: int = 20, offset: int = 
     conn = _conn(db_path)
     try:
         rows = conn.execute(
-            "SELECT * FROM feed_items WHERE local_username=?"
+            "SELECT * FROM feed_items WHERE local_username=? AND in_reply_to IS NULL"
             " ORDER BY published DESC, received_at DESC LIMIT ? OFFSET ?",
             (local_username, limit, offset),
         ).fetchall()
@@ -1533,11 +1535,33 @@ def get_feed_items(db_path, local_username: str, limit: int = 20, offset: int = 
     return [dict(r) for r in rows]
 
 
+def get_feed_replies(db_path, local_username: str, parent_ids: list[str]) -> dict[str, list[dict]]:
+    """Return replies grouped by parent object_id for a set of top-level posts."""
+    if not parent_ids:
+        return {}
+    conn = _conn(db_path)
+    try:
+        placeholders = ",".join("?" * len(parent_ids))
+        rows = conn.execute(
+            f"SELECT * FROM feed_items WHERE local_username=? AND in_reply_to IN ({placeholders})"
+            " ORDER BY published ASC, received_at ASC",
+            [local_username] + parent_ids,
+        ).fetchall()
+    finally:
+        conn.close()
+    result: dict[str, list[dict]] = {}
+    for r in rows:
+        d = dict(r)
+        result.setdefault(d["in_reply_to"], []).append(d)
+    return result
+
+
 def count_feed_items(db_path, local_username: str) -> int:
     conn = _conn(db_path)
     try:
         n = conn.execute(
-            "SELECT COUNT(*) FROM feed_items WHERE local_username=?", (local_username,)
+            "SELECT COUNT(*) FROM feed_items WHERE local_username=? AND in_reply_to IS NULL",
+            (local_username,)
         ).fetchone()[0]
     finally:
         conn.close()

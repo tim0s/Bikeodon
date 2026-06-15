@@ -575,7 +575,7 @@ def ap_unfollow():
 @app.route("/feed")
 @login_required
 def feed():
-    from database import get_feed_items, count_feed_items, get_reaction_counts
+    from database import get_feed_items, get_feed_replies, count_feed_items, get_reaction_counts
     page     = max(1, request.args.get("page", 1, type=int))
     per_page = 20
     offset   = (page - 1) * per_page
@@ -587,10 +587,10 @@ def feed():
 
     object_ids = [dict(i).get("object_id", "") for i in items]
     local_rxns  = get_local_reactions(DB_PATH, current_user.username, object_ids)
+    replies_by_parent = get_feed_replies(DB_PATH, current_user.username, object_ids)
 
-    parsed_items = []
-    for item in items:
-        row = dict(item)
+    def _parse_item(row):
+        row = dict(row)
         try:
             row["attachments"] = json.loads(row.get("attachments_json") or "[]")
         except Exception:
@@ -605,7 +605,14 @@ def feed():
         else:
             row["reactions"] = None
         row["my_reactions"] = local_rxns.get(object_id, {"like": False, "boost": False})
+        return row
+
+    parsed_items = []
+    for item in items:
+        row = _parse_item(item)
+        row["replies"] = [_parse_item(r) for r in replies_by_parent.get(row["object_id"], [])]
         parsed_items.append(row)
+
     return render_template(
         "feed.html",
         items=parsed_items,
