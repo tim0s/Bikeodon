@@ -56,6 +56,50 @@
 </article>
 
 <article style="margin-bottom:2rem">
+  <header><strong>Users</strong></header>
+  <table>
+    <thead>
+      <tr><th>Username</th><th>Display name</th><th>Activities</th><th>Last ride</th><th>Disk</th><th>Admin</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for u in users %}
+      <tr>
+        <td><small>{{ u.username }}</small></td>
+        <td><small>{{ u.display_name or '—' }}</small></td>
+        <td><small>{{ u.activity_count }}</small></td>
+        <td><small>{{ u.last_activity[:10] if u.last_activity else '—' }}</small></td>
+        <td><small>
+          {% set mb = (u.disk_bytes / 1048576) %}
+          {% if mb >= 1024 %}{{ "%.1f"|format(mb/1024) }} GB
+          {% elif mb >= 1 %}{{ "%.1f"|format(mb) }} MB
+          {% else %}{{ u.disk_bytes // 1024 }} KB{% endif %}
+        </small></td>
+        <td><small>{% if u.is_admin %}✓{% endif %}</small></td>
+        <td>
+          <form method="post" action="{{ url_for('admin_set_admin') }}" style="margin:0">
+            <input type="hidden" name="username" value="{{ u.username }}">
+            {% if u.is_admin %}
+            <input type="hidden" name="grant" value="0">
+            <button type="submit" class="secondary outline"
+                    style="padding:.2rem .6rem;font-size:.8rem;color:#c0392b;border-color:#c0392b"
+                    {% if u.username == current_user.username %}disabled title="Cannot remove your own admin"{% endif %}>
+              Revoke
+            </button>
+            {% else %}
+            <input type="hidden" name="grant" value="1">
+            <button type="submit" class="secondary outline" style="padding:.2rem .6rem;font-size:.8rem">
+              Grant
+            </button>
+            {% endif %}
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</article>
+
+<article style="margin-bottom:2rem">
   <header><strong>Render errors</strong> <small style="font-weight:normal;color:#888">({{ errors.render_errors|length }} activities)</small></header>
   {% if errors.render_errors %}
   <table>

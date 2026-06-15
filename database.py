@@ -1018,6 +1018,24 @@ def get_all_users(db_path) -> list:
     return rows
 
 
+def get_all_users_for_admin(db_path) -> list[dict]:
+    """Return all users with activity count and admin flag for the admin dashboard."""
+    conn = _conn(db_path)
+    try:
+        rows = conn.execute("""
+            SELECT u.id, u.username, u.display_name, u.is_admin,
+                   COUNT(a.id) AS activity_count,
+                   MAX(a.start_date) AS last_activity
+            FROM users u
+            LEFT JOIN activities a ON a.user_id = u.id
+            GROUP BY u.id
+            ORDER BY u.username
+        """).fetchall()
+    finally:
+        conn.close()
+    return [dict(r) for r in rows]
+
+
 def get_latest_activity_date(db_path, user_id: int) -> str | None:
     """Return the start_date of the most recent activity for this user, or None."""
     conn = _conn(db_path)

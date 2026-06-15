@@ -7,11 +7,12 @@ from flask_login import current_user, login_required
 from config import DB_PATH, _base_cfg, STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET
 from fit_encoder import generate_fit
 from flask import request
+import glob, os
 from database import (
-    get_activity, get_admin_stats, get_error_activities,
+    get_activity, get_admin_stats, get_all_users_for_admin, get_error_activities,
     get_setting, get_site_setting, set_site_setting, delete_site_setting,
     load_user_config, reset_metrics_computed, save_activity_file,
-    set_setting, upsert_activity,
+    set_admin, set_setting, upsert_activity,
 )
 from tasks import _backfill_lock, _render_and_track
 
@@ -36,9 +37,43 @@ def register_routes(app):
         errors           = get_error_activities(DB_PATH)
         backfill_running = _backfill_lock.locked()
         invite_code      = get_site_setting(DB_PATH, "invite_code")
+
+        out_dir   = os.path.abspath(_base_cfg["map"].get("output_dir", "output"))
+        files_dir = os.path.join(out_dir, "activity_files")
+        users     = get_all_users_for_admin(DB_PATH)
+
+        # Build activity_id → user_id map for PNG attribution
+        from database import _conn as _db_conn
+        conn = _db_conn(DB_PATH)
+        act_rows = conn.execute("SELECT id, user_id FROM activities").fetchall()
+        conn.close()
+        act_to_user = {r["id"]: r["user_id"] for r in act_rows}
+
+        # Sum PNG sizes per user
+        png_bytes_by_user: dict[int, int] = {}
+        for path in glob.glob(os.path.join(out_dir, "*.png")):
+            fname = os.path.basename(path)
+            try:
+                act_id = int(fname.split("_")[0].split(".")[0])
+            except ValueError:
+                continue
+            uid_ = act_to_user.get(act_id)
+            if uid_ is not None:
+                png_bytes_by_user[uid_] = png_bytes_by_user.get(uid_, 0) + os.path.getsize(path)
+
+        for u in users:
+            uid_ = u["id"]
+            fit_dir   = os.path.join(files_dir, str(uid_))
+            fit_bytes = sum(
+                os.path.getsize(f)
+                for f in glob.glob(os.path.join(fit_dir, "*"))
+                if os.path.isfile(f)
+            ) if os.path.isdir(fit_dir) else 0
+            u["disk_bytes"] = fit_bytes + png_bytes_by_user.get(uid_, 0)
+
         return render_template("admin.html", stats=stats, errors=errors,
                                backfill_running=backfill_running,
-                               invite_code=invite_code)
+                               invite_code=invite_code, users=users)
 
     @app.route("/admin/full-sync", methods=["POST"])
     @login_required
@@ -113,6 +148,19 @@ def register_routes(app):
         set_setting(DB_PATH, uid, "inference", "ftp", "")
         set_setting(DB_PATH, uid, "inference", "max_hr", "")
         flash("Metrics reset. Visit the You page to trigger recomputation.", "success")
+        return redirect(url_for("admin"))
+
+    @app.route("/admin/set-admin", methods=["POST"])
+    @login_required
+    @admin_required
+    def admin_set_admin():
+        username = request.form.get("username", "").strip()
+        grant    = request.form.get("grant") == "1"
+        if not username:
+            abort(400)
+        set_admin(DB_PATH, username, grant)
+        action = "granted admin to" if grant else "revoked admin from"
+        flash(f"Successfully {action} {username}.", "success")
         return redirect(url_for("admin"))
 
     @app.route("/admin/invite-code", methods=["POST"])
