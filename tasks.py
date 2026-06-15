@@ -14,21 +14,20 @@ import time as _time
 from config import DB_PATH, _base_cfg
 
 from database import (
-    _conn, get_activities_without_metrics, get_activity, get_all_peak_powers,
-    get_cp_history, get_prev_cp_history, get_setting,
+    _conn, get_activities_without_metrics, get_activity, get_athlete_param,
+    get_mmp_as_of, get_power_best, get_setting,
     load_user_config, mark_rendered, mark_posted,
-    set_activity_error, set_scheduled, set_setting, set_wbal_json,
-    update_activity_metrics, upsert_cp_history,
+    set_activity_error, set_athlete_param, set_power_best, set_scheduled,
+    set_wbal_json, update_activity_metrics,
 )
 from activity_parser import points_from_file, stream_from_file
 from charts import generate_charts
 from map_renderer import render_activity_map
 from mastodon_client import MastodonClient
 from training_load import (
-    aggregate_power_curve, compute_hr_tss, compute_np, compute_peak_powers,
+    compute_hr_tss, compute_np, compute_peak_powers,
     compute_trimp, compute_tss, compute_wbal, compute_zone_times, fit_critical_power,
 )
-from inference import infer_training_params
 
 _backfill_lock  = threading.Lock()
 _backfill_event = threading.Event()
@@ -90,11 +89,11 @@ def _render_and_track(activity_id: int, uid: int, cfg: dict, out_dir: str, row=N
         mark_rendered(DB_PATH, activity_id, uid, map=True)
 
     if not cfg["charts"]["power"]["ftp"]:
-        v = get_setting(DB_PATH, uid, "inference", "ftp")
+        v = get_athlete_param(DB_PATH, uid, "ftp")
         if v:
             cfg["charts"]["power"]["ftp"] = float(v)
     if not cfg["charts"]["heart_rate"]["max_hr"]:
-        v = get_setting(DB_PATH, uid, "inference", "max_hr")
+        v = get_athlete_param(DB_PATH, uid, "max_hr")
         if v:
             cfg["charts"]["heart_rate"]["max_hr"] = float(v)
 
@@ -109,174 +108,170 @@ def _render_and_track(activity_id: int, uid: int, cfg: dict, out_dir: str, row=N
     set_activity_error(DB_PATH, activity_id, uid, "render",
                        "; ".join(errors) if errors else None)
 
-    _compute_and_store_metrics(activity_id, uid, cfg, stream, row)
+    process_activity(activity_id, uid, cfg, stream, row)
 
 
 # ---------------------------------------------------------------------------
-# Metrics
+# Metrics pipeline
 # ---------------------------------------------------------------------------
 
-def _compute_and_store_metrics(activity_id: int, uid: int, cfg: dict, stream: list, row):
-    """Compute NP, TSS, TRIMP, peak powers, and zone times from stream data and store them."""
+def _update_physiology(uid: int, activity_id: int, date: str,
+                       peaks: dict | None, activity_row: dict) -> list[dict]:
+    """Update power_bests and max_hr in athlete_params from this activity.
+    Comparisons are as_of date so processing order does not matter.
+    Returns a list of breakthrough dicts."""
+    breakthroughs = []
+
+    if peaks:
+        for label, watts in peaks.items():
+            if watts is None:
+                continue
+            prev_best = get_power_best(DB_PATH, uid, label, as_of=date)
+            prev_watts = prev_best["power_watts"] if prev_best else None
+            if set_power_best(DB_PATH, uid, label, watts, activity_id, date):
+                breakthroughs.append({
+                    "type": "mmp", "label": label,
+                    "watts": round(watts),
+                    "prev": round(prev_watts) if prev_watts else None,
+                })
+
+    max_hr = activity_row.get("max_heartrate")
+    if max_hr and max_hr <= 220:
+        prev_max_hr = get_athlete_param(DB_PATH, uid, "max_hr", as_of=date)
+        if not prev_max_hr or max_hr > prev_max_hr:
+            if set_athlete_param(DB_PATH, uid, "max_hr", max_hr,
+                                 source="derived", activity_id=activity_id, date=date,
+                                 cleanup_superseded=True):
+                breakthroughs.append({
+                    "type": "hr", "bpm": round(max_hr),
+                    "prev": round(prev_max_hr) if prev_max_hr else None,
+                })
+
+    return breakthroughs
+
+
+def _estimate_derived_params(uid: int, activity_id: int, date: str) -> dict:
+    """Fit CP/W' and FTP from power_bests as_of date. Writes to athlete_params.
+    Returns {cp, w_prime, ftp, cp_changed, prev_cp}."""
+    mmp = get_mmp_as_of(DB_PATH, uid, as_of=date)
+    cp = w_prime = ftp = None
+    cp_changed = False
+    prev_cp = get_athlete_param(DB_PATH, uid, "cp_watts", as_of=date)
+
+    if mmp:
+        cp, w_prime = fit_critical_power(mmp)
+        if cp:
+            cp_changed = set_athlete_param(DB_PATH, uid, "cp_watts", cp,
+                                           source="derived", activity_id=activity_id, date=date)
+            set_athlete_param(DB_PATH, uid, "w_prime_joules", w_prime,
+                              source="derived", activity_id=activity_id, date=date)
+
+        best_20min = mmp.get("20min")
+        if best_20min:
+            ftp = round(best_20min * 0.95, 1)
+        elif cp:
+            ftp = cp
+        if ftp:
+            set_athlete_param(DB_PATH, uid, "ftp", ftp,
+                              source="derived", activity_id=activity_id, date=date)
+
+    return {"cp": cp, "w_prime": w_prime, "ftp": ftp,
+            "cp_changed": cp_changed, "prev_cp": prev_cp}
+
+
+def _finalize_activity_metrics(uid: int, activity_id: int, date: str,
+                                stream: list, row: dict, cfg: dict,
+                                peaks: dict | None, breakthroughs: list) -> None:
+    """Compute TSS/TRIMP/wbal using athlete_params as_of date and save to the activity row."""
+    # Read physiological params as known on this date — from athlete_params first,
+    # then fall back to cfg (user-configured static values)
+    ftp     = get_athlete_param(DB_PATH, uid, "ftp",    as_of=date) or cfg["charts"]["power"]["ftp"] or None
+    hr_max  = get_athlete_param(DB_PATH, uid, "max_hr", as_of=date) or cfg["charts"]["heart_rate"]["max_hr"] or None
+    hr_rest = get_athlete_param(DB_PATH, uid, "rest_hr", as_of=date)
+    cp      = get_athlete_param(DB_PATH, uid, "cp_watts",      as_of=date)
+    w_prime = get_athlete_param(DB_PATH, uid, "w_prime_joules", as_of=date)
+
+    lthr = float(get_setting(DB_PATH, uid, "training", "lthr") or 0) or None
+    if not lthr and hr_max:
+        lthr = hr_max * 0.88
+
+    watts_list   = [p.get("power")        for p in stream]
+    hr_list      = [p.get("hr")           for p in stream]
+    elapsed_list = [p.get("elapsed_secs") for p in stream]
+    duration     = row.get("moving_time") or row.get("elapsed_time")
+
+    np_w  = compute_np(watts_list)
+    tss   = compute_tss(np_w, duration, ftp)   if np_w and ftp  else None
+    trimp = compute_trimp(hr_list, elapsed_list, hr_max, hr_rest) if hr_max and hr_rest else None
+    hr_tss = None
+    if tss is None and hr_max and hr_rest and lthr:
+        hr_tss = compute_hr_tss(hr_list, elapsed_list, hr_max, hr_rest, lthr)
+
+    hr_zones    = cfg["charts"]["heart_rate"]["zones"]
+    power_zones = cfg["charts"]["power"]["zones"]
+    hr_zone_secs, power_zone_secs = compute_zone_times(
+        stream, hr_zones, power_zones, hr_max, ftp
+    )
+
+    update_activity_metrics(
+        DB_PATH, activity_id, uid,
+        tss, np_w, trimp,
+        json.dumps(peaks) if peaks else None,
+        json.dumps(hr_zone_secs)    if hr_zone_secs    else None,
+        json.dumps(power_zone_secs) if power_zone_secs else None,
+        hr_tss=hr_tss,
+        breakthroughs_json=json.dumps(breakthroughs) if breakthroughs is not None else None,
+    )
+
+    if cp and w_prime and np_w:
+        try:
+            wbal = compute_wbal(stream, cp, w_prime)
+            if wbal:
+                set_wbal_json(DB_PATH, activity_id, uid, json.dumps(wbal))
+        except Exception as e:
+            print(f"[metrics] wbal failed for {activity_id}: {e}")
+
+
+def process_activity(activity_id: int, uid: int, cfg: dict,
+                     stream: list, row) -> None:
+    """Run the full metrics pipeline for one activity."""
     try:
-        row = dict(row)
-        watts_list   = [p.get("power")        for p in stream]
-        hr_list      = [p.get("hr")           for p in stream]
-        elapsed_list = [p.get("elapsed_secs") for p in stream]
+        row  = dict(row)
+        date = (row.get("start_date") or "")[:10]
+        if not date:
+            return
 
-        ftp    = cfg["charts"]["power"]["ftp"]
-        hr_max = cfg["charts"]["heart_rate"]["max_hr"]
+        peaks         = compute_peak_powers(stream)
+        breakthroughs = _update_physiology(uid, activity_id, date, peaks, row)
+        derived       = _estimate_derived_params(uid, activity_id, date)
 
-        if not ftp:
-            v = get_setting(DB_PATH, uid, "inference", "ftp")
-            ftp = float(v) if v else None
-        if not hr_max:
-            v = get_setting(DB_PATH, uid, "inference", "max_hr")
-            hr_max = float(v) if v else None
+        if derived["cp_changed"] and derived["cp"]:
+            breakthroughs.append({
+                "type": "cp", "cp_watts": round(derived["cp"]),
+                "prev": round(derived["prev_cp"]) if derived["prev_cp"] else None,
+            })
 
-        hr_rest  = float(get_setting(DB_PATH, uid, "training", "hr_rest") or 0) or None
-        lthr     = float(get_setting(DB_PATH, uid, "training", "lthr")     or 0) or None
-        if not lthr and hr_max:
-            lthr = hr_max * 0.88
-        duration = row["moving_time"] or row["elapsed_time"]
-
-        np_w      = compute_np(watts_list)
-        tss       = compute_tss(np_w, duration, ftp) if np_w else None
-        trimp     = compute_trimp(hr_list, elapsed_list, hr_max, hr_rest) if hr_max and hr_rest else None
-        peaks     = compute_peak_powers(stream)
-        peak_json = json.dumps(peaks) if peaks else None
-
-        # Breakthrough detection — only on first-time metrics computation
-        breakthroughs_json = None
-        is_first_time = not row.get("peak_power_json") and not row.get("metrics_computed_at")
-        if is_first_time:
-            breakthrus = []
-            if peaks:
-                hist_peaks = get_all_peak_powers(DB_PATH, uid, exclude_id=activity_id)
-                hist_mmp   = aggregate_power_curve(hist_peaks)
-                for label, val in peaks.items():
-                    prev = hist_mmp.get(label)
-                    if prev is None or val > prev:
-                        breakthrus.append({
-                            "type": "mmp", "label": label,
-                            "watts": round(val), "prev": round(prev) if prev else None,
-                        })
-            if row.get("max_heartrate"):
-                conn_b = _conn(DB_PATH)
-                prev_hr = conn_b.execute(
-                    "SELECT MAX(max_heartrate) FROM activities"
-                    " WHERE user_id=? AND id != ? AND max_heartrate IS NOT NULL",
-                    (uid, activity_id),
-                ).fetchone()[0]
-                conn_b.close()
-                if prev_hr is None or row["max_heartrate"] > prev_hr:
-                    breakthrus.append({
-                        "type": "hr",
-                        "bpm": round(row["max_heartrate"]),
-                        "prev": round(prev_hr) if prev_hr else None,
-                    })
-            breakthroughs_json = json.dumps(breakthrus)
-
-        hr_tss = None
-        if tss is None and hr_max and hr_rest and lthr:
-            hr_tss = compute_hr_tss(hr_list, elapsed_list, hr_max, hr_rest, lthr)
-
-        hr_zones    = cfg["charts"]["heart_rate"]["zones"]
-        power_zones = cfg["charts"]["power"]["zones"]
-        hr_zone_secs, power_zone_secs = compute_zone_times(
-            stream, hr_zones, power_zones, hr_max, ftp
-        )
-        hr_zone_json    = json.dumps(hr_zone_secs)    if hr_zone_secs    else None
-        power_zone_json = json.dumps(power_zone_secs) if power_zone_secs else None
-
-        update_activity_metrics(
-            DB_PATH, activity_id, uid,
-            tss, np_w, trimp, peak_json,
-            hr_zone_json, power_zone_json,
-            hr_tss=hr_tss,
-            breakthroughs_json=breakthroughs_json,
-        )
-
-        if not cfg["charts"]["power"]["ftp"] and peaks and peaks.get("20min"):
-            new_ftp = peaks["20min"] * 0.95
-            cached  = get_setting(DB_PATH, uid, "inference", "ftp")
-            if not cached or new_ftp > float(cached):
-                set_setting(DB_PATH, uid, "inference", "ftp", str(round(new_ftp, 1)))
-                print(f"[metrics] Updated inferred FTP: {new_ftp:.0f} W")
-
-        if not cfg["charts"]["heart_rate"]["max_hr"] and row.get("max_heartrate"):
-            new_hr   = row["max_heartrate"]
-            cached   = get_setting(DB_PATH, uid, "inference", "max_hr")
-            cached_f = float(cached) if cached else 0
-            # Guard against sensor spikes: only accept if plausible (≤220) and
-            # not more than 10 bpm above the current cached value
-            if new_hr <= 220 and new_hr > cached_f and (not cached_f or new_hr <= cached_f + 10):
-                set_setting(DB_PATH, uid, "inference", "max_hr", str(round(new_hr, 1)))
-                print(f"[metrics] Updated inferred max HR: {new_hr:.0f} bpm")
-
-        if peaks and row.get("start_date"):
-            prev_cp_row    = get_prev_cp_history(DB_PATH, uid, row["start_date"])
-            prev_cp_val    = prev_cp_row["cp_watts"] if prev_cp_row else None
-            cumulative     = get_all_peak_powers(DB_PATH, uid, before_date=row["start_date"])
-            cumulative_mmp = aggregate_power_curve(cumulative)
-            cp, w_prime    = fit_critical_power(cumulative_mmp)
-            if cp:
-                upsert_cp_history(
-                    DB_PATH, uid, activity_id, row["start_date"],
-                    cp, w_prime, len(cumulative),
-                )
-                if prev_cp_val is None or cp > prev_cp_val + 0.5:
-                    cp_b = {"type": "cp", "cp_watts": round(cp, 1),
-                            "prev": round(prev_cp_val, 1) if prev_cp_val else None}
-                    if breakthroughs_json is not None:
-                        existing = json.loads(breakthroughs_json)
-                        existing = [b for b in existing if b.get("type") != "cp"]
-                        existing.append(cp_b)
-                        breakthroughs_json = json.dumps(existing)
-                    else:
-                        existing = json.loads(row.get("breakthroughs_json") or "[]")
-                        existing = [b for b in existing if b.get("type") != "cp"]
-                        existing.append(cp_b)
-                        breakthroughs_json = json.dumps(existing)
-
-                # Cache W' balance using the CP that was valid at the time of this ride
-                if np_w and stream:
-                    try:
-                        _wbal = compute_wbal(stream, cp, w_prime)
-                        if _wbal:
-                            set_wbal_json(DB_PATH, activity_id, uid, json.dumps(_wbal))
-                    except Exception as _e:
-                        print(f"[metrics] wbal failed for {activity_id}: {_e}")
+        _finalize_activity_metrics(uid, activity_id, date, stream, row, cfg,
+                                   peaks, breakthroughs)
 
     except Exception as e:
         print(f"[metrics] Failed for {activity_id}: {e}")
 
 
 def run_metrics_backfill(uid: int):
-    """Compute metrics for activities that have never been processed."""
+    """Compute metrics for activities that have not yet been processed."""
     pending = get_activities_without_metrics(DB_PATH, uid)
     if not pending:
         return
     try:
         print(f"[backfill] Starting metrics for {len(pending)} activities (user {uid})")
-
-        bcfg_pre = load_user_config(DB_PATH, uid, _base_cfg)
-        if not bcfg_pre["charts"]["power"]["ftp"] or not bcfg_pre["charts"]["heart_rate"]["max_hr"]:
-            inferred = infer_training_params(DB_PATH, uid)
-            if inferred["ftp"] and not bcfg_pre["charts"]["power"]["ftp"]:
-                set_setting(DB_PATH, uid, "inference", "ftp", str(round(inferred["ftp"], 1)))
-                print(f"[backfill] Inferred FTP: {inferred['ftp']:.0f} W")
-            if inferred["max_hr"] and not bcfg_pre["charts"]["heart_rate"]["max_hr"]:
-                set_setting(DB_PATH, uid, "inference", "max_hr", str(round(inferred["max_hr"], 1)))
-                print(f"[backfill] Inferred max HR: {inferred['max_hr']:.0f} bpm")
-
         done = 0
         for brow in pending:
             try:
                 bcfg        = load_user_config(DB_PATH, uid, _base_cfg)
                 source_file = brow["source_file"]
                 bstream     = stream_from_file(source_file) if source_file else []
-                _compute_and_store_metrics(brow["id"], uid, bcfg, bstream, brow)
+                process_activity(brow["id"], uid, bcfg, bstream, brow)
                 done += 1
             except Exception as e:
                 print(f"[backfill] Error on activity {brow['id']}: {e}")

@@ -10,9 +10,9 @@ from flask import request
 from strava import delete_webhook, list_webhooks, register_webhook
 import glob, os
 from database import (
-    clear_cp_history, get_activity, get_admin_stats, get_all_users_for_admin,
-    get_error_activities, get_setting, get_site_setting, set_site_setting,
-    delete_site_setting, load_user_config, reset_metrics_computed,
+    clear_athlete_params, clear_cp_history, get_activity, get_admin_stats,
+    get_all_users_for_admin, get_error_activities, get_setting, get_site_setting,
+    set_site_setting, delete_site_setting, load_user_config, reset_metrics_computed,
     save_activity_file, set_admin, set_setting, upsert_activity,
 )
 from tasks import _backfill_lock, _render_and_track
@@ -156,6 +156,7 @@ def register_routes(app):
         uid = int(current_user.id)
         reset_metrics_computed(DB_PATH, uid)
         clear_cp_history(DB_PATH, uid)
+        clear_athlete_params(DB_PATH, uid)
         set_setting(DB_PATH, uid, "inference", "ftp", "")
         set_setting(DB_PATH, uid, "inference", "max_hr", "")
         flash("Metrics reset. Visit the You page to trigger recomputation.", "success")

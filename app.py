@@ -27,7 +27,8 @@ from config import DB_PATH, _base_cfg, STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET, S
 from database import (
     _conn, attach_source_file, clear_rendered, count_activities, create_user,
     find_overlapping_activity, get_activity, get_all_peak_powers,
-    get_cp_history, get_daily_loads, get_followers, get_following, get_latest_cp,
+    get_athlete_param, get_athlete_param_history,
+    get_daily_loads, get_followers, get_following,
     get_setting, get_site_setting, get_user_by_id,
     get_user_by_username, get_user_stats, get_zone_totals, get_zones, init_db,
     add_feed_item, add_local_reaction, remove_local_reaction, get_local_reactions,
@@ -331,7 +332,9 @@ def activity(activity_id):
     wbal_json = row["wbal_json"] if row["wbal_json"] else None
     act_cp = act_w_prime = None
     if wbal_json:
-        act_cp, act_w_prime = get_latest_cp(DB_PATH, uid, as_of=(row["start_date"] or "")[:10])
+        _as_of = (row["start_date"] or "")[:10]
+        act_cp     = get_athlete_param(DB_PATH, uid, "cp_watts",      as_of=_as_of)
+        act_w_prime = get_athlete_param(DB_PATH, uid, "w_prime_joules", as_of=_as_of)
 
     return render_template("activity.html", activity=act, map_url=map_url,
                            chart_urls=chart_urls, mastodon_configured=mastodon_configured,
@@ -910,7 +913,8 @@ def me():
     curve_all    = aggregate_power_curve(all_peaks)
     curve_recent = aggregate_power_curve(recent_peaks)
 
-    cp, w_prime = get_latest_cp(DB_PATH, uid)
+    cp      = get_athlete_param(DB_PATH, uid, "cp_watts")
+    w_prime = get_athlete_param(DB_PATH, uid, "w_prime_joules")
 
     if body_weight:
         wpk_all    = {k: round(v / body_weight, 2) for k, v in curve_all.items()}
@@ -933,7 +937,12 @@ def me():
     hr_zone_chart_json    = _zone_chart_data(hr_zones,    hr_totals)
     power_zone_chart_json = _zone_chart_data(power_zones, power_totals)
 
-    cp_history = get_cp_history(DB_PATH, uid)
+    _cp_hist = get_athlete_param_history(DB_PATH, uid, "cp_watts")
+    _wp_hist = {r["date"]: r["value"] for r in get_athlete_param_history(DB_PATH, uid, "w_prime_joules")}
+    cp_history = [
+        {"date": r["date"], "cp": round(r["value"]), "w_prime": round(_wp_hist[r["date"]])}
+        for r in _cp_hist if r["date"] in _wp_hist
+    ]
 
     profile_row = get_user_by_id(DB_PATH, uid)
 

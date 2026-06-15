@@ -336,6 +336,41 @@ def init_db(db_path):
         )
     """)
 
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS athlete_params (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id     INTEGER NOT NULL REFERENCES users(id),
+            date        TEXT NOT NULL,
+            parameter   TEXT NOT NULL,
+            value       REAL NOT NULL,
+            source      TEXT NOT NULL DEFAULT 'derived'
+                            CHECK(source IN ('manual','derived')),
+            activity_id INTEGER REFERENCES activities(id),
+            created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS power_bests (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id        INTEGER NOT NULL REFERENCES users(id),
+            date           TEXT NOT NULL,
+            duration_label TEXT NOT NULL,
+            power_watts    REAL NOT NULL,
+            activity_id    INTEGER NOT NULL REFERENCES activities(id)
+        )
+    """)
+
+    # Add valid_from + source to zones if missing (history support)
+    for col, typedef in [
+        ("valid_from", "TEXT NOT NULL DEFAULT '1970-01-01'"),
+        ("source",     "TEXT NOT NULL DEFAULT 'manual'"),
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE zones ADD COLUMN {col} {typedef}")
+        except sqlite3.OperationalError:
+            pass
+
     # Indexes — safe to run on existing DBs (IF NOT EXISTS)
     for ddl in [
         "CREATE INDEX IF NOT EXISTS idx_activities_user_date"
@@ -352,6 +387,10 @@ def init_db(db_path):
         "  ON cp_history(user_id, activity_date ASC)",
         "CREATE INDEX IF NOT EXISTS idx_reactions_activity"
         "  ON activity_reactions(activity_id)",
+        "CREATE INDEX IF NOT EXISTS idx_athlete_params_lookup"
+        "  ON athlete_params(user_id, parameter, date DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_power_bests_lookup"
+        "  ON power_bests(user_id, duration_label, date DESC)",
     ]:
         conn.execute(ddl)
 
@@ -1911,5 +1950,172 @@ def get_reaction_counts(db_path, activity_id: int) -> dict:
         for r in rows:
             counts[r[0]] = r[1]
         return counts
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Athlete params
+# ---------------------------------------------------------------------------
+
+def get_athlete_param(db_path, user_id: int, parameter: str,
+                      as_of: str | None = None) -> float | None:
+    """Return the most recent value for parameter, optionally restricted to as_of date."""
+    conn = _conn(db_path)
+    try:
+        if as_of:
+            row = conn.execute(
+                "SELECT value FROM athlete_params"
+                " WHERE user_id=? AND parameter=? AND date<=?"
+                " ORDER BY date DESC, id DESC LIMIT 1",
+                (user_id, parameter, as_of),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT value FROM athlete_params"
+                " WHERE user_id=? AND parameter=?"
+                " ORDER BY date DESC, id DESC LIMIT 1",
+                (user_id, parameter),
+            ).fetchone()
+        return row["value"] if row else None
+    finally:
+        conn.close()
+
+
+def set_athlete_param(db_path, user_id: int, parameter: str, value: float,
+                      source: str = "derived", activity_id: int | None = None,
+                      date: str | None = None,
+                      cleanup_superseded: bool = False) -> bool:
+    """Insert a new athlete_params row if value differs from what was recorded as_of date.
+    This makes processing order irrelevant: a 3 Jan activity with a value between the
+    1 Jan and 5 Jan entries will correctly insert at 3 Jan regardless of when it is processed.
+
+    cleanup_superseded=True: after inserting, delete any later-dated rows for the same
+    parameter whose value is now superseded (lower). Use for monotone-only params like
+    max_hr, where a stale future entry from out-of-order processing should be evicted.
+
+    Returns True if a row was inserted."""
+    if date is None:
+        date = datetime.now(timezone.utc).date().isoformat()
+    existing = get_athlete_param(db_path, user_id, parameter, as_of=date)
+    if existing is not None and existing == value:
+        return False
+    conn = _conn(db_path)
+    try:
+        conn.execute(
+            "INSERT INTO athlete_params (user_id, date, parameter, value, source, activity_id)"
+            " VALUES (?,?,?,?,?,?)",
+            (user_id, date, parameter, value, source, activity_id),
+        )
+        if cleanup_superseded:
+            conn.execute(
+                "DELETE FROM athlete_params"
+                " WHERE user_id=? AND parameter=? AND date>? AND value<?",
+                (user_id, parameter, date, value),
+            )
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def get_athlete_param_history(db_path, user_id: int,
+                              parameter: str) -> list[dict]:
+    """Return full history for a parameter, oldest first."""
+    conn = _conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT date, value, source, activity_id FROM athlete_params"
+            " WHERE user_id=? AND parameter=?"
+            " ORDER BY date ASC, id ASC",
+            (user_id, parameter),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Power bests
+# ---------------------------------------------------------------------------
+
+def get_mmp_as_of(db_path, user_id: int, as_of: str | None = None) -> dict[str, float]:
+    """Return {duration_label: best_power_watts} across all durations, as_of date."""
+    conn = _conn(db_path)
+    try:
+        if as_of:
+            rows = conn.execute(
+                "SELECT duration_label, MAX(power_watts) AS power_watts"
+                " FROM power_bests WHERE user_id=? AND date<=?"
+                " GROUP BY duration_label",
+                (user_id, as_of),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT duration_label, MAX(power_watts) AS power_watts"
+                " FROM power_bests WHERE user_id=?"
+                " GROUP BY duration_label",
+                (user_id,),
+            ).fetchall()
+        return {r["duration_label"]: r["power_watts"] for r in rows}
+    finally:
+        conn.close()
+
+
+def get_power_best(db_path, user_id: int, duration_label: str,
+                   as_of: str | None = None) -> dict | None:
+    """Return {power_watts, activity_id, date} for the best effort at duration_label,
+    optionally restricted to on or before as_of date."""
+    conn = _conn(db_path)
+    try:
+        if as_of:
+            row = conn.execute(
+                "SELECT power_watts, activity_id, date FROM power_bests"
+                " WHERE user_id=? AND duration_label=? AND date<=?"
+                " ORDER BY power_watts DESC LIMIT 1",
+                (user_id, duration_label, as_of),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT power_watts, activity_id, date FROM power_bests"
+                " WHERE user_id=? AND duration_label=?"
+                " ORDER BY power_watts DESC LIMIT 1",
+                (user_id, duration_label),
+            ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def set_power_best(db_path, user_id: int, duration_label: str,
+                   power_watts: float, activity_id: int, date: str) -> bool:
+    """Insert a power_bests row if power_watts exceeds the best recorded as_of date.
+    Comparing against the as_of value (not the all-time best) means processing order
+    does not matter: a 3 Jan PR between a 1 Jan entry and a 5 Jan entry inserts correctly
+    regardless of when it is processed.
+    Returns True if a new best was recorded."""
+    current = get_power_best(db_path, user_id, duration_label, as_of=date)
+    if current and power_watts <= current["power_watts"]:
+        return False
+    conn = _conn(db_path)
+    try:
+        conn.execute(
+            "INSERT INTO power_bests (user_id, date, duration_label, power_watts, activity_id)"
+            " VALUES (?,?,?,?,?)",
+            (user_id, date, duration_label, power_watts, activity_id),
+        )
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def clear_athlete_params(db_path, user_id: int) -> None:
+    """Remove all athlete_params and power_bests for user — call before full recompute."""
+    conn = _conn(db_path)
+    try:
+        conn.execute("DELETE FROM athlete_params WHERE user_id=?", (user_id,))
+        conn.execute("DELETE FROM power_bests WHERE user_id=?", (user_id,))
+        conn.commit()
     finally:
         conn.close()

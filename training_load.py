@@ -373,31 +373,32 @@ def aggregate_power_curve(peak_list: list) -> dict:
 # Map from MMP label to duration in seconds — only the aerobic range used for CP fitting.
 # 5s/30s are excluded because they are neuromuscular and violate the CP model's assumptions.
 
+_CP_FIT_MIN_S = 2 * 60    # 2 minutes — below this W' dominates, model breaks down
+_CP_FIT_MAX_S = 20 * 60   # 20 minutes — above this fatigue factors beyond the 2-param model kick in
+
+
 def fit_critical_power(mmp_dict: dict) -> tuple:
     """
     Estimate Critical Power (CP) and W' from the mean-maximal power curve.
 
     Linear work-time model (Monod & Scherrer 1965; Morton et al. 1996):
         Work(t) = P(t) × t = CP × t + W'
-    Ordinary least-squares regression on (t, Work) gives slope=CP, intercept=W'.
+    OLS regression on (t, Work) gives slope=CP, intercept=W'.
 
-    Uses all durations ≥ 60 s present in mmp_dict where the severe-intensity
-    domain applies. With a dense MMP curve (~50 points) this gives a much more
-    stable fit than using only a handful of hand-picked durations.
+    Restricted to 2–20 min where the 2-parameter severe-intensity model is
+    valid (Burnley & Jones 2012). Sub-2-min efforts are neuromuscular/W'-dominated;
+    efforts beyond ~20 min are confounded by pacing and substrate factors that
+    the simple model doesn't capture, and their large Work values can skew OLS.
 
     Returns (cp_watts, w_prime_joules) rounded, or (None, None) if the fit is
     invalid (fewer than 2 points, or non-positive CP / W').
-
-    Reference:
-      Monod & Scherrer (1965). "The work capacity of a synergic muscular group."
-      Ergonomics, 8(3), 329-338.
     """
     points = []
     for label, power in mmp_dict.items():
         if power is None:
             continue
         t = _label_to_secs(label)
-        if t is None or t < 60:
+        if t is None or t < _CP_FIT_MIN_S or t > _CP_FIT_MAX_S:
             continue
         points.append((t, power * t))
 

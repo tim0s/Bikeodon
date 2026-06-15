@@ -204,7 +204,7 @@ class TestMetricsComputationPerformance:
 
         t0 = time.perf_counter()
         with patch.object(tasks, "DB_PATH", db_path):
-            tasks._compute_and_store_metrics(activity_id, 1, cfg, stream, row_data)
+            tasks.process_activity(activity_id, 1, cfg, stream, row_data)
         elapsed = _elapsed(f"metrics {os.path.basename(fit_path)}", t0)
 
         # Verify results were written
