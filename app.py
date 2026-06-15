@@ -944,6 +944,15 @@ def me():
         for r in _cp_hist if r["date"] in _wp_hist
     ]
 
+    ftp_history    = [{"date": r["date"], "value": round(r["value"], 1)}
+                      for r in get_athlete_param_history(DB_PATH, uid, "ftp")]
+    max_hr_history = [{"date": r["date"], "value": round(r["value"])}
+                      for r in get_athlete_param_history(DB_PATH, uid, "max_hr")]
+    rest_hr_history = [{"date": r["date"], "value": round(r["value"])}
+                       for r in get_athlete_param_history(DB_PATH, uid, "rest_hr")]
+    weight_history  = [{"date": r["date"], "value": round(r["value"], 1)}
+                       for r in get_athlete_param_history(DB_PATH, uid, "weight_kg")]
+
     profile_row = get_user_by_id(DB_PATH, uid)
 
     followers = get_followers(DB_PATH, current_user.username)
@@ -984,6 +993,10 @@ def me():
         wpk_all=json.dumps(wpk_all),
         wpk_recent=json.dumps(wpk_recent),
         cp_history_json=json.dumps(cp_history),
+        ftp_history_json=json.dumps(ftp_history),
+        hr_history_json=json.dumps({"max_hr": max_hr_history, "rest_hr": rest_hr_history}),
+        has_hr_history=bool(max_hr_history or rest_hr_history),
+        weight_history_json=json.dumps(weight_history),
         followers=followers,
         following=following,
         following_urls=following_urls,

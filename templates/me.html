@@ -793,6 +793,147 @@
 </script>
 {% endif %}
 
+{% if ftp_history_json != '[]' %}
+<article>
+  <header><strong>FTP over time</strong></header>
+  <div style="position:relative;height:220px">
+    <canvas id="ftpHistoryChart"></canvas>
+  </div>
+  <footer><small class="muted">Estimated as 95% of best 20-minute power observed up to each date.</small></footer>
+</article>
+<script src="{{ url_for('static', filename='chart.min.js') }}"></script>
+<script>
+(function () {
+  const data = {{ ftp_history_json | safe }};
+  new Chart(document.getElementById('ftpHistoryChart').getContext('2d'), {
+    type: 'line',
+    data: {
+      labels: data.map(d => d.date),
+      datasets: [{
+        label: 'FTP (W)',
+        data: data.map(d => d.value),
+        borderColor: '#FC4C02',
+        backgroundColor: 'rgba(252,76,2,0.08)',
+        borderWidth: 2, pointRadius: 3, tension: 0.2, fill: true,
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { labels: { color: '#ccc' } },
+        tooltip: { callbacks: { label: i => ` FTP: ${i.raw} W` } },
+      },
+      scales: {
+        x: { ticks: { maxTicksLimit: 12, color: '#aaa' }, grid: { color: '#2a2a35' } },
+        y: { ticks: { color: '#aaa', callback: v => v + ' W' }, grid: { color: '#2a2a35' }, beginAtZero: false },
+      },
+    },
+  });
+})();
+</script>
+{% endif %}
+
+{% if has_hr_history %}
+<article>
+  <header><strong>Heart rate over time</strong></header>
+  <div style="position:relative;height:220px">
+    <canvas id="hrHistoryChart"></canvas>
+  </div>
+  <footer><small class="muted">Max HR from activity data. Rest HR from manual entries.</small></footer>
+</article>
+<script src="{{ url_for('static', filename='chart.min.js') }}"></script>
+<script>
+(function () {
+  const hrData = {{ hr_history_json | safe }};
+  // Build a unified sorted label set; each dataset looks up its value by date.
+  const allDates = [...new Set(
+    [...(hrData.max_hr || []), ...(hrData.rest_hr || [])].map(d => d.date)
+  )].sort();
+  const _byDate = arr => {
+    const m = {};
+    (arr || []).forEach(d => { m[d.date] = d.value; });
+    return allDates.map(date => m[date] ?? null);
+  };
+  const datasets = [];
+  if (hrData.max_hr && hrData.max_hr.length) {
+    datasets.push({
+      label: 'Max HR (bpm)',
+      data: _byDate(hrData.max_hr),
+      borderColor: '#f44336',
+      backgroundColor: 'rgba(244,67,54,0.08)',
+      borderWidth: 2, pointRadius: 3, tension: 0.2, fill: false,
+      spanGaps: true,
+    });
+  }
+  if (hrData.rest_hr && hrData.rest_hr.length) {
+    datasets.push({
+      label: 'Rest HR (bpm)',
+      data: _byDate(hrData.rest_hr),
+      borderColor: '#4fc3f7',
+      backgroundColor: 'transparent',
+      borderWidth: 2, pointRadius: 3, tension: 0.2, fill: false,
+      spanGaps: true,
+    });
+  }
+  new Chart(document.getElementById('hrHistoryChart').getContext('2d'), {
+    type: 'line',
+    data: { labels: allDates, datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { labels: { color: '#ccc' } },
+        tooltip: { callbacks: { label: i => ` ${i.dataset.label.split(' (')[0]}: ${i.raw} bpm` } },
+      },
+      scales: {
+        x: { ticks: { maxTicksLimit: 12, color: '#aaa' }, grid: { color: '#2a2a35' } },
+        y: { ticks: { color: '#aaa', callback: v => v + ' bpm' }, grid: { color: '#2a2a35' }, beginAtZero: false },
+      },
+    },
+  });
+})();
+</script>
+{% endif %}
+
+{% if weight_history_json != '[]' %}
+<article>
+  <header><strong>Weight over time</strong></header>
+  <div style="position:relative;height:220px">
+    <canvas id="weightHistoryChart"></canvas>
+  </div>
+  <footer><small class="muted">From manual entries.</small></footer>
+</article>
+<script src="{{ url_for('static', filename='chart.min.js') }}"></script>
+<script>
+(function () {
+  const data = {{ weight_history_json | safe }};
+  new Chart(document.getElementById('weightHistoryChart').getContext('2d'), {
+    type: 'line',
+    data: {
+      labels: data.map(d => d.date),
+      datasets: [{
+        label: 'Weight (kg)',
+        data: data.map(d => d.value),
+        borderColor: '#70ad47',
+        backgroundColor: 'rgba(112,173,71,0.08)',
+        borderWidth: 2, pointRadius: 3, tension: 0.2, fill: true,
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { labels: { color: '#ccc' } },
+        tooltip: { callbacks: { label: i => ` Weight: ${i.raw} kg` } },
+      },
+      scales: {
+        x: { ticks: { maxTicksLimit: 12, color: '#aaa' }, grid: { color: '#2a2a35' } },
+        y: { ticks: { color: '#aaa', callback: v => v + ' kg' }, grid: { color: '#2a2a35' }, beginAtZero: false },
+      },
+    },
+  });
+})();
+</script>
+{% endif %}
+
 {% elif tab == "followers" %}
 
 <h3>Followers <small class="muted">({{ followers|length }})</small></h3>
