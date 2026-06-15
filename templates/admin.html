@@ -31,6 +31,21 @@
 </div>
 
 <article style="margin-bottom:2rem">
+  <header><strong>Registration</strong></header>
+  {% if invite_code %}
+  <p>Invite code: <code>{{ invite_code }}</code></p>
+  {% else %}
+  <p class="muted"><small>No invite code set — registration is open to anyone.</small></p>
+  {% endif %}
+  <form method="post" action="{{ url_for('admin_set_invite_code') }}" style="display:flex;gap:.5rem;align-items:center;margin-top:.5rem">
+    <input type="text" name="invite_code" value="{{ invite_code or '' }}"
+           placeholder="Leave empty to disable"
+           style="margin:0;width:16rem;font-size:.9rem">
+    <button type="submit" class="secondary outline" style="margin:0">Save</button>
+  </form>
+</article>
+
+<article style="margin-bottom:2rem">
   <header>
     <strong>Background jobs</strong>
     {% if backfill_running %}

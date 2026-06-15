@@ -468,6 +468,15 @@ def set_site_setting(db_path, key: str, value: str):
         conn.close()
 
 
+def delete_site_setting(db_path, key: str):
+    conn = _conn(db_path)
+    try:
+        conn.execute("DELETE FROM site_settings WHERE key=?", (key,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def get_zones(db_path, user_id: int, zone_type: str) -> list[dict]:
     conn = _conn(db_path)
     try:

@@ -6,9 +6,11 @@ from flask_login import current_user, login_required
 
 from config import DB_PATH, _base_cfg, STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET
 from fit_encoder import generate_fit
+from flask import request
 from database import (
     get_activity, get_admin_stats, get_error_activities,
-    get_setting, load_user_config, reset_metrics_computed, save_activity_file,
+    get_setting, get_site_setting, set_site_setting, delete_site_setting,
+    load_user_config, reset_metrics_computed, save_activity_file,
     set_setting, upsert_activity,
 )
 from tasks import _backfill_lock, _render_and_track
@@ -33,8 +35,10 @@ def register_routes(app):
         stats            = get_admin_stats(DB_PATH)
         errors           = get_error_activities(DB_PATH)
         backfill_running = _backfill_lock.locked()
+        invite_code      = get_site_setting(DB_PATH, "invite_code")
         return render_template("admin.html", stats=stats, errors=errors,
-                               backfill_running=backfill_running)
+                               backfill_running=backfill_running,
+                               invite_code=invite_code)
 
     @app.route("/admin/full-sync", methods=["POST"])
     @login_required
@@ -109,4 +113,17 @@ def register_routes(app):
         set_setting(DB_PATH, uid, "inference", "ftp", "")
         set_setting(DB_PATH, uid, "inference", "max_hr", "")
         flash("Metrics reset. Visit the You page to trigger recomputation.", "success")
+        return redirect(url_for("admin"))
+
+    @app.route("/admin/invite-code", methods=["POST"])
+    @login_required
+    @admin_required
+    def admin_set_invite_code():
+        code = request.form.get("invite_code", "").strip()
+        if code:
+            set_site_setting(DB_PATH, "invite_code", code)
+            flash(f"Invite code set to "{code}".", "success")
+        else:
+            delete_site_setting(DB_PATH, "invite_code")
+            flash("Invite code cleared — registration is now open to anyone.", "success")
         return redirect(url_for("admin"))
