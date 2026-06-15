@@ -26,7 +26,7 @@ from map_renderer import render_activity_map
 from mastodon_client import MastodonClient
 from training_load import (
     aggregate_power_curve, compute_hr_tss, compute_np, compute_peak_powers,
-    compute_trimp, compute_tss, compute_zone_times, fit_critical_power,
+    compute_trimp, compute_tss, compute_wbal, compute_zone_times, fit_critical_power,
 )
 from inference import infer_training_params
 
@@ -197,18 +197,6 @@ def _compute_and_store_metrics(activity_id: int, uid: int, cfg: dict, stream: li
             breakthroughs_json=breakthroughs_json,
         )
 
-        # Cache W' balance so the activity page doesn't re-parse the file on every load
-        _cp_v     = get_setting(DB_PATH, uid, "inference", "cp")
-        _wprime_v = get_setting(DB_PATH, uid, "inference", "w_prime")
-        if np_w and _cp_v and _wprime_v and stream:
-            try:
-                from training_load import compute_wbal as _compute_wbal
-                _wbal = _compute_wbal(stream, float(_cp_v), float(_wprime_v))
-                if _wbal:
-                    set_wbal_json(DB_PATH, activity_id, uid, json.dumps(_wbal))
-            except Exception as _e:
-                print(f"[metrics] wbal failed for {activity_id}: {_e}")
-
         if not cfg["charts"]["power"]["ftp"] and peaks and peaks.get("20min"):
             new_ftp = peaks["20min"] * 0.95
             cached  = get_setting(DB_PATH, uid, "inference", "ftp")
@@ -250,6 +238,15 @@ def _compute_and_store_metrics(activity_id: int, uid: int, cfg: dict, stream: li
                         existing = [b for b in existing if b.get("type") != "cp"]
                         existing.append(cp_b)
                         breakthroughs_json = json.dumps(existing)
+
+                # Cache W' balance using the CP that was valid at the time of this ride
+                if np_w and stream:
+                    try:
+                        _wbal = compute_wbal(stream, cp, w_prime)
+                        if _wbal:
+                            set_wbal_json(DB_PATH, activity_id, uid, json.dumps(_wbal))
+                    except Exception as _e:
+                        print(f"[metrics] wbal failed for {activity_id}: {_e}")
 
     except Exception as e:
         print(f"[metrics] Failed for {activity_id}: {e}")
