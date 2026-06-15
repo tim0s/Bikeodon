@@ -520,11 +520,6 @@
   const wpkAll      = {{ wpk_all | safe }};
   const wpkRecent   = {{ wpk_recent | safe }};
 
-  // Display durations (seconds) for x-axis ticks — always clean, readable values.
-  // For each we find the nearest stored MMP key to use as the data source.
-  const _displayDurations = [5, 10, 15, 30, 60, 120, 300, 600, 1200, 1800, 3600];
-  const _displayLabels    = ["5s","10s","15s","30s","1min","2min","5min","10min","20min","30min","1h"];
-
   const _labelToSecs = l => {
     if (l.endsWith('min')) return parseInt(l) * 60;
     if (l.endsWith('h'))   return parseInt(l) * 3600;
@@ -532,78 +527,83 @@
     return null;
   };
 
+  const _fmtDur = t => {
+    if (t >= 3600) return Math.round(t / 3600) + 'h';
+    if (t % 60 === 0) return (t / 60) + 'min';
+    if (t >= 60) return Math.floor(t / 60) + 'm' + (t % 60) + 's';
+    return t + 's';
+  };
+
+  // All stored MMP keys sorted by ascending duration
   const _allKeys = Object.keys(curveAll).filter(k => _labelToSecs(k) !== null)
     .sort((a, b) => _labelToSecs(a) - _labelToSecs(b));
 
-  // For each display duration, find the nearest stored key (within 25% tolerance)
-  const labels      = [];   // display labels shown on x-axis
-  const durations   = [];   // seconds (for CP model curve)
-  const _dataKeys   = [];   // actual stored keys used for data lookup
+  // W/kg lookup by seconds for tooltip
+  const _wpkAllBySecs    = {};
+  const _wpkRecentBySecs = {};
+  _allKeys.forEach(k => {
+    const s = _labelToSecs(k);
+    if (wpkAll[k]    != null) _wpkAllBySecs[s]    = wpkAll[k];
+    if (wpkRecent[k] != null) _wpkRecentBySecs[s] = wpkRecent[k];
+  });
 
-  for (let i = 0; i < _displayDurations.length; i++) {
-    const target = _displayDurations[i];
-    let best = null, bestDiff = Infinity;
-    for (const k of _allKeys) {
-      const diff = Math.abs(_labelToSecs(k) - target);
-      if (diff < bestDiff) { bestDiff = diff; best = k; }
-    }
-    if (best && bestDiff / target < 0.25) {
-      labels.push(_displayLabels[i]);
-      durations.push(target);
-      _dataKeys.push(best);
-    }
-  }
-  // Fallback to legacy fixed labels when no new-format data present
-  if (!labels.length) {
-    labels.push(...["5s","30s","1min","5min","20min","1h"]);
-    durations.push(...[5, 30, 60, 300, 1200, 3600]);
-    _dataKeys.push(...["5s","30s","1min","5min","20min","60min"]);
-  }
+  // Build {x, y} point arrays using every stored key
+  const _toPoints = (dict, keys) =>
+    keys.map(k => ({ x: _labelToSecs(k), y: dict[k] ?? null })).filter(p => p.y !== null);
 
-  const allData       = _dataKeys.map(k => curveAll[k]    ?? null);
-  const recentData    = _dataKeys.map(k => curveRecent[k] ?? null);
-  const wpkAllData    = _dataKeys.map(k => wpkAll[k]      ?? null);
-  const wpkRecentData = _dataKeys.map(k => wpkRecent[k]   ?? null);
+  const allPts       = _toPoints(curveAll,    _allKeys);
+  const recentPts    = _toPoints(curveRecent, _allKeys);
+  const wpkAllPts    = _toPoints(wpkAll,      _allKeys);
+  const wpkRecentPts = _toPoints(wpkRecent,   _allKeys);
 
-  const cp      = {{ cp if cp else 'null' }};
-  const wPrime  = {{ w_prime if w_prime else 'null' }};
+  const cp         = {{ cp if cp else 'null' }};
+  const wPrime     = {{ w_prime if w_prime else 'null' }};
   const bodyWeight = {{ body_weight if body_weight else 'null' }};
 
-  const cpCurveW = (cp && wPrime)
-    ? durations.map(t => t >= 60 ? Math.round(wPrime / t + cp) : null)
-    : labels.map(() => null);
-  const cpCurveWpk = (cp && wPrime && bodyWeight)
-    ? cpCurveW.map(v => v !== null ? Math.round(v / bodyWeight * 100) / 100 : null)
-    : labels.map(() => null);
+  // CP model — dense smooth curve from 1 min to 1 h
+  const _cpModelPts    = [];
+  const _cpModelWpkPts = [];
+  if (cp && wPrime) {
+    for (let t = 60; t <= 3660; t = Math.round(t * 1.04) + 1) {
+      const w = Math.round(wPrime / t + cp);
+      _cpModelPts.push({ x: t, y: w });
+      if (bodyWeight) _cpModelWpkPts.push({ x: t, y: Math.round(w / bodyWeight * 100) / 100 });
+    }
+  }
+
+  // Canonical tick positions and labels for x-axis
+  const _tickSecs   = [5, 10, 15, 30, 60, 120, 300, 600, 1200, 1800, 3600];
+  const _tickLabels = {5:'5s',10:'10s',15:'15s',30:'30s',60:'1min',120:'2min',
+                       300:'5min',600:'10min',1200:'20min',1800:'30min',3600:'1h'};
 
   let showWpk = false;
 
   const datasets = [
     {
       label: 'All-time best (W)',
-      data: allData,
+      data: allPts,
       borderColor: '#4fc3f7',
       backgroundColor: 'rgba(79,195,247,0.08)',
       borderWidth: 2,
-      pointRadius: 5,
-      tension: 0.3,
+      pointRadius: 2,
+      tension: 0.15,
       fill: false,
     },
     {
       label: 'Last 90 days (W)',
-      data: recentData,
+      data: recentPts,
       borderColor: '#FC4C02',
       backgroundColor: 'rgba(252,76,2,0.08)',
       borderWidth: 2,
-      pointRadius: 5,
-      tension: 0.3,
+      pointRadius: 2,
+      tension: 0.15,
       fill: false,
     },
   ];
   if (cp && wPrime) {
     datasets.push({
       label: `CP model (CP=${cp}W, W'=${Math.round(wPrime/1000*10)/10}kJ)`,
-      data: cpCurveW,
+      data: _cpModelPts,
       borderColor: '#a259ff',
       backgroundColor: 'transparent',
       borderWidth: 1.5,
@@ -615,7 +615,7 @@
   }
 
   function computeMax(d0, d1) {
-    const vals = [...d0, ...d1].filter(v => v !== null);
+    const vals = [...d0, ...d1].map(p => p.y).filter(v => v !== null);
     if (!vals.length) return undefined;
     const top = Math.max(...vals);
     return showWpk
@@ -626,7 +626,7 @@
   const ctx = document.getElementById('powerCurveChart').getContext('2d');
   const chart = new Chart(ctx, {
     type: 'line',
-    data: { labels, datasets },
+    data: { datasets },
     options: {
       responsive: true,
       maintainAspectRatio: false,
@@ -634,8 +634,9 @@
         legend: { labels: { color: '#ccc' } },
         tooltip: {
           callbacks: {
+            title: items => _fmtDur(Math.round(items[0].parsed.x)),
             label: item => {
-              const v = item.raw;
+              const v = item.parsed.y;
               if (v === null) return null;
               if (item.datasetIndex === 2) {
                 return showWpk ? ` CP model: ${v.toFixed(2)} W/kg` : ` CP model: ${v} W`;
@@ -644,8 +645,9 @@
               if (showWpk) {
                 return ` ${item.dataset.label.split(' (')[0]}: ${v.toFixed(2)} W/kg`;
               }
-              const dataKey = _dataKeys[item.dataIndex];
-              const wpk = isAll ? wpkAll[dataKey] : wpkRecent[dataKey];
+              const wpk = isAll
+                ? _wpkAllBySecs[item.parsed.x]
+                : _wpkRecentBySecs[item.parsed.x];
               return ` ${item.dataset.label.split(' (')[0]}: ${v.toFixed(0)} W` +
                 (wpk ? `  (${wpk.toFixed(2)} W/kg)` : '');
             },
@@ -653,12 +655,25 @@
         },
       },
       scales: {
-        x: { ticks: { color: '#aaa' }, grid: { color: '#2a2a35' } },
+        x: {
+          type: 'logarithmic',
+          min: 3,
+          max: 3700,
+          ticks: {
+            color: '#aaa',
+            maxRotation: 0,
+            callback: val => _tickLabels[val] ?? null,
+          },
+          afterBuildTicks: axis => {
+            axis.ticks = _tickSecs.map(v => ({ value: v }));
+          },
+          grid: { color: '#2a2a35' },
+        },
         y: {
           ticks: { color: '#aaa', callback: v => showWpk ? v + ' W/kg' : v + ' W' },
           grid: { color: '#2a2a35' },
           beginAtZero: false,
-          max: computeMax(allData, recentData),
+          max: computeMax(allPts, recentPts),
         },
       },
     },
@@ -673,20 +688,20 @@
     const btn = document.getElementById('wpkToggle');
     if (btn) btn.textContent = showWpk ? 'Show W' : 'Show W/kg';
 
-    chart.data.datasets[0].data = showWpk ? wpkAllData    : allData;
+    chart.data.datasets[0].data  = showWpk ? wpkAllPts    : allPts;
     chart.data.datasets[0].label = showWpk ? 'All-time best (W/kg)' : 'All-time best (W)';
-    chart.data.datasets[1].data = showWpk ? wpkRecentData : recentData;
+    chart.data.datasets[1].data  = showWpk ? wpkRecentPts : recentPts;
     chart.data.datasets[1].label = showWpk ? 'Last 90 days (W/kg)' : 'Last 90 days (W)';
     if (chart.data.datasets[2]) {
-      chart.data.datasets[2].data = showWpk ? cpCurveWpk : cpCurveW;
+      chart.data.datasets[2].data = showWpk ? _cpModelWpkPts : _cpModelPts;
       const cpLabel = showWpk
         ? `CP model (CP=${bodyWeight ? (cp/bodyWeight).toFixed(2) : '?'} W/kg)`
         : `CP model (CP=${cp}W, W'=${Math.round(wPrime/1000*10)/10}kJ)`;
       chart.data.datasets[2].label = cpLabel;
     }
     chart.options.scales.y.ticks.callback = v => showWpk ? v + ' W/kg' : v + ' W';
-    const d0 = showWpk ? wpkAllData    : allData;
-    const d1 = showWpk ? wpkRecentData : recentData;
+    const d0 = showWpk ? wpkAllPts    : allPts;
+    const d1 = showWpk ? wpkRecentPts : recentPts;
     chart.options.scales.y.max = computeMax(d0, d1);
     chart.update();
   };
