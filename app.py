@@ -34,9 +34,9 @@ from database import (
     list_activities, load_user_config, mark_ap_posted,
     save_activity_file, set_activity_error, set_scheduled, set_setting, upsert_activity,
 )
-from activity_parser import parse_file, stream_from_file
+from activity_parser import parse_file
 from training_load import (
-    aggregate_power_curve, compute_pmc, compute_wbal,
+    aggregate_power_curve, compute_pmc,
     fit_critical_power, weekly_load,
 )
 from tasks import (
@@ -329,21 +329,14 @@ def activity(activity_id):
     has_avg_watts   = bool(row["average_watts"])
     has_power_chart = os.path.exists(os.path.join(out_dir, f"{activity_id}_power.png"))
 
-    wbal_json = None
+    wbal_json = row["wbal_json"] if row["wbal_json"] else None
     act_cp = act_w_prime = None
-    _cp_v     = get_setting(DB_PATH, uid, "inference", "cp")
-    _wprime_v = get_setting(DB_PATH, uid, "inference", "w_prime")
-    if row["average_watts"] and _cp_v and _wprime_v:
-        try:
-            _source_file = row["source_file"]
-            _stream = stream_from_file(_source_file) if _source_file else []
-            _wbal   = compute_wbal(_stream, float(_cp_v), float(_wprime_v))
-            if _wbal:
-                wbal_json   = json.dumps(_wbal)
-                act_cp      = float(_cp_v)
-                act_w_prime = float(_wprime_v)
-        except Exception as _e:
-            print(f"[wbal] Failed for activity {activity_id}: {_e}")
+    if wbal_json:
+        _cp_v     = get_setting(DB_PATH, uid, "inference", "cp")
+        _wprime_v = get_setting(DB_PATH, uid, "inference", "w_prime")
+        if _cp_v and _wprime_v:
+            act_cp      = float(_cp_v)
+            act_w_prime = float(_wprime_v)
 
     return render_template("activity.html", activity=act, map_url=map_url,
                            chart_urls=chart_urls, mastodon_configured=mastodon_configured,

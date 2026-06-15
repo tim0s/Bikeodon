@@ -219,6 +219,7 @@ def init_db(db_path):
         ("source_file",          "TEXT"),
         ("source_file_sha256",   "TEXT"),
         ("source_file_type",     "TEXT"),
+        ("wbal_json",            "TEXT"),
     ]:
         try:
             conn.execute(f"ALTER TABLE activities ADD COLUMN {col} {typedef}")
@@ -1264,6 +1265,18 @@ def upsert_cp_history(db_path, user_id: int, activity_id: int,
             "   w_prime_joules=excluded.w_prime_joules,"
             "   basis_activities=excluded.basis_activities",
             (user_id, activity_id, activity_date, cp_watts, w_prime_joules, basis_activities),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def set_wbal_json(db_path, activity_id: int, user_id: int, wbal_json: str) -> None:
+    conn = _conn(db_path)
+    try:
+        conn.execute(
+            "UPDATE activities SET wbal_json=? WHERE id=? AND user_id=?",
+            (wbal_json, activity_id, user_id),
         )
         conn.commit()
     finally:
