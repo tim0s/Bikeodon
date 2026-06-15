@@ -799,8 +799,9 @@ def send_reply(local_username: str, local_user, object_id: str, actor_url: str,
         f'↩ <a href="{object_id}" target="_blank" rel="noopener">In reply to</a>'
         f'</p>'
     ) + safe
-    display_name = local_user.get("display_name") or local_username
-    avatar_url = url_for("user_avatar", username=local_username, _external=True) if local_user.get("avatar_filename") else None
+    _user = dict(local_user)
+    display_name = _user.get("display_name") or local_username
+    avatar_url = url_for("user_avatar", username=local_username, _external=True) if _user.get("avatar_filename") else None
     add_feed_item(db_path, local_username, actor_ap_url, display_name, avatar_url,
                   reply_id, reply_id, feed_content, published, None, in_reply_to=object_id)
 
