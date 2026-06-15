@@ -25,6 +25,7 @@ from charts import generate_charts
 from map_renderer import render_activity_map
 from mastodon_client import MastodonClient
 from training_load import (
+    _label_to_secs,
     compute_hr_tss, compute_np, compute_peak_powers,
     compute_trimp, compute_tss, compute_wbal, compute_zone_times, fit_critical_power,
 )
@@ -166,7 +167,20 @@ def _estimate_derived_params(uid: int, activity_id: int, date: str) -> dict:
             set_athlete_param(DB_PATH, uid, "w_prime_joules", w_prime,
                               source="derived", activity_id=activity_id, date=date)
 
-        best_20min = mmp.get("20min")
+        # Find the power at the label closest to 20 min (1200s) within ±5 min.
+        # Labels use Xs / Nmin / Nh format so we need _label_to_secs to resolve them.
+        _TARGET = 1200
+        _WINDOW = 300
+        best_20min = None
+        best_dist  = _WINDOW + 1
+        for lbl, w in mmp.items():
+            t = _label_to_secs(lbl)
+            if t is None:
+                continue
+            dist = abs(t - _TARGET)
+            if dist <= _WINDOW and dist < best_dist:
+                best_20min = w
+                best_dist  = dist
         if best_20min:
             ftp = round(best_20min * 0.95, 1)
         elif cp:
