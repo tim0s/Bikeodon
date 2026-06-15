@@ -507,6 +507,69 @@ def ap_delete_activity(activity_id):
     return redirect(request.referrer or url_for("feed"))
 
 
+@app.route("/activity/<int:activity_id>/delete", methods=["POST"])
+@login_required
+def delete_activity_route(activity_id):
+    from database import delete_activity as _delete_activity
+    from activitypub import _deliver_activity, get_or_create_keypair
+    from datetime import datetime, timezone as _tz
+    import glob
+
+    uid      = int(current_user.id)
+    row      = get_activity(DB_PATH, activity_id, user_id=uid)
+    if not row:
+        flash("Activity not found.", "error")
+        return redirect(url_for("index"))
+
+    user     = get_user_by_id(DB_PATH, uid)
+    username = user["username"]
+    actor_url = url_for("activitypub.actor", username=username, _external=True)
+    note_id   = f"{actor_url}/activities/{activity_id}"
+
+    # Fan out AP Delete if the activity was ever posted to followers
+    if row["ap_posted_at"]:
+        followers = get_followers(DB_PATH, username)
+        key_id    = f"{actor_url}#main-key"
+        _, priv_pem = get_or_create_keypair(DB_PATH, uid)
+        now = datetime.now(_tz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        delete_ap = {
+            "@context": "https://www.w3.org/ns/activitystreams",
+            "id": f"{note_id}/delete",
+            "type": "Delete",
+            "actor": actor_url,
+            "published": now,
+            "to": ["https://www.w3.org/ns/activitystreams#Public"],
+            "cc": [f"{actor_url}/followers"],
+            "object": {"id": note_id, "type": "Tombstone"},
+        }
+        for follower in followers:
+            inbox_url = follower.get("inbox_url")
+            if inbox_url:
+                _deliver_activity(inbox_url, delete_ap, key_id, DB_PATH)
+
+    # Delete DB rows (activities, cp_history, activity_reactions, feed_items, local_reactions)
+    _delete_activity(DB_PATH, activity_id, uid, note_id=note_id, username=username)
+
+    # Remove output files (map, HR chart, power chart)
+    out_dir = os.path.abspath(_base_cfg["map"].get("output_dir", "output"))
+    for path in glob.glob(os.path.join(out_dir, f"{activity_id}*.png")):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+    # Remove source FIT file if it was uploaded (not a Strava-fetched file)
+    source_file = row["source_file"]
+    if source_file and row.get("source_file_type") == "upload":
+        try:
+            os.remove(source_file)
+        except OSError:
+            pass
+
+    flash("Activity deleted.", "success")
+    return redirect(url_for("index"))
+
+
 # ---------------------------------------------------------------------------
 # File serving
 # ---------------------------------------------------------------------------

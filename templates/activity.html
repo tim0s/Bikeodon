@@ -233,7 +233,12 @@
 {% endif %}
 
 {% if activity.ap_posted_at %}
-<p style="margin-bottom:1rem;color:var(--pico-muted-color)">✓ Posted to your feed on {{ activity.ap_posted_at[:10] }}</p>
+<p style="margin-bottom:.5rem;color:var(--pico-muted-color)">✓ Posted to your feed on {{ activity.ap_posted_at[:10] }}</p>
+<form method="post" action="{{ url_for('ap_delete_activity', activity_id=activity.id) }}"
+      style="margin-bottom:1rem"
+      onsubmit="return confirm('Remove this post from your feed and notify followers?')">
+  <button type="submit" class="secondary outline" style="color:#c0392b;border-color:#c0392b">Unpost from Feed</button>
+</form>
 {% else %}
 <form method="post" action="{{ url_for('ap_post_activity', activity_id=activity.id) }}" style="margin-bottom:1rem">
   <button type="submit" class="secondary">Post in my Feed</button>
@@ -244,6 +249,11 @@
   <button type="submit" class="secondary outline">Re-render map &amp; charts</button>
 </form>
 
-<p><a href="{{ url_for('index') }}">&larr; Back to activities</a></p>
+<form method="post" action="{{ url_for('delete_activity_route', activity_id=activity.id) }}"
+      onsubmit="return confirm('Permanently delete this activity and all its metrics? This cannot be undone.')">
+  <button type="submit" class="secondary outline" style="color:#c0392b;border-color:#c0392b">Delete Activity</button>
+</form>
+
+<p style="margin-top:1rem"><a href="{{ url_for('index') }}">&larr; Back to activities</a></p>
 
 {% endblock %}

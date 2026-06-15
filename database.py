@@ -935,6 +935,39 @@ def get_activity(db_path, activity_id, user_id: int):
     return row
 
 
+def delete_activity(db_path, activity_id: int, user_id: int, note_id: str | None = None,
+                    username: str | None = None) -> dict | None:
+    """Delete an activity and all related rows. Returns the deleted row, or None if not found.
+
+    Callers are responsible for removing files from disk and sending AP Delete if needed.
+    note_id and username are needed to clean up feed_items and local_reactions.
+    """
+    conn = _conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT * FROM activities WHERE id=? AND user_id=?", (activity_id, user_id)
+        ).fetchone()
+        if not row:
+            return None
+        conn.execute("DELETE FROM cp_history WHERE activity_id=? AND user_id=?",
+                     (activity_id, user_id))
+        conn.execute("DELETE FROM activity_reactions WHERE activity_id=?", (activity_id,))
+        if note_id and username:
+            conn.execute(
+                "DELETE FROM feed_items WHERE local_username=? AND object_id=?",
+                (username, note_id),
+            )
+            conn.execute(
+                "DELETE FROM local_reactions WHERE local_username=? AND object_id=?",
+                (username, note_id),
+            )
+        conn.execute("DELETE FROM activities WHERE id=? AND user_id=?", (activity_id, user_id))
+        conn.commit()
+        return dict(row)
+    finally:
+        conn.close()
+
+
 def get_unposted(db_path, user_id: int) -> list:
     conn = _conn(db_path)
     try:
