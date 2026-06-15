@@ -663,25 +663,21 @@ def save_physio_param():
 
     if param == "birthday":
         set_setting(DB_PATH, uid, "profile", "birthday", value)
-    elif param == "height_cm":
-        try:
-            set_setting(DB_PATH, uid, "profile", "height_cm", str(float(value)))
-        except ValueError:
-            abort(400)
     else:
         try:
             fval = float(value)
         except ValueError:
             abort(400)
         set_athlete_param(DB_PATH, uid, param, fval, source="manual")
-        # Keep settings in sync so the rest of the app still sees the value
+        # Keep settings in sync for params the rest of the app still reads from there
         _settings_map = {
             "weight_kg": ("training", "body_weight_kg"),
             "rest_hr":   ("training", "hr_rest"),
             "max_hr":    ("charts",   "max_hr"),
         }
-        area, key = _settings_map[param]
-        set_setting(DB_PATH, uid, area, key, str(fval))
+        if param in _settings_map:
+            area, key = _settings_map[param]
+            set_setting(DB_PATH, uid, area, key, str(fval))
 
     flash("Updated.", "success")
     return redirect(url_for("me", tab="profile"))
@@ -970,7 +966,7 @@ def me():
     phys_max_hr   = get_athlete_param(DB_PATH, uid, "max_hr")  or hr_max
     phys_rest_hr  = get_athlete_param(DB_PATH, uid, "rest_hr") or hr_rest
     phys_weight   = get_athlete_param(DB_PATH, uid, "weight_kg") or body_weight
-    phys_height   = float(get_setting(DB_PATH, uid, "profile", "height_cm") or 0) or None
+    phys_height   = get_athlete_param(DB_PATH, uid, "height_cm")
     phys_birthday = get_setting(DB_PATH, uid, "profile", "birthday") or None
 
     hr_totals, power_totals = get_zone_totals(DB_PATH, uid)
