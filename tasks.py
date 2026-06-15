@@ -15,7 +15,7 @@ from config import DB_PATH, _base_cfg
 
 from database import (
     _conn, get_activities_without_metrics, get_activity, get_all_peak_powers,
-    get_cp_history, get_setting, job_finish, job_start,
+    get_cp_history, get_prev_cp_history, get_setting, job_finish, job_start,
     load_user_config, mark_rendered, mark_posted,
     set_activity_error, set_scheduled, set_setting,
     update_activity_metrics, upsert_cp_history,
@@ -215,16 +215,29 @@ def _compute_and_store_metrics(activity_id: int, uid: int, cfg: dict, stream: li
                 print(f"[metrics] Updated inferred max HR: {new_hr:.0f} bpm")
 
         if peaks and row.get("start_date"):
-            cumulative = get_all_peak_powers(
-                DB_PATH, uid, before_date=row["start_date"]
-            )
+            prev_cp_row    = get_prev_cp_history(DB_PATH, uid, row["start_date"])
+            prev_cp_val    = prev_cp_row["cp_watts"] if prev_cp_row else None
+            cumulative     = get_all_peak_powers(DB_PATH, uid, before_date=row["start_date"])
             cumulative_mmp = aggregate_power_curve(cumulative)
-            cp, w_prime = fit_critical_power(cumulative_mmp)
+            cp, w_prime    = fit_critical_power(cumulative_mmp)
             if cp:
                 upsert_cp_history(
                     DB_PATH, uid, activity_id, row["start_date"],
                     cp, w_prime, len(cumulative),
                 )
+                if prev_cp_val is None or cp > prev_cp_val + 0.5:
+                    cp_b = {"type": "cp", "cp_watts": round(cp, 1),
+                            "prev": round(prev_cp_val, 1) if prev_cp_val else None}
+                    if breakthroughs_json is not None:
+                        existing = json.loads(breakthroughs_json)
+                        existing = [b for b in existing if b.get("type") != "cp"]
+                        existing.append(cp_b)
+                        breakthroughs_json = json.dumps(existing)
+                    else:
+                        existing = json.loads(row.get("breakthroughs_json") or "[]")
+                        existing = [b for b in existing if b.get("type") != "cp"]
+                        existing.append(cp_b)
+                        breakthroughs_json = json.dumps(existing)
 
     except Exception as e:
         print(f"[metrics] Failed for {activity_id}: {e}")

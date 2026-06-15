@@ -34,6 +34,9 @@
       {% elif b.type == 'hr' %}
         <strong>Max heart rate:</strong> {{ b.bpm }} bpm
         {% if b.prev %}<span class="muted"> (↑ from {{ b.prev }} bpm)</span>{% else %}<span class="muted"> (first recorded)</span>{% endif %}
+      {% elif b.type == 'cp' %}
+        <strong>Critical Power:</strong> {{ b.cp_watts }} W
+        {% if b.prev %}<span class="muted"> (↑ from {{ b.prev }} W)</span>{% else %}<span class="muted"> (first recorded)</span>{% endif %}
       {% endif %}
     </li>
     {% endfor %}

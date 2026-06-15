@@ -1270,6 +1270,20 @@ def upsert_cp_history(db_path, user_id: int, activity_id: int,
         conn.close()
 
 
+def get_prev_cp_history(db_path, user_id: int, before_date: str):
+    """Return the most recent cp_history row strictly before before_date, or None."""
+    conn = _conn(db_path)
+    try:
+        return conn.execute(
+            "SELECT cp_watts, w_prime_joules FROM cp_history"
+            " WHERE user_id=? AND activity_date < ?"
+            " ORDER BY activity_date DESC LIMIT 1",
+            (user_id, before_date),
+        ).fetchone()
+    finally:
+        conn.close()
+
+
 def get_cp_history(db_path, user_id: int) -> list:
     """Return [{date, cp, w_prime, basis}] ordered chronologically."""
     conn = _conn(db_path)
