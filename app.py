@@ -427,7 +427,12 @@ def ap_post_activity(activity_id):
         for p in image_paths
     ]
 
-    create_activity = _activity_row_to_ap(row, actor_url, outbox_url, image_urls=image_urls)
+    fit_url = None
+    if dict(row).get("source_file"):
+        fit_url = url_for("activity_fit", activity_id=activity_id, _external=True)
+
+    create_activity = _activity_row_to_ap(row, actor_url, outbox_url,
+                                          image_urls=image_urls, fit_url=fit_url)
     # Stable unique Create ID — avoids Mastodon deduplication on retries without allowing duplicates
     create_activity["id"] = create_activity["object"]["id"] + "/create"
     _, priv_pem = get_or_create_keypair(DB_PATH, uid)
@@ -607,6 +612,51 @@ def output_file(filename):
     response = send_from_directory(out_dir, filename)
     response.headers["Cache-Control"] = "no-cache"
     return response
+
+
+@app.route("/activity/<int:activity_id>/fit")
+def activity_fit(activity_id):
+    """Serve a FIT file: public if ap_posted_at is set, otherwise owner/admin only."""
+    is_auth  = current_user.is_authenticated
+    is_admin = is_auth and current_user.is_admin
+    uid      = int(current_user.id) if is_auth else None
+
+    row = get_activity(DB_PATH, activity_id, user_id=uid or -1) if uid else None
+    is_owner = row is not None
+
+    if not is_owner and not is_admin:
+        # Need the row to check ap_posted_at
+        conn = _conn(DB_PATH)
+        try:
+            row = conn.execute(
+                "SELECT * FROM activities WHERE id=? AND ap_posted_at IS NOT NULL",
+                (activity_id,)
+            ).fetchone()
+        finally:
+            conn.close()
+        if not row:
+            abort(403)
+    elif row is None:
+        # Admin without ownership: load without user_id restriction
+        conn = _conn(DB_PATH)
+        try:
+            row = conn.execute(
+                "SELECT * FROM activities WHERE id=?", (activity_id,)
+            ).fetchone()
+        finally:
+            conn.close()
+        if not row:
+            abort(404)
+
+    source_file = dict(row).get("source_file")
+    if not source_file or not os.path.exists(source_file):
+        abort(404)
+
+    return send_from_directory(
+        os.path.dirname(os.path.abspath(source_file)),
+        os.path.basename(source_file),
+        as_attachment=True,
+    )
 
 
 @app.route("/users/<username>/avatar")

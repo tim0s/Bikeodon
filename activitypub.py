@@ -1069,7 +1069,8 @@ def _hashtags_for_activity(sport_type: str | None) -> list[str]:
 
 
 def _activity_row_to_ap(row, actor_url: str, outbox_url: str,
-                        image_urls: list[str] | None = None) -> dict:
+                        image_urls: list[str] | None = None,
+                        fit_url: str | None = None) -> dict:
     """Convert a DB activity row to an ActivityPub Create{Note} activity."""
     row = dict(row)
     note_id = f"{actor_url}/activities/{row['id']}"
@@ -1105,6 +1106,13 @@ def _activity_row_to_ap(row, actor_url: str, outbox_url: str,
         {"type": "Document", "mediaType": "image/png", "url": u}
         for u in (image_urls or [])
     ]
+    if fit_url:
+        attachments.append({
+            "type":      "Document",
+            "mediaType": "application/vnd.ant.fit",
+            "url":       fit_url,
+            "name":      "Activity data (.fit)",
+        })
 
     followers_url = f"{actor_url}/followers"
 
@@ -1146,10 +1154,20 @@ def outbox(username):
     total      = count_activities(db_path, user["id"], ap_posted_only=True)
 
     if request.args.get("page") == "true":
+        from urllib.parse import urlparse as _up
+        _base = "{0.scheme}://{0.netloc}".format(_up(actor_url))
+
         offset = int(request.args.get("min_id", 0))
         rows   = list_activities(db_path, user["id"], limit=_OUTBOX_PAGE_SIZE, offset=offset,
                                  ap_posted_only=True)
-        items  = [_activity_row_to_ap(r, actor_url, outbox_url) for r in rows]
+
+        def _fit_url_for(r):
+            if not dict(r).get("source_file"):
+                return None
+            return f"{_base}/activity/{r['id']}/fit"
+
+        items = [_activity_row_to_ap(r, actor_url, outbox_url, fit_url=_fit_url_for(r))
+                 for r in rows]
         doc = {
             "@context": "https://www.w3.org/ns/activitystreams",
             "id": f"{outbox_url}?page=true",
@@ -1199,7 +1217,14 @@ def activity_object(username, activity_id):
         if _os.path.exists(_os.path.join(_os.path.abspath(out_dir), f"{activity_id}{s}.png"))
     ]
 
-    create_activity = _activity_row_to_ap(row, actor_url, outbox_url, image_urls=image_urls)
+    fit_url = None
+    if dict(row).get("source_file"):
+        from urllib.parse import urlparse as _up
+        _base = "{0.scheme}://{0.netloc}".format(_up(actor_url))
+        fit_url = f"{_base}/activity/{activity_id}/fit"
+
+    create_activity = _activity_row_to_ap(row, actor_url, outbox_url,
+                                          image_urls=image_urls, fit_url=fit_url)
     note = create_activity["object"]
 
     resp = jsonify(note)
