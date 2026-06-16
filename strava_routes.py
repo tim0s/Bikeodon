@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from flask import flash, redirect, request, url_for
 from flask_login import current_user, login_required
 
-from config import DB_PATH, _base_cfg, STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET, SYNC_COOLDOWN_SECS
+from config import DB_PATH, OUTPUT_DIR, _base_cfg, STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET, SYNC_COOLDOWN_SECS
 from database import (
     _conn, get_activity, get_setting, get_user_by_athlete_id,
     load_user_config, save_activity_file, set_setting, upsert_activity,
@@ -37,7 +37,7 @@ def _make_strava_client(uid: int):
 
 def _generate_and_save_fit(activity: dict, streams: dict, activity_id: int, uid: int) -> None:
     """Generate a FIT file from Strava streams and populate source_file fields on activity."""
-    files_dir = os.path.join(_base_cfg["map"].get("output_dir", "output"), "activity_files")
+    files_dir = os.path.join(OUTPUT_DIR, "activity_files")
     try:
         fit_bytes = generate_fit(activity, streams)
         path, sha256 = save_activity_file(files_dir, activity_id, uid, fit_bytes, f"{activity_id}.fit")
@@ -100,7 +100,7 @@ def _handle_webhook_event(event: dict):
         _generate_and_save_fit(data, streams, obj_id, uid)
         upsert_activity(DB_PATH, data, user_id=uid)
         cfg     = load_user_config(DB_PATH, uid, _base_cfg)
-        out_dir = _base_cfg["map"].get("output_dir", "output")
+        out_dir = OUTPUT_DIR
         _render_and_track(obj_id, uid, cfg, out_dir)
         request_backfill(uid)
 
@@ -131,7 +131,7 @@ def register_routes(app):
                 return
 
             cfg     = load_user_config(DB_PATH, uid, _base_cfg)
-            out_dir = _base_cfg["map"].get("output_dir", "output")
+            out_dir = OUTPUT_DIR
 
             new_ids = []
             for activity_id in ids:

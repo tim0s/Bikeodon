@@ -404,18 +404,18 @@ def _dispatch_inbox(username, user, activity, db_path):
     elif activity_type == "Delete":
         _handle_delete_note(username, activity, db_path)
     elif activity_type == "Like":
-        _handle_like(username, activity, db_path)
+        _handle_reaction(username, activity, db_path, "like")
     elif activity_type == "Announce":
-        _handle_announce(username, activity, db_path)
+        _handle_reaction(username, activity, db_path, "boost")
     elif activity_type == "Undo":
         obj = activity.get("object", {})
         if isinstance(obj, dict):
             if obj.get("type") == "Follow":
                 _handle_undo_follow(username, activity, db_path)
             elif obj.get("type") == "Like":
-                _handle_undo_reaction(username, obj, db_path, "like")
+                _handle_reaction(username, obj, db_path, "like", undo=True)
             elif obj.get("type") == "Announce":
-                _handle_undo_reaction(username, obj, db_path, "boost")
+                _handle_reaction(username, obj, db_path, "boost", undo=True)
 
 
 def _handle_follow(local_username, local_user, activity, db_path):
@@ -582,43 +582,24 @@ def _activity_id_from_note_url(note_url: str, local_actor_base: str) -> int | No
         return None
 
 
-def _handle_like(local_username: str, activity: dict, db_path: str):
-    actor_url = activity.get("actor", "")
-    obj = activity.get("object", "")
+def _handle_reaction(local_username: str, src: dict, db_path: str,
+                     reaction_type: str, undo: bool = False):
+    """Shared handler for Like/Announce and their Undo variants."""
+    actor_url = src.get("actor", "")
+    obj = src.get("object", "")
     note_url = obj if isinstance(obj, str) else (obj.get("id", "") if isinstance(obj, dict) else "")
     if not actor_url or not note_url:
         return
     actor_base = url_for("activitypub.actor", username=local_username, _external=True)
     activity_id = _activity_id_from_note_url(note_url, actor_base)
-    if activity_id:
-        add_reaction(db_path, activity_id, actor_url, "like")
-        _log.info("Like on activity %s from %s", activity_id, actor_url)
-
-
-def _handle_announce(local_username: str, activity: dict, db_path: str):
-    actor_url = activity.get("actor", "")
-    obj = activity.get("object", "")
-    note_url = obj if isinstance(obj, str) else (obj.get("id", "") if isinstance(obj, dict) else "")
-    if not actor_url or not note_url:
+    if not activity_id:
         return
-    actor_base = url_for("activitypub.actor", username=local_username, _external=True)
-    activity_id = _activity_id_from_note_url(note_url, actor_base)
-    if activity_id:
-        add_reaction(db_path, activity_id, actor_url, "boost")
-        _log.info("Boost on activity %s from %s", activity_id, actor_url)
-
-
-def _handle_undo_reaction(local_username: str, obj: dict, db_path: str, reaction_type: str):
-    actor_url = obj.get("actor", "")
-    target = obj.get("object", "")
-    note_url = target if isinstance(target, str) else (target.get("id", "") if isinstance(target, dict) else "")
-    if not actor_url or not note_url:
-        return
-    actor_base = url_for("activitypub.actor", username=local_username, _external=True)
-    activity_id = _activity_id_from_note_url(note_url, actor_base)
-    if activity_id:
+    if undo:
         remove_reaction(db_path, activity_id, actor_url, reaction_type)
         _log.info("Undo %s on activity %s from %s", reaction_type, activity_id, actor_url)
+    else:
+        add_reaction(db_path, activity_id, actor_url, reaction_type)
+        _log.info("%s on activity %s from %s", reaction_type.capitalize(), activity_id, actor_url)
 
 
 def webfinger_lookup(handle: str) -> dict | None:
@@ -835,87 +816,80 @@ def _is_local_actor(actor_url: str) -> bool:
     return actor_url.startswith(local_base)
 
 
-def send_like(local_username: str, local_user, object_id: str, actor_url: str, db_path: str):
+def _send_ap_reaction(local_username: str, local_user, object_id: str, actor_url: str,
+                      db_path: str, *, reaction_type: str, undo: bool) -> None:
+    """Shared skeleton for Like/Announce and their Undo variants."""
     if _is_local_actor(actor_url):
         return
     inbox_url = _resolve_inbox(actor_url, db_path, local_username)
     if not inbox_url:
         return
     actor_ap_url = url_for("activitypub.actor", username=local_username, _external=True)
-    _, priv_pem = get_or_create_keypair(db_path, local_user["id"])
+    get_or_create_keypair(db_path, local_user["id"])
     key_id = f"{actor_ap_url}#main-key"
-    like_id = f"{actor_ap_url}/likes/{abs(hash(object_id)):016x}"
-    activity = {
-        "@context": "https://www.w3.org/ns/activitystreams",
-        "id":     like_id,
-        "type":   "Like",
-        "actor":  actor_ap_url,
-        "object": object_id,
-    }
+
+    slot = "likes" if reaction_type == "Like" else "boosts"
+    reaction_id = f"{actor_ap_url}/{slot}/{abs(hash(object_id)):016x}"
+
+    if undo:
+        inner = {"id": reaction_id, "type": reaction_type, "actor": actor_ap_url, "object": object_id}
+        activity: dict = {
+            "@context": "https://www.w3.org/ns/activitystreams",
+            "id":     f"{reaction_id}/undo",
+            "type":   "Undo",
+            "actor":  actor_ap_url,
+            "object": inner,
+        }
+    else:
+        activity = {
+            "@context": "https://www.w3.org/ns/activitystreams",
+            "id":    reaction_id,
+            "type":  reaction_type,
+            "actor": actor_ap_url,
+            "object": object_id,
+        }
+        if reaction_type == "Announce":
+            activity["to"] = ["https://www.w3.org/ns/activitystreams#Public"]
+            activity["cc"] = [f"{actor_ap_url}/followers"]
+
     _deliver_activity(inbox_url, activity, key_id, db_path)
+
+
+def send_like(local_username: str, local_user, object_id: str, actor_url: str, db_path: str):
+    _send_ap_reaction(local_username, local_user, object_id, actor_url, db_path,
+                      reaction_type="Like", undo=False)
 
 
 def send_unlike(local_username: str, local_user, object_id: str, actor_url: str, db_path: str):
-    if _is_local_actor(actor_url):
-        return
-    inbox_url = _resolve_inbox(actor_url, db_path, local_username)
-    if not inbox_url:
-        return
-    actor_ap_url = url_for("activitypub.actor", username=local_username, _external=True)
-    _, priv_pem = get_or_create_keypair(db_path, local_user["id"])
-    key_id = f"{actor_ap_url}#main-key"
-    like_id = f"{actor_ap_url}/likes/{abs(hash(object_id)):016x}"
-    activity = {
-        "@context": "https://www.w3.org/ns/activitystreams",
-        "id":     f"{like_id}/undo",
-        "type":   "Undo",
-        "actor":  actor_ap_url,
-        "object": {"id": like_id, "type": "Like", "actor": actor_ap_url, "object": object_id},
-    }
-    _deliver_activity(inbox_url, activity, key_id, db_path)
+    _send_ap_reaction(local_username, local_user, object_id, actor_url, db_path,
+                      reaction_type="Like", undo=True)
 
 
 def send_boost(local_username: str, local_user, object_id: str, actor_url: str, db_path: str):
-    if _is_local_actor(actor_url):
-        return
-    inbox_url = _resolve_inbox(actor_url, db_path, local_username)
-    if not inbox_url:
-        return
-    actor_ap_url = url_for("activitypub.actor", username=local_username, _external=True)
-    _, priv_pem = get_or_create_keypair(db_path, local_user["id"])
-    key_id = f"{actor_ap_url}#main-key"
-    boost_id = f"{actor_ap_url}/boosts/{abs(hash(object_id)):016x}"
-    followers_url = f"{actor_ap_url}/followers"
-    activity = {
-        "@context": "https://www.w3.org/ns/activitystreams",
-        "id":      boost_id,
-        "type":    "Announce",
-        "actor":   actor_ap_url,
-        "object":  object_id,
-        "to":      ["https://www.w3.org/ns/activitystreams#Public"],
-        "cc":      [followers_url],
-    }
-    _deliver_activity(inbox_url, activity, key_id, db_path)
+    _send_ap_reaction(local_username, local_user, object_id, actor_url, db_path,
+                      reaction_type="Announce", undo=False)
 
 
 def send_unboost(local_username: str, local_user, object_id: str, actor_url: str, db_path: str):
-    if _is_local_actor(actor_url):
-        return
-    inbox_url = _resolve_inbox(actor_url, db_path, local_username)
-    if not inbox_url:
-        return
-    actor_ap_url = url_for("activitypub.actor", username=local_username, _external=True)
-    _, priv_pem = get_or_create_keypair(db_path, local_user["id"])
-    key_id = f"{actor_ap_url}#main-key"
-    boost_id = f"{actor_ap_url}/boosts/{abs(hash(object_id)):016x}"
-    activity = {
+    _send_ap_reaction(local_username, local_user, object_id, actor_url, db_path,
+                      reaction_type="Announce", undo=True)
+
+
+def build_delete_activity(note_id: str, actor_url: str, now: str,
+                          include_cc: bool = True) -> dict:
+    """Build a Delete/Tombstone AP activity dict."""
+    doc: dict = {
         "@context": "https://www.w3.org/ns/activitystreams",
-        "id":     f"{boost_id}/undo",
-        "type":   "Undo",
-        "actor":  actor_ap_url,
-        "object": {"id": boost_id, "type": "Announce", "actor": actor_ap_url, "object": object_id},
+        "id": f"{note_id}/delete",
+        "type": "Delete",
+        "actor": actor_url,
+        "published": now,
+        "to": ["https://www.w3.org/ns/activitystreams#Public"],
+        "object": {"id": note_id, "type": "Tombstone"},
     }
-    _deliver_activity(inbox_url, activity, key_id, db_path)
+    if include_cc:
+        doc["cc"] = [f"{actor_url}/followers"]
+    return doc
 
 
 def _deliver_activity(inbox_url, activity_doc, key_id, db_path):
@@ -1169,11 +1143,12 @@ def outbox(username):
 
     actor_url  = url_for("activitypub.actor",  username=username, _external=True)
     outbox_url = url_for("activitypub.outbox", username=username, _external=True)
-    total      = count_activities(db_path, user["id"])
+    total      = count_activities(db_path, user["id"], ap_posted_only=True)
 
     if request.args.get("page") == "true":
         offset = int(request.args.get("min_id", 0))
-        rows   = list_activities(db_path, user["id"], limit=_OUTBOX_PAGE_SIZE, offset=offset)
+        rows   = list_activities(db_path, user["id"], limit=_OUTBOX_PAGE_SIZE, offset=offset,
+                                 ap_posted_only=True)
         items  = [_activity_row_to_ap(r, actor_url, outbox_url) for r in rows]
         doc = {
             "@context": "https://www.w3.org/ns/activitystreams",
@@ -1210,7 +1185,7 @@ def activity_object(username, activity_id):
 
     from database import get_activity as _get_activity
     row = _get_activity(db_path, activity_id, user_id=user["id"])
-    if not row:
+    if not row or not row["ap_posted_at"]:
         abort(404)
 
     actor_url  = url_for("activitypub.actor",  username=username, _external=True)

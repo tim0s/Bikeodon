@@ -6,7 +6,7 @@ Each function returns the output path, or None if data is unavailable.
 
 import os
 
-from inference import infer_ftp, infer_max_hr
+from database import get_athlete_param
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -137,7 +137,7 @@ def render_hr_chart(stream, cfg, out_path: str, db_path: str | None = None, user
 
     max_hr = hr_cfg.get("max_hr")
     if not max_hr and db_path and user_id is not None:
-        max_hr = infer_max_hr(db_path, user_id)
+        max_hr = get_athlete_param(db_path, user_id, "max_hr")
     if not max_hr:
         max_hr = int(max(hr))
     zones   = hr_cfg.get("zones", _default_hr_zones())
@@ -207,9 +207,9 @@ def render_power_chart(stream, cfg, out_path: str, db_path: str | None = None, u
 
     ftp = pwr_cfg.get("ftp")
     if not ftp and db_path and user_id is not None:
-        ftp = infer_ftp(db_path, user_id)
+        ftp = get_athlete_param(db_path, user_id, "ftp")
     if not ftp:
-        print("    Warning: charts.power.ftp not set and could not be inferred — skipping power chart")
+        print("    Warning: charts.power.ftp not set — skipping power chart")
         return None
 
     zones  = pwr_cfg.get("zones", _default_power_zones())

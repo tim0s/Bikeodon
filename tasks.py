@@ -11,7 +11,7 @@ import os
 import threading
 import time as _time
 
-from config import DB_PATH, _base_cfg
+from config import DB_PATH, OUTPUT_DIR, _base_cfg
 
 from database import (
     _conn, get_activities_without_metrics, get_activity, get_athlete_param,
@@ -161,7 +161,10 @@ def _estimate_derived_params(uid: int, activity_id: int, date: str) -> dict:
 
     if mmp:
         cp, w_prime = fit_critical_power(mmp)
-        if cp:
+        # Only record CP if the estimate improved — a new MMP point can change the OLS
+        # slope without the athlete actually getting weaker, so we treat CP like a power
+        # best: only record it when it goes up.
+        if cp and (prev_cp is None or cp > prev_cp):
             cp_changed = set_athlete_param(DB_PATH, uid, "cp_watts", cp,
                                            source="derived", activity_id=activity_id, date=date)
             set_athlete_param(DB_PATH, uid, "w_prime_joules", w_prime,
@@ -340,7 +343,7 @@ def _do_post_activity(activity_id: int, uid: int):
         return
 
     cfg     = load_user_config(DB_PATH, uid, _base_cfg)
-    out_dir = _base_cfg["map"].get("output_dir", "output")
+    out_dir = OUTPUT_DIR
     os.makedirs(out_dir, exist_ok=True)
     img_path = os.path.join(out_dir, f"{activity_id}.png")
 

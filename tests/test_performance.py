@@ -179,8 +179,8 @@ class TestMetricsComputationPerformance:
         init_db(db_path)
 
         # Seed hr_rest so hrTSS can be computed for HR-only rides
-        from database import set_setting
-        set_setting(db_path, 1, "training", "hr_rest", "50")
+        from database import set_athlete_param
+        set_athlete_param(db_path, 1, "rest_hr", 50, source="manual", date="2024-01-01")
 
         activity = {
             "id": activity_id, "name": "Perf test", "sport_type": "Ride",

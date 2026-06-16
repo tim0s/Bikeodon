@@ -4,13 +4,13 @@ from functools import wraps
 from flask import abort, flash, redirect, render_template, url_for
 from flask_login import current_user, login_required
 
-from config import DB_PATH, _base_cfg, STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET
+from config import DB_PATH, OUTPUT_DIR, _base_cfg, STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET
 from fit_encoder import generate_fit
 from flask import request
 from strava import delete_webhook, list_webhooks, register_webhook
 import glob, os
 from database import (
-    clear_athlete_params, clear_cp_history, get_activity, get_admin_stats,
+    clear_athlete_params, get_activity, get_admin_stats,
     get_all_users_for_admin, get_error_activities, get_setting, get_site_setting,
     set_site_setting, delete_site_setting, load_user_config, reset_metrics_computed,
     save_activity_file, set_admin, set_setting, upsert_activity,
@@ -39,7 +39,7 @@ def register_routes(app):
         backfill_running = _backfill_lock.locked()
         invite_code      = get_site_setting(DB_PATH, "invite_code")
 
-        out_dir   = os.path.abspath(_base_cfg["map"].get("output_dir", "output"))
+        out_dir   = os.path.abspath(OUTPUT_DIR)
         files_dir = os.path.join(out_dir, "activity_files")
         users     = get_all_users_for_admin(DB_PATH)
 
@@ -110,7 +110,7 @@ def register_routes(app):
                 expires_at=expires_at, on_refresh=_on_refresh,
             )
             print(f"[full-sync] Fetching and processing activities in pages of 20…")
-            files_dir = _base_cfg["map"].get("output_dir", "output") + "/activity_files"
+            files_dir = OUTPUT_DIR + "/activity_files"
 
             new_ids = []
             page = 1
@@ -139,7 +139,7 @@ def register_routes(app):
                 page += 1
 
             if new_ids:
-                out_dir = _base_cfg["map"].get("output_dir", "output")
+                out_dir = OUTPUT_DIR
                 cfg = load_user_config(DB_PATH, uid, _base_cfg)
                 for activity_id in new_ids:
                     _render_and_track(activity_id, uid, cfg, out_dir)
@@ -155,10 +155,7 @@ def register_routes(app):
     def admin_recompute_metrics():
         uid = int(current_user.id)
         reset_metrics_computed(DB_PATH, uid)
-        clear_cp_history(DB_PATH, uid)
         clear_athlete_params(DB_PATH, uid)
-        set_setting(DB_PATH, uid, "inference", "ftp", "")
-        set_setting(DB_PATH, uid, "inference", "max_hr", "")
         flash("Metrics reset. Visit the You page to trigger recomputation.", "success")
         return redirect(url_for("admin"))
 

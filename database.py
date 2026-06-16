@@ -947,13 +947,17 @@ _SORT_COLS = {
 }
 
 def list_activities(db_path, user_id: int, limit: int = 20, offset: int = 0,
-                    sort: str = "date", direction: str = "desc"):
+                    sort: str = "date", direction: str = "desc",
+                    ap_posted_only: bool = False):
     col = _SORT_COLS.get(sort, "start_date")
     dir_ = "ASC" if direction == "asc" else "DESC"
+    where = "user_id=?"
+    if ap_posted_only:
+        where += " AND ap_posted_at IS NOT NULL"
     conn = _conn(db_path)
     try:
         rows = conn.execute(
-            f"SELECT * FROM activities WHERE user_id=? ORDER BY {col} {dir_} LIMIT ? OFFSET ?",
+            f"SELECT * FROM activities WHERE {where} ORDER BY {col} {dir_} LIMIT ? OFFSET ?",
             (user_id, limit, offset),
         ).fetchall()
     finally:
@@ -961,11 +965,14 @@ def list_activities(db_path, user_id: int, limit: int = 20, offset: int = 0,
     return rows
 
 
-def count_activities(db_path, user_id: int) -> int:
+def count_activities(db_path, user_id: int, ap_posted_only: bool = False) -> int:
+    where = "user_id=?"
+    if ap_posted_only:
+        where += " AND ap_posted_at IS NOT NULL"
     conn = _conn(db_path)
     try:
         n = conn.execute(
-            "SELECT COUNT(*) FROM activities WHERE user_id=?", (user_id,)
+            f"SELECT COUNT(*) FROM activities WHERE {where}", (user_id,)
         ).fetchone()[0]
     finally:
         conn.close()
@@ -1342,27 +1349,6 @@ def get_daily_loads(db_path, user_id: int) -> dict:
     return result
 
 
-def upsert_cp_history(db_path, user_id: int, activity_id: int,
-                      activity_date: str, cp_watts: float,
-                      w_prime_joules: float, basis_activities: int) -> None:
-    conn = _conn(db_path)
-    try:
-        conn.execute(
-            "INSERT INTO cp_history"
-            " (user_id, activity_id, activity_date, cp_watts, w_prime_joules, basis_activities)"
-            " VALUES (?,?,?,?,?,?)"
-            " ON CONFLICT(user_id, activity_id) DO UPDATE SET"
-            "   activity_date=excluded.activity_date,"
-            "   cp_watts=excluded.cp_watts,"
-            "   w_prime_joules=excluded.w_prime_joules,"
-            "   basis_activities=excluded.basis_activities",
-            (user_id, activity_id, activity_date, cp_watts, w_prime_joules, basis_activities),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-
 def set_wbal_json(db_path, activity_id: int, user_id: int, wbal_json: str) -> None:
     conn = _conn(db_path)
     try:
@@ -1375,72 +1361,6 @@ def set_wbal_json(db_path, activity_id: int, user_id: int, wbal_json: str) -> No
         conn.close()
 
 
-def get_latest_cp(db_path, user_id: int, as_of: str | None = None):
-    """Return (cp_watts, w_prime_joules) from the most recent cp_history row,
-    optionally restricted to rows with activity_date <= as_of. Returns (None, None) if none."""
-    conn = _conn(db_path)
-    try:
-        if as_of:
-            row = conn.execute(
-                "SELECT cp_watts, w_prime_joules FROM cp_history"
-                " WHERE user_id=? AND activity_date<=?"
-                " ORDER BY activity_date DESC LIMIT 1",
-                (user_id, as_of),
-            ).fetchone()
-        else:
-            row = conn.execute(
-                "SELECT cp_watts, w_prime_joules FROM cp_history"
-                " WHERE user_id=? ORDER BY activity_date DESC LIMIT 1",
-                (user_id,),
-            ).fetchone()
-        if row:
-            return row["cp_watts"], row["w_prime_joules"]
-        return None, None
-    finally:
-        conn.close()
-
-
-def clear_cp_history(db_path, user_id: int) -> None:
-    conn = _conn(db_path)
-    try:
-        conn.execute("DELETE FROM cp_history WHERE user_id=?", (user_id,))
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def get_prev_cp_history(db_path, user_id: int, before_date: str):
-    """Return the most recent cp_history row strictly before before_date, or None."""
-    conn = _conn(db_path)
-    try:
-        return conn.execute(
-            "SELECT cp_watts, w_prime_joules FROM cp_history"
-            " WHERE user_id=? AND activity_date < ?"
-            " ORDER BY activity_date DESC LIMIT 1",
-            (user_id, before_date),
-        ).fetchone()
-    finally:
-        conn.close()
-
-
-def get_cp_history(db_path, user_id: int) -> list:
-    """Return [{date, cp, w_prime, basis}] ordered chronologically."""
-    conn = _conn(db_path)
-    try:
-        rows = conn.execute(
-            "SELECT activity_date, cp_watts, w_prime_joules, basis_activities"
-            " FROM cp_history WHERE user_id=? ORDER BY activity_date ASC",
-            (user_id,),
-        ).fetchall()
-    finally:
-        conn.close()
-    return [
-        {"date": r["activity_date"][:10], "cp": round(r["cp_watts"]),
-         "w_prime": round(r["w_prime_joules"]), "basis": r["basis_activities"]}
-        for r in rows
-    ]
-
-
 def get_all_peak_powers(db_path, user_id: int, days: int | None = None,
                         exclude_id: int | None = None,
                         before_date: str | None = None) -> list:
@@ -1449,53 +1369,31 @@ def get_all_peak_powers(db_path, user_id: int, days: int | None = None,
     before_date: ISO date string — only include activities on or before this date.
     exclude_id: omit a specific activity (used for breakthrough detection).
     """
+    from datetime import datetime, timedelta, timezone
+    where = ["user_id=?", "peak_power_json IS NOT NULL"]
+    params: list = [user_id]
+
+    if days is not None:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        where.append("start_date >= ?")
+        params.append(cutoff)
+    elif before_date is not None:
+        where.append("start_date <= ?")
+        params.append(before_date)
+
+    if exclude_id is not None:
+        where.append("id != ?")
+        params.append(exclude_id)
+
     conn = _conn(db_path)
     try:
-        if days is not None:
-            from datetime import datetime, timedelta, timezone
-            cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-            if exclude_id is not None:
-                rows = conn.execute(
-                    "SELECT peak_power_json FROM activities"
-                    " WHERE user_id=? AND peak_power_json IS NOT NULL"
-                    " AND start_date >= ? AND id != ?",
-                    (user_id, cutoff, exclude_id),
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    "SELECT peak_power_json FROM activities"
-                    " WHERE user_id=? AND peak_power_json IS NOT NULL AND start_date >= ?",
-                    (user_id, cutoff),
-                ).fetchall()
-        elif before_date is not None:
-            if exclude_id is not None:
-                rows = conn.execute(
-                    "SELECT peak_power_json FROM activities"
-                    " WHERE user_id=? AND peak_power_json IS NOT NULL"
-                    " AND start_date <= ? AND id != ?",
-                    (user_id, before_date, exclude_id),
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    "SELECT peak_power_json FROM activities"
-                    " WHERE user_id=? AND peak_power_json IS NOT NULL AND start_date <= ?",
-                    (user_id, before_date),
-                ).fetchall()
-        else:
-            if exclude_id is not None:
-                rows = conn.execute(
-                    "SELECT peak_power_json FROM activities"
-                    " WHERE user_id=? AND peak_power_json IS NOT NULL AND id != ?",
-                    (user_id, exclude_id),
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    "SELECT peak_power_json FROM activities"
-                    " WHERE user_id=? AND peak_power_json IS NOT NULL",
-                    (user_id,),
-                ).fetchall()
+        rows = conn.execute(
+            "SELECT peak_power_json FROM activities WHERE " + " AND ".join(where),
+            params,
+        ).fetchall()
     finally:
         conn.close()
+
     result = []
     for r in rows:
         try:
@@ -1961,22 +1859,17 @@ def get_reaction_counts(db_path, activity_id: int) -> dict:
 def get_athlete_param(db_path, user_id: int, parameter: str,
                       as_of: str | None = None) -> float | None:
     """Return the most recent value for parameter, optionally restricted to as_of date."""
+    where = "WHERE user_id=? AND parameter=?"
+    params: list = [user_id, parameter]
+    if as_of:
+        where += " AND date<=?"
+        params.append(as_of)
     conn = _conn(db_path)
     try:
-        if as_of:
-            row = conn.execute(
-                "SELECT value FROM athlete_params"
-                " WHERE user_id=? AND parameter=? AND date<=?"
-                " ORDER BY date DESC, id DESC LIMIT 1",
-                (user_id, parameter, as_of),
-            ).fetchone()
-        else:
-            row = conn.execute(
-                "SELECT value FROM athlete_params"
-                " WHERE user_id=? AND parameter=?"
-                " ORDER BY date DESC, id DESC LIMIT 1",
-                (user_id, parameter),
-            ).fetchone()
+        row = conn.execute(
+            f"SELECT value FROM athlete_params {where} ORDER BY date DESC, id DESC LIMIT 1",
+            params,
+        ).fetchone()
         return row["value"] if row else None
     finally:
         conn.close()
@@ -2041,22 +1934,18 @@ def get_athlete_param_history(db_path, user_id: int,
 
 def get_mmp_as_of(db_path, user_id: int, as_of: str | None = None) -> dict[str, float]:
     """Return {duration_label: best_power_watts} across all durations, as_of date."""
+    where = "WHERE user_id=?"
+    params: list = [user_id]
+    if as_of:
+        where += " AND date<=?"
+        params.append(as_of)
     conn = _conn(db_path)
     try:
-        if as_of:
-            rows = conn.execute(
-                "SELECT duration_label, MAX(power_watts) AS power_watts"
-                " FROM power_bests WHERE user_id=? AND date<=?"
-                " GROUP BY duration_label",
-                (user_id, as_of),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT duration_label, MAX(power_watts) AS power_watts"
-                " FROM power_bests WHERE user_id=?"
-                " GROUP BY duration_label",
-                (user_id,),
-            ).fetchall()
+        rows = conn.execute(
+            f"SELECT duration_label, MAX(power_watts) AS power_watts"
+            f" FROM power_bests {where} GROUP BY duration_label",
+            params,
+        ).fetchall()
         return {r["duration_label"]: r["power_watts"] for r in rows}
     finally:
         conn.close()
@@ -2066,22 +1955,18 @@ def get_power_best(db_path, user_id: int, duration_label: str,
                    as_of: str | None = None) -> dict | None:
     """Return {power_watts, activity_id, date} for the best effort at duration_label,
     optionally restricted to on or before as_of date."""
+    where = "WHERE user_id=? AND duration_label=?"
+    params: list = [user_id, duration_label]
+    if as_of:
+        where += " AND date<=?"
+        params.append(as_of)
     conn = _conn(db_path)
     try:
-        if as_of:
-            row = conn.execute(
-                "SELECT power_watts, activity_id, date FROM power_bests"
-                " WHERE user_id=? AND duration_label=? AND date<=?"
-                " ORDER BY power_watts DESC LIMIT 1",
-                (user_id, duration_label, as_of),
-            ).fetchone()
-        else:
-            row = conn.execute(
-                "SELECT power_watts, activity_id, date FROM power_bests"
-                " WHERE user_id=? AND duration_label=?"
-                " ORDER BY power_watts DESC LIMIT 1",
-                (user_id, duration_label),
-            ).fetchone()
+        row = conn.execute(
+            f"SELECT power_watts, activity_id, date FROM power_bests"
+            f" {where} ORDER BY power_watts DESC LIMIT 1",
+            params,
+        ).fetchone()
         return dict(row) if row else None
     finally:
         conn.close()

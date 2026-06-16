@@ -910,7 +910,7 @@ class TestOutbox:
     AP = "application/activity+json"
 
     def _seed_activity(self, db_path, user_id):
-        from database import upsert_activity
+        from database import upsert_activity, mark_ap_posted
         upsert_activity(db_path, {
             "id": 1001,
             "name": "Morning Ride",
@@ -921,6 +921,7 @@ class TestOutbox:
             "moving_time": 5400,
             "elapsed_time": 5600,
         }, user_id)
+        mark_ap_posted(db_path, 1001, user_id)
 
     def test_outbox_returns_200(self, client, user):
         username, _ = user

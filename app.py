@@ -23,7 +23,7 @@ from flask_login import (
 )
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from config import DB_PATH, _base_cfg, STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET, SYNC_COOLDOWN_SECS
+from config import DB_PATH, OUTPUT_DIR, _base_cfg, STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET, SYNC_COOLDOWN_SECS
 from database import (
     _conn, attach_source_file, clear_rendered, count_activities, create_user,
     find_overlapping_activity, get_activity, get_all_peak_powers,
@@ -60,7 +60,7 @@ if _secret_key == "dev-key-change-me-in-production" and not app.debug:
     raise RuntimeError("FLASK_SECRET_KEY must be set in production (DEBUG=False)")
 app.secret_key = _secret_key
 app.config["DB_PATH"]              = DB_PATH
-app.config["OUTPUT_DIR"]           = _base_cfg["map"].get("output_dir", "output")
+app.config["OUTPUT_DIR"]           = OUTPUT_DIR
 app.config["PREFERRED_URL_SCHEME"] = "https"
 
 init_db(DB_PATH)
@@ -242,7 +242,7 @@ def index():
             "id":            r["id"],
             "name":          r["name"] or "—",
             "sport_type":    r["sport_type"] or "",
-            "date":          (lambda d: f"{d[8:10]}.{d[5:7]}.{d[2:4]}" if len(d) >= 10 else d)((r["start_date"] or "")[:10]),
+            "date":          _fmt_date(r["start_date"]),
             "distance":      f"{(r['distance'] or 0) / 1000:.1f} km",
             "elevation":     f"{r['total_elevation_gain'] or 0:.0f} m",
             "distance_raw":  (r["distance"] or 0) / 1000,
@@ -269,6 +269,11 @@ def index():
 # Activity detail
 # ---------------------------------------------------------------------------
 
+def _fmt_date(iso_date):
+    d = (iso_date or "")[:10]
+    return f"{d[8:10]}.{d[5:7]}.{d[2:4]}" if len(d) >= 10 else d
+
+
 def _fmt_time(secs):
     if not secs:
         return None
@@ -285,7 +290,7 @@ def activity(activity_id):
         flash("Activity not found.", "error")
         return redirect(url_for("index"))
 
-    out_dir = _base_cfg["map"].get("output_dir", "output")
+    out_dir = OUTPUT_DIR
 
     map_url = None
     map_path = os.path.join(out_dir, f"{activity_id}.png")
@@ -302,7 +307,7 @@ def activity(activity_id):
         "id":         row["id"],
         "name":       row["name"] or "—",
         "sport_type": row["sport_type"] or "",
-        "date":       (lambda d: f"{d[8:10]}.{d[5:7]}.{d[2:4]}" if len(d) >= 10 else d)((row["start_date"] or "")[:10]),
+        "date":       _fmt_date(row["start_date"]),
         "distance":   f"{(row['distance'] or 0) / 1000:.1f} km" if row["distance"] else None,
         "elevation":  f"{row['total_elevation_gain'] or 0:.0f} m" if row["total_elevation_gain"] is not None else None,
         "moving_time": _fmt_time(row["moving_time"]),
@@ -353,7 +358,7 @@ def rerender_activity(activity_id):
         return redirect(url_for("index"))
 
     cfg     = load_user_config(DB_PATH, uid, _base_cfg)
-    out_dir = _base_cfg["map"].get("output_dir", "output")
+    out_dir = OUTPUT_DIR
     clear_rendered(DB_PATH, activity_id, uid)
 
     def _do_render():
@@ -415,7 +420,7 @@ def ap_post_activity(activity_id):
     outbox_url = url_for("activitypub.outbox", username=username, _external=True)
 
     cfg     = load_user_config(DB_PATH, uid, _base_cfg)
-    out_dir = _base_cfg["map"].get("output_dir", "output")
+    out_dir = OUTPUT_DIR
     image_paths = _collect_activity_images(activity_id, uid, cfg, out_dir, row)
     image_urls  = [
         url_for("output_file", filename=os.path.basename(p), _external=True)
@@ -465,7 +470,7 @@ def ap_post_activity(activity_id):
 @login_required
 def ap_delete_activity(activity_id):
     from database import clear_ap_posted, delete_feed_item
-    from activitypub import _deliver_activity, get_or_create_keypair
+    from activitypub import _deliver_activity, get_or_create_keypair, build_delete_activity
     from datetime import datetime, timezone as _tz
     uid = int(current_user.id)
     row = get_activity(DB_PATH, activity_id, user_id=uid)
@@ -480,19 +485,10 @@ def ap_delete_activity(activity_id):
     actor_url = url_for("activitypub.actor", username=username, _external=True)
     note_id   = f"{actor_url}/activities/{activity_id}"
     key_id    = f"{actor_url}#main-key"
-    _, priv_pem = get_or_create_keypair(DB_PATH, uid)
+    get_or_create_keypair(DB_PATH, uid)
     now = datetime.now(_tz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    delete_activity = {
-        "@context": "https://www.w3.org/ns/activitystreams",
-        "id": f"{note_id}/delete",
-        "type": "Delete",
-        "actor": actor_url,
-        "published": now,
-        "to": ["https://www.w3.org/ns/activitystreams#Public"],
-        "cc": [f"{actor_url}/followers"],
-        "object": {"id": note_id, "type": "Tombstone"},
-    }
+    delete_activity = build_delete_activity(note_id, actor_url, now)
 
     for follower in followers:
         inbox_url = follower.get("inbox_url")
@@ -510,7 +506,7 @@ def ap_delete_activity(activity_id):
 @login_required
 def delete_activity_route(activity_id):
     from database import delete_activity as _delete_activity
-    from activitypub import _deliver_activity, get_or_create_keypair
+    from activitypub import _deliver_activity, get_or_create_keypair, build_delete_activity
     from datetime import datetime, timezone as _tz
     import glob
 
@@ -529,18 +525,9 @@ def delete_activity_route(activity_id):
     if row["ap_posted_at"]:
         followers = get_followers(DB_PATH, username)
         key_id    = f"{actor_url}#main-key"
-        _, priv_pem = get_or_create_keypair(DB_PATH, uid)
+        get_or_create_keypair(DB_PATH, uid)
         now = datetime.now(_tz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        delete_ap = {
-            "@context": "https://www.w3.org/ns/activitystreams",
-            "id": f"{note_id}/delete",
-            "type": "Delete",
-            "actor": actor_url,
-            "published": now,
-            "to": ["https://www.w3.org/ns/activitystreams#Public"],
-            "cc": [f"{actor_url}/followers"],
-            "object": {"id": note_id, "type": "Tombstone"},
-        }
+        delete_ap = build_delete_activity(note_id, actor_url, now)
         for follower in followers:
             inbox_url = follower.get("inbox_url")
             if inbox_url:
@@ -550,7 +537,7 @@ def delete_activity_route(activity_id):
     _delete_activity(DB_PATH, activity_id, uid, note_id=note_id, username=username)
 
     # Remove output files (map, HR chart, power chart)
-    out_dir = os.path.abspath(_base_cfg["map"].get("output_dir", "output"))
+    out_dir = os.path.abspath(OUTPUT_DIR)
     for path in glob.glob(os.path.join(out_dir, f"{activity_id}*.png")):
         try:
             os.remove(path)
@@ -579,9 +566,44 @@ def screenshot(filename):
     return send_from_directory(docs_dir, filename)
 
 
+_ACTIVITY_FILE_RE = re.compile(r"^(\d+)(?:_hr|_power)?\.png$")
+
 @app.route("/output/<path:filename>")
 def output_file(filename):
-    out_dir = os.path.abspath(_base_cfg["map"].get("output_dir", "output"))
+    out_dir = os.path.abspath(OUTPUT_DIR)
+
+    # FIT/source files always require an authenticated owner.
+    if filename.startswith("activity_files/"):
+        if not current_user.is_authenticated:
+            abort(401)
+        # path is activity_files/<user_id>/<file>
+        parts = filename.split("/")
+        if len(parts) >= 2 and parts[1].isdigit():
+            if int(parts[1]) != int(current_user.id) and not current_user.is_admin:
+                abort(403)
+        else:
+            abort(403)
+        response = send_from_directory(out_dir, filename)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+    # Activity image files: serve if publicly posted OR owned by the requester.
+    m = _ACTIVITY_FILE_RE.match(os.path.basename(filename))
+    if m:
+        activity_id = int(m.group(1))
+        row = get_activity(DB_PATH, activity_id,
+                           user_id=current_user.id if current_user.is_authenticated else -1)
+        is_owner = row is not None
+        is_public = row is not None and row["ap_posted_at"]
+        if not is_public and not is_owner:
+            abort(403)
+        response = send_from_directory(out_dir, filename)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+    # Everything else requires login.
+    if not current_user.is_authenticated:
+        abort(401)
     response = send_from_directory(out_dir, filename)
     response.headers["Cache-Control"] = "no-cache"
     return response
@@ -595,7 +617,7 @@ def user_avatar(username):
     if not avatar:
         return app.send_static_file("default_avatar.png")
     avatars_dir = os.path.abspath(os.path.join(
-        _base_cfg["map"].get("output_dir", "output"), "avatars"
+        OUTPUT_DIR, "avatars"
     ))
     return send_from_directory(avatars_dir, avatar)
 
@@ -620,7 +642,7 @@ def save_profile():
             flash("Avatar must be a JPG, PNG, GIF or WebP image.", "error")
             return redirect(url_for("me", tab="profile"))
         avatars_dir = os.path.abspath(os.path.join(
-            _base_cfg["map"].get("output_dir", "output"), "avatars"
+            OUTPUT_DIR, "avatars"
         ))
         os.makedirs(avatars_dir, exist_ok=True)
         avatar_filename = f"{uid}{ext}"
@@ -828,22 +850,14 @@ def feed_reply_delete():
     delete_feed_item(DB_PATH, current_user.username, object_id, actor_ap_url)
     # Federate a Delete to the post author's inbox so remote servers remove it too
     if parent_actor_url and not _is_local_actor(parent_actor_url):
-        from activitypub import _resolve_inbox, _deliver_activity, get_or_create_keypair
+        from activitypub import _resolve_inbox, _deliver_activity, get_or_create_keypair, build_delete_activity
         from datetime import datetime, timezone
         inbox_url = _resolve_inbox(parent_actor_url, DB_PATH, current_user.username)
         if inbox_url:
-            _, priv_pem = get_or_create_keypair(DB_PATH, uid)
+            get_or_create_keypair(DB_PATH, uid)
             key_id = f"{actor_ap_url}#main-key"
             now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-            delete_activity = {
-                "@context": "https://www.w3.org/ns/activitystreams",
-                "id": f"{object_id}/delete",
-                "type": "Delete",
-                "actor": actor_ap_url,
-                "published": now,
-                "to": ["https://www.w3.org/ns/activitystreams#Public"],
-                "object": {"id": object_id, "type": "Tombstone"},
-            }
+            delete_activity = build_delete_activity(object_id, actor_ap_url, now, include_cc=False)
             _deliver_activity(inbox_url, delete_activity, key_id, DB_PATH)
     return redirect(request.referrer or url_for("feed"))
 
@@ -861,7 +875,7 @@ def upload():
     uid     = int(current_user.id)
     files   = request.files.getlist("files")
     cfg     = load_user_config(DB_PATH, uid, _base_cfg)
-    out_dir = _base_cfg["map"].get("output_dir", "output")
+    out_dir = OUTPUT_DIR
     os.makedirs(out_dir, exist_ok=True)
 
     imported = 0

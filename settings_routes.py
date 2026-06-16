@@ -3,7 +3,7 @@ from flask_login import current_user, login_required
 
 from config import DB_PATH, _base_cfg, STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET
 from database import (
-    apply_zone_preset, get_setting, get_zones,
+    apply_zone_preset, get_athlete_param, get_setting, get_zones,
     HR_ZONE_PRESETS, POWER_ZONE_PRESETS,
     load_user_config, set_athlete_param, set_setting, _conn,
 )
@@ -32,9 +32,9 @@ def register_routes(app):
             for f in (get_setting(DB_PATH, uid, "stats", "fields") or "").split(",")
             if f.strip()
         ]
-        inferred_ftp    = get_setting(DB_PATH, uid, "inference", "ftp")
-        inferred_max_hr = get_setting(DB_PATH, uid, "inference", "max_hr")
-        _hr_max_v = cfg["charts"]["heart_rate"]["max_hr"] or (float(inferred_max_hr) if inferred_max_hr else None)
+        inferred_ftp    = get_athlete_param(DB_PATH, uid, "ftp")
+        inferred_max_hr = get_athlete_param(DB_PATH, uid, "max_hr")
+        _hr_max_v = cfg["charts"]["heart_rate"]["max_hr"] or inferred_max_hr or None
         inferred_lthr = round(_hr_max_v * 0.88) if _hr_max_v else None
         return render_template(
             "settings.html",
