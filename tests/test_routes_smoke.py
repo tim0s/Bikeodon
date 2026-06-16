@@ -405,3 +405,118 @@ class TestAdminRoutes:
         r = client.get("/admin")
         _ok(r)
         assert r.status_code == 302
+
+
+# ---------------------------------------------------------------------------
+# On-demand rendering: /output/<id>.<ext> triggers render when file missing
+# ---------------------------------------------------------------------------
+
+class TestOnDemandRender:
+    """output_file serves images in the requested format, rendering on the fly if missing."""
+
+    @pytest.fixture()
+    def out_dir(self, app):
+        import config as cfg_mod
+        return str(app.config.get("OUTPUT_DIR", cfg_mod.OUTPUT_DIR))
+
+    def _place(self, out_dir, filename, fmt="jpeg"):
+        """Write a minimal valid image file."""
+        os.makedirs(out_dir, exist_ok=True)
+        path = os.path.join(out_dir, filename)
+        from PIL import Image
+        img = Image.new("RGB", (4, 4), color="blue")
+        pil_fmt = "JPEG" if fmt == "jpeg" else "PNG"
+        img.save(path, pil_fmt)
+        return path
+
+    def _fake_render(self, out_dir):
+        """Return a monkeypatch target for _render_and_track that writes the correct file."""
+        import tasks as tasks_mod
+        def _render(aid, uid, cfg, out_d, row=None, img_format="jpeg"):
+            ext = ".jpg" if img_format == "jpeg" else ".png"
+            pil_fmt = "JPEG" if img_format == "jpeg" else "PNG"
+            from PIL import Image
+            Image.new("RGB", (4, 4), color="red").save(
+                os.path.join(out_d, f"{aid}{ext}"), pil_fmt
+            )
+        return _render
+
+    def test_existing_png_served_directly(self, client, activity_id, out_dir, monkeypatch):
+        """If the .png exists, serve it without re-rendering."""
+        self._place(out_dir, f"{activity_id}.png", "png")
+        called = []
+        import app as app_mod
+        monkeypatch.setattr(app_mod, "_render_and_track",
+                            lambda *a, **kw: called.append(1))
+        r = client.get(f"/output/{activity_id}.png")
+        assert r.status_code == 200
+        assert not called, "Should not re-render when file exists"
+
+    def test_missing_png_triggers_png_render(self, client, activity_id, out_dir, monkeypatch):
+        """If .png is missing, on-demand render is triggered with img_format='png'."""
+        # Remove any existing map image
+        for ext in (".png", ".jpg"):
+            p = os.path.join(out_dir, f"{activity_id}{ext}")
+            if os.path.exists(p):
+                os.remove(p)
+
+        captured = {}
+        import app as app_mod
+
+        def fake_render(aid, uid, cfg, out_d, row=None, img_format="jpeg"):
+            captured["fmt"] = img_format
+            from PIL import Image
+            ext = ".png" if img_format == "png" else ".jpg"
+            Image.new("RGB", (4, 4)).save(os.path.join(out_d, f"{aid}{ext}"),
+                                          "PNG" if img_format == "png" else "JPEG")
+
+        monkeypatch.setattr(app_mod, "_render_and_track", fake_render)
+        r = client.get(f"/output/{activity_id}.png")
+        assert captured.get("fmt") == "png", "On-demand render should use png format"
+        assert r.status_code == 200
+
+    def test_missing_jpg_triggers_jpeg_render(self, client, activity_id, out_dir, monkeypatch):
+        """If .jpg is missing, on-demand render is triggered with img_format='jpeg'."""
+        for ext in (".png", ".jpg"):
+            p = os.path.join(out_dir, f"{activity_id}{ext}")
+            if os.path.exists(p):
+                os.remove(p)
+
+        captured = {}
+        import app as app_mod
+
+        def fake_render(aid, uid, cfg, out_d, row=None, img_format="jpeg"):
+            captured["fmt"] = img_format
+            from PIL import Image
+            ext = ".jpg" if img_format == "jpeg" else ".png"
+            Image.new("RGB", (4, 4)).save(os.path.join(out_d, f"{aid}{ext}"),
+                                          "JPEG" if img_format == "jpeg" else "PNG")
+
+        monkeypatch.setattr(app_mod, "_render_and_track", fake_render)
+        r = client.get(f"/output/{activity_id}.jpg")
+        assert captured.get("fmt") == "jpeg", "On-demand render should use jpeg format"
+        assert r.status_code == 200
+
+    def test_jpeg_exists_png_requested_renders_png(self, client, activity_id, out_dir, monkeypatch):
+        """JPEG on disk + PNG requested → re-render as PNG, serve PNG."""
+        for ext in (".png", ".jpg"):
+            p = os.path.join(out_dir, f"{activity_id}{ext}")
+            if os.path.exists(p):
+                os.remove(p)
+        self._place(out_dir, f"{activity_id}.jpg", "jpeg")  # only JPEG exists
+
+        captured = {}
+        import app as app_mod
+
+        def fake_render(aid, uid, cfg, out_d, row=None, img_format="jpeg"):
+            captured["fmt"] = img_format
+            from PIL import Image
+            ext = ".png" if img_format == "png" else ".jpg"
+            Image.new("RGB", (4, 4)).save(os.path.join(out_d, f"{aid}{ext}"),
+                                          "PNG" if img_format == "png" else "JPEG")
+
+        monkeypatch.setattr(app_mod, "_render_and_track", fake_render)
+        r = client.get(f"/output/{activity_id}.png")
+        assert captured.get("fmt") == "png"
+        assert r.status_code == 200
+        assert r.content_type.startswith("image/")

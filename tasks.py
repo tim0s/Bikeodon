@@ -75,8 +75,12 @@ def _find_activity_image(out_dir: str, stem: str) -> str | None:
     return None
 
 
-def _render_and_track(activity_id: int, uid: int, cfg: dict, out_dir: str, row=None):
-    """Render map + charts for an activity, storing any errors in the DB."""
+def _render_and_track(activity_id: int, uid: int, cfg: dict, out_dir: str,
+                      row=None, img_format: str = "jpeg"):
+    """Render map + charts for an activity, storing any errors in the DB.
+
+    img_format: 'jpeg' (default, saves .jpg) or 'png' (saves .png).
+    """
     if row is None:
         row = get_activity(DB_PATH, activity_id, user_id=uid)
     if not row:
@@ -84,18 +88,25 @@ def _render_and_track(activity_id: int, uid: int, cfg: dict, out_dir: str, row=N
     os.makedirs(out_dir, exist_ok=True)
     errors = []
 
+    _fmt  = img_format.lower()
+    _ext  = ".jpg" if _fmt == "jpeg" else ".png"
+    _pfmt = "JPEG" if _fmt == "jpeg" else "PNG"
+
     source_file = row["source_file"]
     pts = points_from_file(source_file) if source_file else []
     if pts:
         try:
             img = render_activity_map(pts, dict(row), cfg)
             if img:
-                from PIL import Image as _Image
-                if img.mode == "RGBA":
-                    bg = _Image.new("RGB", img.size, (255, 255, 255))
-                    bg.paste(img, mask=img.split()[3])
-                    img = bg
-                img.save(os.path.join(out_dir, f"{activity_id}.jpg"), "JPEG", quality=85)
+                if _pfmt == "JPEG":
+                    from PIL import Image as _Image
+                    if img.mode == "RGBA":
+                        bg = _Image.new("RGB", img.size, (255, 255, 255))
+                        bg.paste(img, mask=img.split()[3])
+                        img = bg
+                    img.save(os.path.join(out_dir, f"{activity_id}{_ext}"), "JPEG", quality=85)
+                else:
+                    img.save(os.path.join(out_dir, f"{activity_id}{_ext}"), "PNG")
             mark_rendered(DB_PATH, activity_id, uid, map=True)
         except Exception as e:
             errors.append(f"map: {e}")
@@ -114,7 +125,8 @@ def _render_and_track(activity_id: int, uid: int, cfg: dict, out_dir: str, row=N
 
     stream = stream_from_file(source_file) if source_file else []
     try:
-        generate_charts(activity_id, stream, cfg, out_dir, db_path=DB_PATH, user_id=uid)
+        generate_charts(activity_id, stream, cfg, out_dir,
+                        db_path=DB_PATH, user_id=uid, img_format=_fmt)
         mark_rendered(DB_PATH, activity_id, uid, charts=True)
     except Exception as e:
         errors.append(f"charts: {e}")

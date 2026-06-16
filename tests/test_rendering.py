@@ -307,3 +307,56 @@ class TestGenerateCharts:
         paths = generate_charts(18813819954, stream, cfg_no_zones, out)
         power_paths = [p for p in paths if "_power" in p]
         assert power_paths, "Power chart should still render even without configured zones"
+
+
+class TestImageFormat:
+    """Rendering pipeline honours the img_format parameter."""
+
+    def test_generate_charts_jpeg_default(self, cfg, tmp_path):
+        from activity_parser import stream_from_file
+        from charts import generate_charts
+        stream = stream_from_file(WATOPIA_FIT1)
+        out = str(tmp_path / "charts")
+        paths = generate_charts(18813819954, stream, cfg, out)
+        assert all(p.endswith(".jpg") for p in paths), "Default format should produce .jpg files"
+        for p in paths:
+            with open(p, "rb") as f:
+                assert f.read(2) == b"\xff\xd8", f"{p} is not a valid JPEG"
+
+    def test_generate_charts_png_format(self, cfg, tmp_path):
+        from activity_parser import stream_from_file
+        from charts import generate_charts
+        stream = stream_from_file(WATOPIA_FIT1)
+        out = str(tmp_path / "charts")
+        paths = generate_charts(18813819954, stream, cfg, out, img_format="png")
+        assert all(p.endswith(".png") for p in paths), "png format should produce .png files"
+        for p in paths:
+            with open(p, "rb") as f:
+                assert f.read(4) == b"\x89PNG", f"{p} is not a valid PNG"
+
+    def test_render_map_jpeg(self, cfg, tmp_path):
+        from activity_parser import points_from_file
+        from map_renderer import render_activity_map
+        from PIL import Image
+        pts = points_from_file(OUTDOOR_FIT)
+        img = render_activity_map(pts, {"sport_type": "Ride"}, cfg)
+        assert img is not None
+        if img.mode == "RGBA":
+            bg = Image.new("RGB", img.size, (255, 255, 255))
+            bg.paste(img, mask=img.split()[3])
+            img = bg
+        out = str(tmp_path / "map.jpg")
+        img.save(out, "JPEG", quality=85)
+        with open(out, "rb") as f:
+            assert f.read(2) == b"\xff\xd8"
+
+    def test_render_map_png(self, cfg, tmp_path):
+        from activity_parser import points_from_file
+        from map_renderer import render_activity_map
+        pts = points_from_file(OUTDOOR_FIT)
+        img = render_activity_map(pts, {"sport_type": "Ride"}, cfg)
+        assert img is not None
+        out = str(tmp_path / "map.png")
+        img.save(out, "PNG")
+        with open(out, "rb") as f:
+            assert f.read(4) == b"\x89PNG"

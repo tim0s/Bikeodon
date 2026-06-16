@@ -296,16 +296,19 @@ def _draw_zone_bar(ax, zones, pcts, cfg):
 
 def generate_charts(activity_id: int, stream: list[dict], cfg: dict,
                     out_dir: str, db_path: str | None = None,
-                    user_id: int | None = None) -> list[str]:
+                    user_id: int | None = None,
+                    img_format: str = "jpeg") -> list[str]:
     """
     Generate all available charts for an activity.
+    img_format: 'jpeg' (default, saves .jpg) or 'png' (saves .png).
     Returns list of image paths (only those that were successfully created).
     """
     os.makedirs(out_dir, exist_ok=True)
+    ext = ".jpg" if img_format.lower() == "jpeg" else ".png"
     paths = []
 
     hr_path = render_hr_chart(
-        stream, cfg, os.path.join(out_dir, f"{activity_id}_hr.jpg"),
+        stream, cfg, os.path.join(out_dir, f"{activity_id}_hr{ext}"),
         db_path=db_path, user_id=user_id,
     )
     if hr_path:
@@ -313,7 +316,7 @@ def generate_charts(activity_id: int, stream: list[dict], cfg: dict,
         paths.append(hr_path)
 
     power_path = render_power_chart(
-        stream, cfg, os.path.join(out_dir, f"{activity_id}_power.jpg"),
+        stream, cfg, os.path.join(out_dir, f"{activity_id}_power{ext}"),
         db_path=db_path, user_id=user_id,
     )
     if power_path:

@@ -597,12 +597,32 @@ def output_file(filename):
     m = _ACTIVITY_FILE_RE.match(os.path.basename(filename))
     if m:
         activity_id = int(m.group(1))
-        row = get_activity(DB_PATH, activity_id,
-                           user_id=current_user.id if current_user.is_authenticated else -1)
+        uid = int(current_user.id) if current_user.is_authenticated else None
+        row = get_activity(DB_PATH, activity_id, user_id=uid or -1) if uid else None
         is_owner = row is not None
-        is_public = row is not None and row["ap_posted_at"]
-        if not is_public and not is_owner:
-            abort(403)
+
+        if not is_owner:
+            # Check public access (ap_posted_at) without user_id restriction
+            conn = _conn(DB_PATH)
+            try:
+                row = conn.execute(
+                    "SELECT * FROM activities WHERE id=? AND ap_posted_at IS NOT NULL",
+                    (activity_id,)
+                ).fetchone()
+            finally:
+                conn.close()
+            if not row:
+                abort(403)
+
+        # On-demand render if the requested file is missing
+        abs_path = os.path.join(out_dir, filename)
+        if not os.path.exists(abs_path):
+            ext = os.path.splitext(filename)[1].lower()
+            img_format = "png" if ext == ".png" else "jpeg"
+            cfg = load_user_config(DB_PATH, row["user_id"], _base_cfg)
+            _render_and_track(activity_id, row["user_id"], cfg, out_dir,
+                              row=row, img_format=img_format)
+
         response = send_from_directory(out_dir, filename)
         response.headers["Cache-Control"] = "no-cache"
         return response
