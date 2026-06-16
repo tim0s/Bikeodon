@@ -1150,7 +1150,7 @@
   <article>
     <header><strong>Physiological profile</strong></header>
     <div class="phys-table">
-      {{ phys_field("Birthday",   "birthday", "birthday",   phys_birthday, "",    "date",   '') }}
+      {{ phys_field("Birthday",   "birthday", "birthday",   phys_birthday, "",    "text",   'placeholder="YYYY-MM-DD" pattern="[0-9]{4}-[0-9]{2}-[0-9]{2}" maxlength="10"') }}
       {{ phys_field("Height",     "height",   "height_cm",  phys_height|round(1) if phys_height else '', "cm", "number", 'min="100" max="250" step="0.5" placeholder="e.g. 178"') }}
       {{ phys_field("Weight",     "weight",   "weight_kg",  phys_weight|round(1) if phys_weight else '',  "kg", "number", 'min="20"  max="300" step="0.1" placeholder="e.g. 70"') }}
       {{ phys_field("Max HR",     "max_hr",   "max_hr",     phys_max_hr|round(0)|int if phys_max_hr else '', "bpm", "number", 'min="100" max="220" step="1" placeholder="e.g. 185"') }}
