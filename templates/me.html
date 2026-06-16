@@ -1090,7 +1090,7 @@
     <input type="hidden" name="param" value="{{ param }}">
     <input type="{{ input_type }}" name="value"
            value="{{ value or '' }}"
-           {{ input_attrs }}
+           {{ input_attrs | safe }}
            class="phys-input">
     {% if unit %}<small class="muted">{{ unit }}</small>{% endif %}
     <button type="submit" class="outline phys-action-btn">Save</button>
