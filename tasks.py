@@ -11,15 +11,17 @@ import os
 import threading
 import time as _time
 
-from config import DB_PATH, OUTPUT_DIR, _base_cfg
+from config import DB_PATH, OUTPUT_DIR, _base_cfg, STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET
 
 from database import (
-    _conn, get_activities_without_metrics, get_activity, get_athlete_param,
+    _conn, get_activities_without_metrics, get_activity, get_all_users, get_athlete_param,
     get_mmp_as_of, get_power_best, get_setting,
     load_user_config, mark_rendered, mark_posted,
-    set_activity_error, set_athlete_param, set_power_best, set_scheduled,
-    set_wbal_json, update_activity_metrics,
+    save_activity_file, set_activity_error, set_athlete_param, set_power_best, set_scheduled,
+    set_setting, set_wbal_json, update_activity_metrics, upsert_activity,
 )
+from fit_encoder import generate_fit
+from strava import StravaClient
 from activity_parser import points_from_file, stream_from_file
 from charts import generate_charts
 from map_renderer import render_activity_map
@@ -60,6 +62,121 @@ def start_backfill_worker() -> None:
 
     t = threading.Thread(target=_loop, daemon=True, name="backfill-worker")
     t.start()
+
+
+# ---------------------------------------------------------------------------
+# Strava background sync
+# ---------------------------------------------------------------------------
+
+_STRAVA_SYNC_INTERVAL  = 15 * 60  # seconds between sync runs
+_STRAVA_SYNC_PER_USER  = 10       # max new activities imported per user per run
+
+
+def _make_strava_client(uid: int):
+    access_token = get_setting(DB_PATH, uid, "strava", "access_token") or ""
+    if not access_token:
+        return None
+    refresh_tok = get_setting(DB_PATH, uid, "strava", "refresh_token") or ""
+    expires_at  = float(get_setting(DB_PATH, uid, "strava", "token_expires_at") or 0)
+
+    def _on_refresh(a, r, e):
+        set_setting(DB_PATH, uid, "strava", "access_token",     a)
+        set_setting(DB_PATH, uid, "strava", "refresh_token",    r)
+        set_setting(DB_PATH, uid, "strava", "token_expires_at", str(e))
+
+    return StravaClient(
+        access_token=access_token, client_id=STRAVA_CLIENT_ID,
+        client_secret=STRAVA_CLIENT_SECRET, refresh_tok=refresh_tok,
+        expires_at=expires_at, on_refresh=_on_refresh,
+    )
+
+
+def _strava_sync_user(uid: int) -> int:
+    """Import up to _STRAVA_SYNC_PER_USER unsynced activities for uid.
+
+    Pages through Strava activity IDs oldest-first relative to what we already
+    have, stopping when we hit our per-run limit or when a full page of IDs is
+    already known (meaning we've caught up with history).
+    """
+    client = _make_strava_client(uid)
+    if not client:
+        return 0
+
+    cfg       = load_user_config(DB_PATH, uid, _base_cfg)
+    files_dir = os.path.join(OUTPUT_DIR, "activity_files")
+    new_ids   = []
+    page      = 1
+
+    while len(new_ids) < _STRAVA_SYNC_PER_USER:
+        try:
+            ids = client.get_activity_ids(n=20, page=page)
+        except Exception as e:
+            print(f"[strava-sync] API error for user {uid}: {e}")
+            break
+        if not ids:
+            break
+
+        all_known = True
+        for activity_id in ids:
+            if len(new_ids) >= _STRAVA_SYNC_PER_USER:
+                break
+            if get_activity(DB_PATH, activity_id, user_id=uid):
+                continue
+            all_known = False
+            try:
+                data, streams = client.get_activity(activity_id)
+                try:
+                    fit_bytes = generate_fit(data, streams)
+                    path, sha256 = save_activity_file(
+                        files_dir, activity_id, uid, fit_bytes, f"{activity_id}.fit"
+                    )
+                    data["source_file"]        = path
+                    data["source_file_sha256"] = sha256
+                    data["source_file_type"]   = "generated"
+                except Exception as fe:
+                    print(f"[strava-sync] FIT generation failed for {activity_id}: {fe}")
+                upsert_activity(DB_PATH, data, user_id=uid)
+                new_ids.append(activity_id)
+                print(f"[strava-sync] + {data['name']} (user {uid})")
+            except Exception as e:
+                print(f"[strava-sync] Failed {activity_id}: {e}")
+
+        if all_known:
+            break
+        page += 1
+
+    for activity_id in new_ids:
+        _render_and_track(activity_id, uid, cfg, OUTPUT_DIR)
+    if new_ids:
+        request_backfill(uid)
+
+    return len(new_ids)
+
+
+def start_strava_sync_worker() -> None:
+    """Start a background thread that imports unsynced Strava activities for all users.
+
+    Runs every _STRAVA_SYNC_INTERVAL seconds. Imports at most _STRAVA_SYNC_PER_USER
+    new activities per user per run to avoid exhausting Strava's rate limit.
+    """
+    def _loop():
+        while True:
+            _time.sleep(_STRAVA_SYNC_INTERVAL)
+            users = get_all_users(DB_PATH)
+            if not users:
+                continue
+            print(f"[strava-sync] Running for {len(users)} user(s)…")
+            for row in users:
+                uid = row["id"]
+                try:
+                    n = _strava_sync_user(uid)
+                    if n:
+                        print(f"[strava-sync] Imported {n} new activities for user {uid}")
+                except Exception as e:
+                    print(f"[strava-sync] Error for user {uid}: {e}")
+                _time.sleep(2)
+
+    threading.Thread(target=_loop, daemon=True, name="strava-sync-worker").start()
 
 
 # ---------------------------------------------------------------------------

@@ -43,6 +43,7 @@ from training_load import (
 from tasks import (
     _collect_activity_images, _do_post_activity,
     _find_activity_image, _render_and_track, request_backfill, start_backfill_worker,
+    start_strava_sync_worker,
 )
 from strava_routes import _sync_cooldown_remaining
 import admin_routes
@@ -69,6 +70,7 @@ from activitypub import bp as _ap_bp, start_delivery_worker
 app.register_blueprint(_ap_bp)
 start_delivery_worker(DB_PATH)
 start_backfill_worker()
+start_strava_sync_worker()
 
 _log_path = os.path.join(os.path.dirname(DB_PATH), "bikeodon_errors.log")
 logging.basicConfig(
