@@ -1085,7 +1085,7 @@
     <button type="button" class="outline phys-edit-btn"
             onclick="startEdit('{{ id }}')">Edit</button>
   </span>
-  <form id="edit-{{ id }}" class="phys-form"
+  <form id="edit-{{ id }}" class="phys-form" style="display:none"
         method="POST" action="{{ url_for('save_physio_param') }}">
     <input type="hidden" name="param" value="{{ param }}">
     <input type="{{ input_type }}" name="value"

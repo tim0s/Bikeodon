@@ -428,7 +428,6 @@ th[data-col].sort-desc .sort-arrow {
 }
 
 .phys-form {
-  display: none;
   align-items: center;
   gap: .4rem;
   flex-wrap: wrap;
