@@ -255,7 +255,7 @@ class TestGenerateCharts:
         stream = stream_from_file(OUTDOOR_FIT)
         out = str(tmp_path / "charts")
         paths = generate_charts(18729043328, stream, cfg, out)
-        power_paths = [p for p in paths if p.endswith("_power.png")]
+        power_paths = [p for p in paths if "_power" in os.path.basename(p)]
         assert not power_paths, "No power chart expected for a ride without power data"
 
     def test_zwift_generates_power_chart(self, cfg, tmp_path):
@@ -268,7 +268,7 @@ class TestGenerateCharts:
         assert power_paths, "Expected a power chart for a Zwift ride with watts"
         assert os.path.exists(power_paths[0])
 
-    def test_zwift_chart_is_valid_png(self, cfg, tmp_path):
+    def test_zwift_chart_is_valid_image(self, cfg, tmp_path):
         from activity_parser import stream_from_file
         from charts import generate_charts
         stream = stream_from_file(WATOPIA_FIT2)
@@ -276,8 +276,10 @@ class TestGenerateCharts:
         paths = generate_charts(18853021065, stream, cfg, out)
         assert paths, "Expected at least one chart"
         with open(paths[0], "rb") as f:
-            magic = f.read(8)
-        assert magic[:4] == b"\x89PNG", "Chart file is not a valid PNG"
+            magic = f.read(4)
+        is_png  = magic[:4] == b"\x89PNG"
+        is_jpeg = magic[:2] == b"\xff\xd8"
+        assert is_png or is_jpeg, "Chart file is not a valid PNG or JPEG"
 
     def test_empty_stream_produces_no_charts(self, cfg, tmp_path):
         from charts import generate_charts

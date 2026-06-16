@@ -42,7 +42,7 @@ from training_load import (
 )
 from tasks import (
     _collect_activity_images, _do_post_activity,
-    _render_and_track, request_backfill, start_backfill_worker,
+    _find_activity_image, _render_and_track, request_backfill, start_backfill_worker,
 )
 from strava_routes import _sync_cooldown_remaining
 import admin_routes
@@ -293,15 +293,15 @@ def activity(activity_id):
     out_dir = OUTPUT_DIR
 
     map_url = None
-    map_path = os.path.join(out_dir, f"{activity_id}.png")
-    if os.path.exists(map_path):
-        map_url = url_for("output_file", filename=f"{activity_id}.png")
+    map_path = _find_activity_image(out_dir, str(activity_id))
+    if map_path:
+        map_url = url_for("output_file", filename=os.path.basename(map_path))
 
     chart_urls = []
     for suffix in ("_hr", "_power"):
-        chart_path = os.path.join(out_dir, f"{activity_id}{suffix}.png")
-        if os.path.exists(chart_path):
-            chart_urls.append(url_for("output_file", filename=f"{activity_id}{suffix}.png"))
+        chart_path = _find_activity_image(out_dir, f"{activity_id}{suffix}")
+        if chart_path:
+            chart_urls.append(url_for("output_file", filename=os.path.basename(chart_path)))
 
     act = {
         "id":         row["id"],
@@ -455,7 +455,8 @@ def ap_post_activity(activity_id):
     content = f"<p>{name}</p>"
     if dist_m:
         content += f"<p>📍 {dist_m/1000:.1f} km  🏔 {elev_m:.0f} m</p>"
-    attachments = [{"url": u, "mediaType": "image/png", "type": "Document"} for u in image_urls]
+    def _img_mime(u): return "image/jpeg" if u.lower().endswith((".jpg", ".jpeg")) else "image/png"
+    attachments = [{"url": u, "mediaType": _img_mime(u), "type": "Document"} for u in image_urls]
     add_feed_item(
         DB_PATH, username, actor_url,
         dict(user).get("display_name") or username,
@@ -571,7 +572,7 @@ def screenshot(filename):
     return send_from_directory(docs_dir, filename)
 
 
-_ACTIVITY_FILE_RE = re.compile(r"^(\d+)(?:_hr|_power)?\.png$")
+_ACTIVITY_FILE_RE = re.compile(r"^(\d+)(?:_hr|_power)?\.(?:png|jpe?g)$")
 
 @app.route("/output/<path:filename>")
 def output_file(filename):

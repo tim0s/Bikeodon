@@ -66,6 +66,15 @@ def start_backfill_worker() -> None:
 # Rendering
 # ---------------------------------------------------------------------------
 
+def _find_activity_image(out_dir: str, stem: str) -> str | None:
+    """Return path to an activity image, preferring .jpg over legacy .png."""
+    for ext in (".jpg", ".png"):
+        p = os.path.join(out_dir, f"{stem}{ext}")
+        if os.path.exists(p):
+            return p
+    return None
+
+
 def _render_and_track(activity_id: int, uid: int, cfg: dict, out_dir: str, row=None):
     """Render map + charts for an activity, storing any errors in the DB."""
     if row is None:
@@ -81,7 +90,12 @@ def _render_and_track(activity_id: int, uid: int, cfg: dict, out_dir: str, row=N
         try:
             img = render_activity_map(pts, dict(row), cfg)
             if img:
-                img.save(os.path.join(out_dir, f"{activity_id}.png"))
+                from PIL import Image as _Image
+                if img.mode == "RGBA":
+                    bg = _Image.new("RGB", img.size, (255, 255, 255))
+                    bg.paste(img, mask=img.split()[3])
+                    img = bg
+                img.save(os.path.join(out_dir, f"{activity_id}.jpg"), "JPEG", quality=85)
             mark_rendered(DB_PATH, activity_id, uid, map=True)
         except Exception as e:
             errors.append(f"map: {e}")
@@ -322,17 +336,15 @@ def _build_post_text(activity: dict, template: str) -> str:
 def _collect_activity_images(activity_id: int, uid: int, cfg: dict, out_dir: str,
                               row) -> list[str]:
     """Return up to 4 image paths (map + charts) for an activity, generating them if needed."""
-    img_path = os.path.join(out_dir, f"{activity_id}.png")
-    if not os.path.exists(img_path):
+    img_path = _find_activity_image(out_dir, str(activity_id))
+    if not img_path:
         _render_and_track(activity_id, uid, cfg, out_dir, row=row)
-        img_path_exists = os.path.exists(img_path)
-    else:
-        img_path_exists = True
+        img_path = _find_activity_image(out_dir, str(activity_id))
 
     source_file = row["source_file"]
     stream      = stream_from_file(source_file) if source_file else []
     chart_paths = generate_charts(activity_id, stream, cfg, out_dir, db_path=DB_PATH, user_id=uid)
-    images      = ([img_path] if img_path_exists else []) + chart_paths
+    images      = ([img_path] if img_path else []) + chart_paths
     return images[:4]
 
 
@@ -345,9 +357,8 @@ def _do_post_activity(activity_id: int, uid: int):
     cfg     = load_user_config(DB_PATH, uid, _base_cfg)
     out_dir = OUTPUT_DIR
     os.makedirs(out_dir, exist_ok=True)
-    img_path = os.path.join(out_dir, f"{activity_id}.png")
 
-    if not os.path.exists(img_path):
+    if not _find_activity_image(out_dir, str(activity_id)):
         _render_and_track(activity_id, uid, cfg, out_dir, row=row)
         row = get_activity(DB_PATH, activity_id, user_id=uid)
         if not row or row["render_error"]:

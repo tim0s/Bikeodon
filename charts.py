@@ -305,7 +305,7 @@ def generate_charts(activity_id: int, stream: list[dict], cfg: dict,
     paths = []
 
     hr_path = render_hr_chart(
-        stream, cfg, os.path.join(out_dir, f"{activity_id}_hr.png"),
+        stream, cfg, os.path.join(out_dir, f"{activity_id}_hr.jpg"),
         db_path=db_path, user_id=user_id,
     )
     if hr_path:
@@ -313,7 +313,7 @@ def generate_charts(activity_id: int, stream: list[dict], cfg: dict,
         paths.append(hr_path)
 
     power_path = render_power_chart(
-        stream, cfg, os.path.join(out_dir, f"{activity_id}_power.png"),
+        stream, cfg, os.path.join(out_dir, f"{activity_id}_power.jpg"),
         db_path=db_path, user_id=user_id,
     )
     if power_path:

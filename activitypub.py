@@ -1102,8 +1102,11 @@ def _activity_row_to_ap(row, actor_url: str, outbox_url: str,
     if published and not published.endswith("Z") and "+" not in published:
         published = published.replace(" ", "T") + "Z"
 
+    def _img_mime(url: str) -> str:
+        return "image/jpeg" if url.lower().endswith((".jpg", ".jpeg")) else "image/png"
+
     attachments = [
-        {"type": "Document", "mediaType": "image/png", "url": u}
+        {"type": "Document", "mediaType": _img_mime(u), "url": u}
         for u in (image_urls or [])
     ]
     if fit_url:
@@ -1211,11 +1214,12 @@ def activity_object(username, activity_id):
 
     out_dir = current_app.config.get("OUTPUT_DIR", "output")
     import os as _os
-    image_urls = [
-        url_for("output_file", filename=f"{activity_id}{s}.png", _external=True)
-        for s in ["", "_hr", "_power"]
-        if _os.path.exists(_os.path.join(_os.path.abspath(out_dir), f"{activity_id}{s}.png"))
-    ]
+    from tasks import _find_activity_image as _fai
+    image_urls = []
+    for s in ["", "_hr", "_power"]:
+        p = _fai(_os.path.abspath(out_dir), f"{activity_id}{s}")
+        if p:
+            image_urls.append((url_for("output_file", filename=_os.path.basename(p), _external=True), p))
 
     fit_url = None
     if dict(row).get("source_file"):
@@ -1224,7 +1228,8 @@ def activity_object(username, activity_id):
         fit_url = f"{_base}/activity/{activity_id}/fit"
 
     create_activity = _activity_row_to_ap(row, actor_url, outbox_url,
-                                          image_urls=image_urls, fit_url=fit_url)
+                                          image_urls=[u for u, _ in image_urls],
+                                          fit_url=fit_url)
     note = create_activity["object"]
 
     resp = jsonify(note)
