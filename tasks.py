@@ -16,7 +16,7 @@ from config import DB_PATH, OUTPUT_DIR, _base_cfg, STRAVA_CLIENT_ID, STRAVA_CLIE
 
 from database import (
     _conn, get_activities_without_metrics, get_activity, get_all_users, get_athlete_param,
-    get_mmp_as_of, get_power_best, get_setting,
+    get_mmp_as_of, get_power_best, get_setting, get_unrendered,
     load_user_config, mark_rendered, mark_posted,
     save_activity_file, set_activity_error, set_athlete_param, set_power_best, set_scheduled,
     set_setting, set_wbal_json, update_activity_metrics, upsert_activity,
@@ -53,6 +53,11 @@ def request_render(activity_id: int, uid: int) -> None:
 def start_render_worker() -> None:
     """Start the persistent render worker thread. Safe to call once at startup."""
     def _loop():
+        # On startup, enqueue any activities that were left unrendered (e.g. after a restart)
+        for user in get_all_users(DB_PATH):
+            for row in get_unrendered(DB_PATH, user["id"]):
+                request_render(row["id"], user["id"])
+
         while True:
             _render_event.wait()
             _render_event.clear()
