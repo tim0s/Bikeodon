@@ -112,7 +112,7 @@ _DEFAULT_POWER_ZONES = POWER_ZONE_PRESETS["7zone"]
 # ---------------------------------------------------------------------------
 
 def _conn(db_path):
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=30)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -123,6 +123,8 @@ def _conn(db_path):
 
 def init_db(db_path):
     conn = _conn(db_path)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
 
     conn.execute("""
         CREATE TABLE IF NOT EXISTS users (
