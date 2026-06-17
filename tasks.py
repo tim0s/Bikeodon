@@ -116,13 +116,11 @@ def _strava_sync_user(uid: int) -> int:
         if not ids:
             break
 
-        all_known = True
         for activity_id in ids:
             if len(new_ids) >= _STRAVA_SYNC_PER_USER:
                 break
             if get_activity(DB_PATH, activity_id, user_id=uid):
                 continue
-            all_known = False
             try:
                 data, streams = client.get_activity(activity_id)
                 try:
@@ -141,8 +139,6 @@ def _strava_sync_user(uid: int) -> int:
             except Exception as e:
                 print(f"[strava-sync] Failed {activity_id}: {e}")
 
-        if all_known:
-            break
         page += 1
 
     for activity_id in new_ids:
@@ -161,7 +157,6 @@ def start_strava_sync_worker() -> None:
     """
     def _loop():
         while True:
-            _time.sleep(_STRAVA_SYNC_INTERVAL)
             users = get_all_users(DB_PATH)
             if not users:
                 continue
@@ -175,6 +170,7 @@ def start_strava_sync_worker() -> None:
                 except Exception as e:
                     print(f"[strava-sync] Error for user {uid}: {e}")
                 _time.sleep(2)
+            _time.sleep(_STRAVA_SYNC_INTERVAL)
 
     threading.Thread(target=_loop, daemon=True, name="strava-sync-worker").start()
 
