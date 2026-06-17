@@ -69,7 +69,7 @@ def start_backfill_worker() -> None:
 # ---------------------------------------------------------------------------
 
 _STRAVA_SYNC_INTERVAL  = 15 * 60  # seconds between sync runs
-_STRAVA_SYNC_PER_USER  = 10       # max new activities imported per user per run
+_STRAVA_SYNC_PER_USER  = 50       # max new activities imported per user per run
 
 
 def _make_strava_client(uid: int):
