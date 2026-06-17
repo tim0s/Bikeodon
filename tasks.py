@@ -10,6 +10,7 @@ import json
 import os
 import threading
 import time as _time
+from datetime import datetime, timezone
 
 from config import DB_PATH, OUTPUT_DIR, _base_cfg, STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET
 
@@ -94,18 +95,20 @@ def _make_strava_client(uid: int):
 def _strava_sync_user(uid: int) -> int:
     """Import up to _STRAVA_SYNC_PER_USER unsynced activities for uid.
 
-    Pages through Strava activity IDs oldest-first relative to what we already
-    have, stopping when we hit our per-run limit or when a full page of IDs is
-    already known (meaning we've caught up with history).
+    If last_full_sync_at is set for the user, only checks page 1 (recent
+    activities). Otherwise pages through all history. Sets last_full_sync_at
+    when a complete scan finds nothing new (caught up).
     """
     client = _make_strava_client(uid)
     if not client:
         return 0
 
+    full_scan = not get_setting(DB_PATH, uid, "strava", "last_full_sync_at")
     cfg       = load_user_config(DB_PATH, uid, _base_cfg)
     files_dir = os.path.join(OUTPUT_DIR, "activity_files")
     new_ids   = []
     page      = 1
+    exhausted = False
 
     while len(new_ids) < _STRAVA_SYNC_PER_USER:
         try:
@@ -114,6 +117,7 @@ def _strava_sync_user(uid: int) -> int:
             print(f"[strava-sync] API error for user {uid}: {e}")
             break
         if not ids:
+            exhausted = True
             break
 
         for activity_id in ids:
@@ -139,7 +143,13 @@ def _strava_sync_user(uid: int) -> int:
             except Exception as e:
                 print(f"[strava-sync] Failed {activity_id}: {e}")
 
+        if not full_scan:
+            break
         page += 1
+
+    if exhausted and not new_ids:
+        set_setting(DB_PATH, uid, "strava", "last_full_sync_at",
+                    datetime.now(timezone.utc).isoformat())
 
     for activity_id in new_ids:
         _render_and_track(activity_id, uid, cfg, OUTPUT_DIR)
@@ -157,8 +167,10 @@ def start_strava_sync_worker() -> None:
     """
     def _loop():
         while True:
+            start = _time.monotonic()
             users = get_all_users(DB_PATH)
             if not users:
+                _time.sleep(_STRAVA_SYNC_INTERVAL)
                 continue
             print(f"[strava-sync] Running for {len(users)} user(s)…")
             for row in users:
@@ -170,7 +182,8 @@ def start_strava_sync_worker() -> None:
                 except Exception as e:
                     print(f"[strava-sync] Error for user {uid}: {e}")
                 _time.sleep(2)
-            _time.sleep(_STRAVA_SYNC_INTERVAL)
+            elapsed = _time.monotonic() - start
+            _time.sleep(max(0, _STRAVA_SYNC_INTERVAL - elapsed))
 
     threading.Thread(target=_loop, daemon=True, name="strava-sync-worker").start()
 

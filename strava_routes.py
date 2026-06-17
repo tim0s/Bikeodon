@@ -119,6 +119,7 @@ def register_routes(app):
 
         set_setting(DB_PATH, uid, "strava", "last_manual_sync_at",
                     datetime.now(timezone.utc).isoformat())
+        set_setting(DB_PATH, uid, "strava", "last_full_sync_at", "")
 
         def _run():
             client = _make_strava_client(uid)
