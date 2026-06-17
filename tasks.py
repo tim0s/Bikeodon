@@ -38,6 +38,37 @@ _backfill_event = threading.Event()
 _backfill_uids: set[int] = set()
 _backfill_uids_lock = threading.Lock()
 
+_render_event = threading.Event()
+_render_queue: list[tuple[int, int]] = []
+_render_queue_lock = threading.Lock()
+
+
+def request_render(activity_id: int, uid: int) -> None:
+    """Queue an activity for async map+chart rendering."""
+    with _render_queue_lock:
+        _render_queue.append((activity_id, uid))
+    _render_event.set()
+
+
+def start_render_worker() -> None:
+    """Start the persistent render worker thread. Safe to call once at startup."""
+    def _loop():
+        while True:
+            _render_event.wait()
+            _render_event.clear()
+            with _render_queue_lock:
+                jobs = list(_render_queue)
+                _render_queue.clear()
+            for activity_id, uid in jobs:
+                try:
+                    cfg = load_user_config(DB_PATH, uid, _base_cfg)
+                    _render_and_track(activity_id, uid, cfg, OUTPUT_DIR)
+                    request_backfill(uid)
+                except Exception as e:
+                    print(f"[render-worker] Error on activity {activity_id}: {e}")
+
+    threading.Thread(target=_loop, daemon=True, name="render-worker").start()
+
 
 def request_backfill(uid: int) -> None:
     """Signal the backfill worker to process pending metrics for uid."""
@@ -104,7 +135,6 @@ def _strava_sync_user(uid: int) -> int:
         return 0
 
     full_scan = not get_setting(DB_PATH, uid, "strava", "last_full_sync_at")
-    cfg       = load_user_config(DB_PATH, uid, _base_cfg)
     files_dir = os.path.join(OUTPUT_DIR, "activity_files")
     new_ids   = []
     page      = 1
@@ -152,7 +182,7 @@ def _strava_sync_user(uid: int) -> int:
                     datetime.now(timezone.utc).isoformat())
 
     for activity_id in new_ids:
-        _render_and_track(activity_id, uid, cfg, OUTPUT_DIR)
+        request_render(activity_id, uid)
     if new_ids:
         request_backfill(uid)
 
