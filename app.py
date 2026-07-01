@@ -557,7 +557,7 @@ def delete_activity_route(activity_id):
 
     # Remove source FIT file if it was uploaded (not a Strava-fetched file)
     source_file = row["source_file"]
-    if source_file and row.get("source_file_type") == "upload":
+    if source_file and row["source_file_type"] == "upload":
         try:
             os.remove(source_file)
         except OSError:

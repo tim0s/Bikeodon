@@ -262,6 +262,32 @@ class TestNonAdminPosts:
         r = client.post("/profile/physio", data={"param": "birthday", "value": "1990-01-01"})
         _ok(r)
 
+    def test_delete_activity_with_source_file(self, app, client):
+        # Regression test: delete_activity_route crashed with
+        # AttributeError: 'sqlite3.Row' object has no attribute 'get'
+        # when row["source_file_type"] was read via row.get(...) instead of
+        # row[...]. get_activity() returns a raw sqlite3.Row (never dict()'d),
+        # so this only reproduces with source_file set — a falsy source_file
+        # short-circuits the `and` before the buggy .get() call ever runs,
+        # which is why the pre-existing seeded activity fixture (no
+        # source_file) never caught this.
+        from database import upsert_activity
+        db_path = app.config["_TEST_DB_PATH"]
+        act = {
+            "id": 99999902,
+            "name": "Delete Me",
+            "sport_type": "Ride",
+            "start_date": "2024-06-02T08:00:00Z",
+            "source_file": "/tmp/does-not-need-to-exist.fit",
+            "source_file_type": "upload",
+        }
+        with app.app_context():
+            upsert_activity(db_path, act, user_id=1, source="upload")
+
+        r = client.post(f"/activity/{act['id']}/delete")
+        _ok(r)
+        assert r.status_code == 302
+
     def test_physio_weight(self, client):
         r = client.post("/profile/physio", data={"param": "weight_kg", "value": "70.5"})
         _ok(r)
