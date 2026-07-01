@@ -400,12 +400,12 @@
   }
 
   function init() {
-    if (!navigator.bluetooth) {
+    const bluetoothSupported = !!navigator.bluetooth;
+    if (!bluetoothSupported) {
       $("bluetooth-warning").hidden = false;
-      $("builder-view").hidden = true;
-      $("pairing-view").hidden = true;
-      return;
     }
+
+    // Workout generation/export never needs Bluetooth, so this is wired up regardless.
     $("duration-range").addEventListener("input", (e) => {
       $("duration-label").textContent = e.target.value;
     });
@@ -418,11 +418,17 @@
     $("download-fit-btn").addEventListener("click", () => downloadWorkout("fit"));
     $("download-zwo-btn").addEventListener("click", () => downloadWorkout("zwo"));
 
-    $("connect-trainer-btn").addEventListener("click", connectTrainer);
-    $("connect-hr-btn").addEventListener("click", connectHeartRate);
-    $("connect-csc-btn").addEventListener("click", connectCsc);
-    $("start-btn").addEventListener("click", startSession);
-    $("stop-btn").addEventListener("click", stopSession);
+    if (bluetoothSupported) {
+      $("connect-trainer-btn").addEventListener("click", connectTrainer);
+      $("connect-hr-btn").addEventListener("click", connectHeartRate);
+      $("connect-csc-btn").addEventListener("click", connectCsc);
+      $("start-btn").addEventListener("click", startSession);
+      $("stop-btn").addEventListener("click", stopSession);
+    } else {
+      ["connect-trainer-btn", "connect-hr-btn", "connect-csc-btn"].forEach((id) => {
+        $(id).disabled = true;
+      });
+    }
     refreshStartButton();
   }
 
