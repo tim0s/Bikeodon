@@ -656,6 +656,13 @@
     return null; // workout complete
   }
 
+  function fmtRemaining(totalSeconds) {
+    const s = Math.max(0, Math.round(totalSeconds));
+    const m = Math.floor(s / 60);
+    const sec = s % 60;
+    return m === 0 ? `${sec}s` : `${m}m ${sec}s`;
+  }
+
   function updatePlaybackChips() {
     if (state.workout && !state.playback) {
       $("chip-target").textContent = "--";
@@ -668,7 +675,7 @@
       return;
     }
     $("chip-target").textContent = state.playback.step.watts;
-    $("chip-step").textContent = `${state.playback.step.label} (${state.playback.remainingS}s left)`;
+    $("chip-step").textContent = `${state.playback.step.label} (${fmtRemaining(state.playback.remainingS)} left)`;
   }
 
   function tick() {
@@ -692,33 +699,30 @@
     }
 
     const chart = state.chart;
-    const label = elapsed.toFixed(0) + "s";
-    chart.data.labels.push(label);
-    chart.data.datasets[0].data.push(state.latest.power);
-    chart.data.datasets[1].data.push(state.latest.hr);
-    chart.data.datasets[2].data.push(state.latest.cadence);
-    chart.data.datasets[3].data.push(state.latest.speed);
-    chart.data.datasets[4].data.push(targetWatts);
-
-    const maxPoints = 300; // 5 minutes at 1Hz
-    if (chart.data.labels.length > maxPoints) {
-      chart.data.labels.shift();
-      chart.data.datasets.forEach((ds) => ds.data.shift());
-    }
+    const minutes = elapsed / 60;
+    chart.data.datasets[0].data.push({ x: minutes, y: state.latest.power });
+    chart.data.datasets[1].data.push({ x: minutes, y: state.latest.hr });
+    chart.data.datasets[2].data.push({ x: minutes, y: state.latest.cadence });
+    chart.data.datasets[3].data.push({ x: minutes, y: targetWatts });
     chart.update("none");
   }
 
   function initChart() {
     const ctx = $("trainingChart").getContext("2d");
+    // If a workout is loaded, fix the x-axis to its full planned duration up
+    // front so the whole session is visible from the start, not just a
+    // trailing window of the last few minutes.
+    const totalMin = state.workout
+      ? state.workout.steps.reduce((sum, s) => sum + s.duration_s, 0) / 60
+      : undefined;
+
     state.chart = new Chart(ctx, {
       type: "line",
       data: {
-        labels: [],
         datasets: [
           { label: "Power (W)", data: [], borderColor: "#FC4C02", backgroundColor: "transparent", yAxisID: "y", tension: 0.2, pointRadius: 0 },
           { label: "Heart rate (bpm)", data: [], borderColor: "#d32f2f", backgroundColor: "transparent", yAxisID: "y1", tension: 0.2, pointRadius: 0 },
           { label: "Cadence (rpm)", data: [], borderColor: "#2e8b47", backgroundColor: "transparent", yAxisID: "y1", tension: 0.2, pointRadius: 0 },
-          { label: "Speed (km/h)", data: [], borderColor: "#3b6fd6", backgroundColor: "transparent", yAxisID: "y1", tension: 0.2, pointRadius: 0 },
           { label: "Target (W)", data: [], borderColor: "#888", borderDash: [4, 4], backgroundColor: "transparent", yAxisID: "y", tension: 0, pointRadius: 0 },
         ],
       },
@@ -727,9 +731,11 @@
         maintainAspectRatio: false,
         animation: false,
         scales: {
-          x: { ticks: { maxTicksLimit: 8 } },
+          // suggestedMax (not max) so the axis starts sized to the whole planned
+          // workout but still grows if the ride runs longer than planned.
+          x: { type: "linear", min: 0, suggestedMax: totalMin, title: { display: true, text: "Minutes" } },
           y: { position: "left", title: { display: true, text: "Watts" }, beginAtZero: true },
-          y1: { position: "right", title: { display: true, text: "bpm / rpm / km/h" }, beginAtZero: true, grid: { drawOnChartArea: false } },
+          y1: { position: "right", title: { display: true, text: "bpm / rpm" }, beginAtZero: true, grid: { drawOnChartArea: false } },
         },
       },
     });
