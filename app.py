@@ -49,6 +49,7 @@ from strava_routes import _sync_cooldown_remaining
 import admin_routes
 import settings_routes
 import strava_routes
+import training_routes
 
 # ---------------------------------------------------------------------------
 # Bootstrap
@@ -151,6 +152,7 @@ def load_user(user_id):
 admin_routes.register_routes(app)
 settings_routes.register_routes(app)
 strava_routes.register_routes(app)
+training_routes.register_routes(app)
 
 # ---------------------------------------------------------------------------
 # Auth routes

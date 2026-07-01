@@ -280,6 +280,47 @@ th[data-col].sort-desc .sort-arrow {
   margin-top: .1rem;
 }
 
+/* ── Training / device pairing ────────────────────────────────────────────── */
+
+.device-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .8rem;
+  padding: .6rem 0;
+  border-bottom: 1px solid #eee;
+}
+
+.device-row:last-child { border-bottom: none; }
+
+.device-info { display: flex; flex-direction: column; }
+
+.device-name { font-size: .85rem; color: #888; }
+
+.device-status {
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
+  font-size: .8rem;
+  font-weight: 600;
+  padding: .2rem .6rem;
+  border-radius: 999px;
+  background: #f0f0f0;
+  color: #888;
+}
+
+.device-status::before {
+  content: "";
+  width: .5rem;
+  height: .5rem;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.device-status[data-state="connected"] { background: #e3f6e8; color: #2e8b47; }
+.device-status[data-state="scanning"]  { background: #fff5e0; color: #b8860b; }
+.device-status[data-state="error"]     { background: #fde8e8; color: #c0392b; }
+
 .activity-figure {
   margin: 0 0 1.2rem 0;
 }

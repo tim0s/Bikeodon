@@ -130,6 +130,9 @@ class TestUnauthenticated:
     def test_activity_redirects(self, anon):
         _ok(anon.get("/activity/999"))
 
+    def test_training_redirects(self, anon):
+        _ok(anon.get("/training"))
+
 
 # ---------------------------------------------------------------------------
 # 2. Authenticated non-admin — GET routes render, admin routes blocked
@@ -174,6 +177,18 @@ class TestNonAdminGets:
 
     def test_settings_zones(self, client):
         _ok(client.get("/settings/zones"))
+
+    def test_training(self, client):
+        _ok(client.get("/training"))
+
+    def test_training_generate_without_body(self, client):
+        _ok(client.post("/training/generate"))
+
+    def test_training_export_fit_without_body(self, client):
+        _ok(client.post("/training/export.fit"))
+
+    def test_training_export_zwo_without_body(self, client):
+        _ok(client.post("/training/export.zwo"))
 
     def test_activity_not_found(self, client):
         r = client.get("/activity/999999999")

@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+{% block title %}Training – Bikeodon{% endblock %}
+{% block content %}
+
+<h2>Training</h2>
+
+<div id="bluetooth-warning" hidden>
+  <article>
+    <p>
+      Your browser doesn't support Web Bluetooth, so device pairing isn't available here.
+      Try a recent Chrome or Edge over HTTPS (or <code>http://localhost</code>).
+    </p>
+  </article>
+</div>
+
+<div id="builder-view">
+  <article>
+    <header><strong>Build a workout</strong></header>
+
+    <label for="goal-select">Training goal</label>
+    <select id="goal-select">
+      <option value="endurance">Endurance</option>
+      <option value="tempo">Tempo</option>
+      <option value="sweet_spot" selected>Sweet Spot</option>
+      <option value="threshold">Threshold</option>
+      <option value="vo2max">VO2 Max</option>
+      <option value="sprints">Sprints</option>
+    </select>
+
+    <label for="duration-range">Duration: <span id="duration-label">60</span> min</label>
+    <input id="duration-range" type="range" min="30" max="120" step="5" value="60">
+
+    <label for="hardness-range">Hardness: <span id="hardness-label">Moderate</span></label>
+    <input id="hardness-range" type="range" min="0" max="100" step="10" value="50">
+
+    <footer>
+      <button id="generate-btn" type="button">Generate workout</button>
+      <a href="#" id="skip-builder-link">Skip, just ride &rarr;</a>
+    </footer>
+  </article>
+
+  <article id="workout-error" class="flash flash-error" hidden></article>
+
+  <article id="workout-preview" hidden>
+    <header><strong>Planned session</strong></header>
+    <div class="activity-stats">
+      <div class="stat-chip">
+        <span class="stat-label">Total time</span>
+        <span class="stat-value" id="preview-duration">--</span>
+      </div>
+      <div class="stat-chip">
+        <span class="stat-label">Planned NP</span>
+        <span class="stat-value" id="preview-np">--</span>
+      </div>
+      <div class="stat-chip">
+        <span class="stat-label">Intensity factor</span>
+        <span class="stat-value" id="preview-if">--</span>
+      </div>
+      <div class="stat-chip">
+        <span class="stat-label">Estimated TSS</span>
+        <span class="stat-value" id="preview-tss">--</span>
+      </div>
+    </div>
+    <table>
+      <thead><tr><th>Step</th><th>Duration</th><th>%FTP</th><th>Watts</th></tr></thead>
+      <tbody id="preview-steps"></tbody>
+    </table>
+
+    <details>
+      <summary>How to import this workout</summary>
+      <details>
+        <summary>Zwift (.zwo)</summary>
+        <p>Copy the downloaded <code>.zwo</code> file into <code>Documents/Zwift/Workouts/&lt;your Zwift ID folder&gt;/</code>,
+        then in Zwift go to Workout Mode and pick it from Custom Workouts.</p>
+      </details>
+      <details>
+        <summary>Wahoo (.fit)</summary>
+        <p>Open the Wahoo app, go to the Workouts tab, and use the import/add button to load the downloaded
+        <code>.fit</code> file. It'll sync to your ELEMNT head unit the next time it pairs.</p>
+      </details>
+      <details>
+        <summary>Garmin (.fit)</summary>
+        <p>Connect your Edge or watch via USB and copy the <code>.fit</code> file into the device's
+        <code>GARMIN/NewFiles/</code> folder (or import it through Garmin Connect's workout import, if your
+        account supports it). It'll appear under Training &rarr; Workouts on the device.</p>
+      </details>
+    </details>
+
+    <footer>
+      <button id="download-fit-btn" class="outline" type="button">Download .fit</button>
+      <button id="download-zwo-btn" class="outline" type="button">Download .zwo</button>
+      <button id="start-workout-btn" type="button">Start this workout</button>
+    </footer>
+  </article>
+</div>
+
+<div id="pairing-view" hidden>
+  <article>
+    <header><strong>Connect your devices</strong></header>
+
+    <div class="device-row">
+      <div class="device-info">
+        <span>Smart trainer</span>
+        <span class="device-name">Power / cadence / speed</span>
+      </div>
+      <span id="status-trainer" class="device-status" data-state="disconnected">Disconnected</span>
+      <button id="connect-trainer-btn" class="outline" type="button">Connect</button>
+    </div>
+
+    <div class="device-row">
+      <div class="device-info">
+        <span>Heart rate monitor</span>
+        <span class="device-name">Chest strap or armband</span>
+      </div>
+      <span id="status-hr" class="device-status" data-state="disconnected">Disconnected</span>
+      <button id="connect-hr-btn" class="outline" type="button">Connect</button>
+    </div>
+
+    <div class="device-row">
+      <div class="device-info">
+        <span>Speed / cadence sensor</span>
+        <span class="device-name">Standalone BLE sensor (optional if using a smart trainer)</span>
+      </div>
+      <span id="status-csc" class="device-status" data-state="disconnected">Disconnected</span>
+      <button id="connect-csc-btn" class="outline" type="button">Connect</button>
+    </div>
+
+    <footer>
+      <button id="start-btn" type="button" disabled>OK, start training</button>
+    </footer>
+  </article>
+</div>
+
+<div id="live-view" hidden>
+  <div class="activity-stats">
+    <div class="stat-chip">
+      <span class="stat-label">Power</span>
+      <span class="stat-value"><span id="chip-power">--</span> W</span>
+    </div>
+    <div class="stat-chip">
+      <span class="stat-label">Cadence</span>
+      <span class="stat-value"><span id="chip-cadence">--</span> rpm</span>
+    </div>
+    <div class="stat-chip">
+      <span class="stat-label">Heart rate</span>
+      <span class="stat-value"><span id="chip-hr">--</span> bpm</span>
+    </div>
+    <div class="stat-chip">
+      <span class="stat-label">Speed</span>
+      <span class="stat-value"><span id="chip-speed">--</span> km/h</span>
+    </div>
+  </div>
+
+  <article>
+    <div style="position:relative;height:400px">
+      <canvas id="trainingChart"></canvas>
+    </div>
+    <footer>
+      <button id="stop-btn" class="secondary" type="button">Stop</button>
+    </footer>
+  </article>
+</div>
+
+<script src="{{ url_for('static', filename='chart.min.js') }}"></script>
+<script src="{{ url_for('static', filename='training.js') }}"></script>
+
+{% endblock %}
