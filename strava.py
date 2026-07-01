@@ -19,6 +19,14 @@ _API  = "https://www.strava.com/api/v3"
 _AUTH = "https://www.strava.com/oauth/authorize"
 _TOKEN = "https://www.strava.com/oauth/token"
 
+# requests has no default timeout — a stalled/black-holed connection to Strava
+# would otherwise hang the calling thread forever. This blocked the whole app
+# when it happened on the in-process strava-sync background thread while it
+# held resources the request-handling thread needed, tripping gunicorn's
+# worker watchdog even though the process was using ~0% CPU (blocked on a
+# socket read, not spinning).
+_TIMEOUT = 15  # seconds
+
 
 def strava_auth_url(client_id: str, redirect_uri: str) -> str:
     return (
@@ -36,7 +44,7 @@ def exchange_code(client_id: str, client_secret: str, code: str) -> dict:
         "client_secret": client_secret,
         "code":          code,
         "grant_type":    "authorization_code",
-    })
+    }, timeout=_TIMEOUT)
     resp.raise_for_status()
     return resp.json()
 
@@ -48,7 +56,7 @@ def refresh_token(client_id: str, client_secret: str, refresh_tok: str) -> dict:
         "client_secret": client_secret,
         "grant_type":    "refresh_token",
         "refresh_token": refresh_tok,
-    })
+    }, timeout=_TIMEOUT)
     resp.raise_for_status()
     return resp.json()
 
@@ -101,6 +109,7 @@ class StravaClient:
         retry once.  If the retry is also rate-limited we raise immediately so the
         caller knows the daily limit may be exhausted.
         """
+        kwargs.setdefault("timeout", _TIMEOUT)
         resp = self._s.get(url, **kwargs)
         if resp.status_code != 429:
             return resp
@@ -158,7 +167,8 @@ _PUSH = "https://www.strava.com/api/v3/push_subscriptions"
 
 
 def list_webhooks(client_id: str, client_secret: str) -> list:
-    resp = requests.get(_PUSH, params={"client_id": client_id, "client_secret": client_secret})
+    resp = requests.get(_PUSH, params={"client_id": client_id, "client_secret": client_secret},
+                        timeout=_TIMEOUT)
     resp.raise_for_status()
     return resp.json()
 
@@ -170,7 +180,7 @@ def register_webhook(client_id: str, client_secret: str,
         "client_secret": client_secret,
         "callback_url":  callback_url,
         "verify_token":  verify_token,
-    })
+    }, timeout=_TIMEOUT)
     resp.raise_for_status()
     return resp.json()
 
@@ -179,6 +189,7 @@ def delete_webhook(client_id: str, client_secret: str, subscription_id: int):
     resp = requests.delete(
         f"{_PUSH}/{subscription_id}",
         data={"client_id": client_id, "client_secret": client_secret},
+        timeout=_TIMEOUT,
     )
     resp.raise_for_status()
 

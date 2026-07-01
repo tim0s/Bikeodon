@@ -381,6 +381,15 @@ def init_db(db_path):
         )
     """)
 
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS deleted_activities (
+            user_id     INTEGER NOT NULL REFERENCES users(id),
+            activity_id INTEGER NOT NULL,
+            deleted_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id, activity_id)
+        )
+    """)
+
     # Add valid_from + source to zones if missing (history support)
     for col, typedef in [
         ("valid_from", "TEXT NOT NULL DEFAULT '1970-01-01'"),
@@ -1039,8 +1048,30 @@ def delete_activity(db_path, activity_id: int, user_id: int, note_id: str | None
                 (username, note_id),
             )
         conn.execute("DELETE FROM activities WHERE id=? AND user_id=?", (activity_id, user_id))
+        # Tombstone so a future Strava sync doesn't silently re-import the
+        # activity the user just deleted (Strava itself still has it).
+        conn.execute(
+            "INSERT OR REPLACE INTO deleted_activities (user_id, activity_id, deleted_at)"
+            " VALUES (?,?,CURRENT_TIMESTAMP)",
+            (user_id, activity_id),
+        )
         conn.commit()
         return dict(row)
+    finally:
+        conn.close()
+
+
+def was_deleted(db_path, user_id: int, activity_id: int) -> bool:
+    """True if the user previously deleted this activity — used to stop Strava
+    auto-sync from re-importing it. Manual re-upload is unaffected (deliberate
+    user action should still work)."""
+    conn = _conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM deleted_activities WHERE user_id=? AND activity_id=?",
+            (user_id, activity_id),
+        ).fetchone()
+        return row is not None
     finally:
         conn.close()
 

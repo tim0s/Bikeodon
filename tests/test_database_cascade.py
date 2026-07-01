@@ -372,3 +372,49 @@ class TestAddFeedItemWithReplyTo:
         items = get_feed_items(db_path, "cascade_user", limit=100)
         ids = [i["object_id"] for i in items]
         assert reply not in ids
+
+
+# ---------------------------------------------------------------------------
+# TestDeleteActivityTombstone
+#
+# Regression coverage: deleting an activity used to leave no record of the
+# deletion, so the next Strava sync would see the id as "unseen" and
+# silently re-import it. delete_activity() now writes a tombstone row that
+# was_deleted() checks; the sync loop skips tombstoned ids (tasks.py).
+# ---------------------------------------------------------------------------
+
+class TestDeleteActivityTombstone:
+
+    AID = 70020
+
+    def test_was_deleted_false_before_deletion(self, db_path, uid):
+        from database import was_deleted
+        assert was_deleted(db_path, uid, 70021) is False
+
+    def test_was_deleted_true_after_deletion(self, db_path, uid):
+        from database import delete_activity, was_deleted
+        _insert_activity(db_path, uid, self.AID)
+        delete_activity(db_path, self.AID, uid)
+        assert was_deleted(db_path, uid, self.AID) is True
+
+    def test_tombstone_is_scoped_to_user(self, db_path, uid, other_uid):
+        from database import delete_activity, was_deleted
+        aid = 70022
+        _insert_activity(db_path, uid, aid)
+        delete_activity(db_path, aid, uid)
+        assert was_deleted(db_path, other_uid, aid) is False
+
+    def test_deleting_nonexistent_activity_does_not_tombstone(self, db_path, uid):
+        from database import delete_activity, was_deleted
+        result = delete_activity(db_path, 999999999, uid)
+        assert result is None
+        assert was_deleted(db_path, uid, 999999999) is False
+
+    def test_repeated_deletion_does_not_error(self, db_path, uid):
+        """INSERT OR REPLACE means re-deleting (e.g. a retried request) is safe."""
+        from database import delete_activity, was_deleted
+        aid = 70023
+        _insert_activity(db_path, uid, aid)
+        delete_activity(db_path, aid, uid)
+        delete_activity(db_path, aid, uid)  # already gone — no-op, must not raise
+        assert was_deleted(db_path, uid, aid) is True

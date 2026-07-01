@@ -19,7 +19,7 @@ from database import (
     get_mmp_as_of, get_power_best, get_setting, get_unrendered,
     load_user_config, mark_rendered, mark_posted,
     save_activity_file, set_activity_error, set_athlete_param, set_power_best, set_scheduled,
-    set_setting, set_wbal_json, update_activity_metrics, upsert_activity,
+    set_setting, set_wbal_json, update_activity_metrics, upsert_activity, was_deleted,
 )
 from fit_encoder import generate_fit
 from strava import StravaClient
@@ -159,6 +159,8 @@ def _strava_sync_user(uid: int) -> int:
             if len(new_ids) >= _STRAVA_SYNC_PER_USER:
                 break
             if get_activity(DB_PATH, activity_id, user_id=uid):
+                continue
+            if was_deleted(DB_PATH, uid, activity_id):
                 continue
             try:
                 data, streams = client.get_activity(activity_id)
