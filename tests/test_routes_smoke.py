@@ -190,6 +190,18 @@ class TestNonAdminGets:
     def test_training_export_zwo_without_body(self, client):
         _ok(client.post("/training/export.zwo"))
 
+    def test_training_custom_finalize_without_body(self, client):
+        _ok(client.post("/training/custom/finalize"))
+
+    def test_training_save_without_body(self, client):
+        _ok(client.post("/training/save"))
+
+    def test_training_saved_list(self, client):
+        _ok(client.get("/training/saved"))
+
+    def test_training_saved_delete_nonexistent(self, client):
+        _ok(client.post("/training/saved/999999999/delete"))
+
     def test_activity_not_found(self, client):
         r = client.get("/activity/999999999")
         _ok(r)

@@ -4,7 +4,7 @@
   const WHEEL_CIRCUMFERENCE_MM = 2105; // 700x25c default
 
   const state = {
-    trainer: { device: null, server: null },
+    trainer: { device: null, server: null, controlChar: null, ergActive: false },
     hr: { device: null, server: null },
     csc: { device: null, server: null, prevWheelRevs: null, prevWheelTime: null, prevCrankRevs: null, prevCrankTime: null },
     latest: { power: null, cadence: null, hr: null, speed: null },
@@ -13,6 +13,12 @@
     chart: null,
     updateTimer: null,
     workout: null,
+    previewChart: null,
+    savedWorkouts: [],
+    librarySort: { col: "created_at", dir: "desc" },
+    libraryLoaded: false,
+    playback: null,
+    lastStepIndex: null,
   };
 
   function $(id) { return document.getElementById(id); }
@@ -71,6 +77,8 @@
       state.trainer.device = device;
       device.addEventListener("gattserverdisconnected", () => {
         state.trainer.server = null;
+        state.trainer.controlChar = null;
+        state.trainer.ergActive = false;
         setStatus("trainer", "disconnected", "Disconnected");
         refreshStartButton();
       });
@@ -84,6 +92,13 @@
         if (parsed.cadence !== undefined) state.latest.cadence = parsed.cadence;
         if (parsed.speed !== undefined) state.latest.speed = parsed.speed;
       });
+
+      try {
+        state.trainer.controlChar = await service.getCharacteristic("fitness_machine_control_point");
+      } catch (ergErr) {
+        state.trainer.controlChar = null; // trainer doesn't expose Control Point — ERG unavailable
+      }
+
       state.trainer.server = server;
       setStatus("trainer", "connected", device.name || "Smart trainer");
     } catch (err) {
@@ -91,6 +106,90 @@
       setStatus("trainer", "error", "Connection failed");
     }
     refreshStartButton();
+  }
+
+  // ---- FTMS Control Point (ERG mode) ----------------------------------
+  // Op codes/response format verified against the Bluetooth SIG Fitness
+  // Machine Service v1.0 spec (Table 4.15 / 4.16.2.22).
+
+  const FTMS_OP_REQUEST_CONTROL = 0x00;
+  const FTMS_OP_SET_TARGET_POWER = 0x05;
+  const FTMS_OP_START_RESUME = 0x07;
+  const FTMS_OP_STOP_PAUSE = 0x08;
+  const FTMS_OP_RESPONSE = 0x80;
+  const FTMS_RESULT_SUCCESS = 0x01;
+
+  function waitForIndication(controlChar, opcode, timeoutMs = 4000) {
+    return new Promise((resolve, reject) => {
+      const handler = (ev) => {
+        const dv = ev.target.value;
+        if (dv.byteLength >= 3 && dv.getUint8(0) === FTMS_OP_RESPONSE && dv.getUint8(1) === opcode) {
+          controlChar.removeEventListener("characteristicvaluechanged", handler);
+          clearTimeout(timer);
+          resolve(dv.getUint8(2)); // result code
+        }
+      };
+      const timer = setTimeout(() => {
+        controlChar.removeEventListener("characteristicvaluechanged", handler);
+        reject(new Error(`FTMS control point timeout (op 0x${opcode.toString(16)})`));
+      }, timeoutMs);
+      controlChar.addEventListener("characteristicvaluechanged", handler);
+    });
+  }
+
+  async function writeControlPoint(controlChar, bytes) {
+    const buf = Uint8Array.from(bytes);
+    if (controlChar.writeValueWithResponse) {
+      await controlChar.writeValueWithResponse(buf);
+    } else {
+      await controlChar.writeValue(buf); // older Chrome fallback
+    }
+  }
+
+  async function enableErgMode() {
+    const controlChar = state.trainer.controlChar;
+    if (!controlChar) return false;
+    try {
+      await controlChar.startNotifications(); // enables indications too
+
+      const requestPromise = waitForIndication(controlChar, FTMS_OP_REQUEST_CONTROL);
+      await writeControlPoint(controlChar, [FTMS_OP_REQUEST_CONTROL]);
+      if ((await requestPromise) !== FTMS_RESULT_SUCCESS) throw new Error("Request Control not granted");
+
+      const startPromise = waitForIndication(controlChar, FTMS_OP_START_RESUME);
+      await writeControlPoint(controlChar, [FTMS_OP_START_RESUME]);
+      if ((await startPromise) !== FTMS_RESULT_SUCCESS) throw new Error("Start or Resume failed");
+
+      state.trainer.ergActive = true;
+      return true;
+    } catch (err) {
+      console.error("ERG mode setup failed, falling back to non-ERG", err);
+      state.trainer.ergActive = false;
+      return false;
+    }
+  }
+
+  async function setErgTarget(watts) {
+    if (!state.trainer.ergActive || !state.trainer.controlChar) return;
+    try {
+      const buf = new ArrayBuffer(3);
+      const dv = new DataView(buf);
+      dv.setUint8(0, FTMS_OP_SET_TARGET_POWER);
+      dv.setInt16(1, Math.round(watts), true);
+      await writeControlPoint(state.trainer.controlChar, new Uint8Array(buf));
+    } catch (err) {
+      console.error("Set Target Power failed", err);
+    }
+  }
+
+  async function releaseErgControl() {
+    if (!state.trainer.ergActive || !state.trainer.controlChar) return;
+    try {
+      await writeControlPoint(state.trainer.controlChar, [FTMS_OP_STOP_PAUSE, 0x01]); // 0x01 = Stop
+    } catch (err) {
+      console.error("Releasing ERG control failed", err);
+    }
+    state.trainer.ergActive = false;
   }
 
   // ---- Heart rate -------------------------------------------------------
@@ -246,6 +345,63 @@
 
     $("workout-preview").hidden = false;
     state.workout = result;
+    renderWorkoutProfileChart(result);
+  }
+
+  function renderWorkoutProfileChart(result) {
+    if (state.previewChart) { state.previewChart.destroy(); state.previewChart = null; }
+
+    const points = [];
+    let t = 0;
+    result.steps.forEach((step, i) => {
+      points.push({ x: t / 60, y: step.watts, stepIndex: i });
+      t += step.duration_s;
+      points.push({ x: t / 60, y: step.watts, stepIndex: i });
+    });
+
+    const zoneColor = (ctx) => {
+      const idx = ctx.p1.raw.stepIndex;
+      return result.steps[idx].zone_color;
+    };
+
+    const ctx = $("workoutProfileChart").getContext("2d");
+    state.previewChart = new Chart(ctx, {
+      type: "line",
+      data: {
+        datasets: [
+          {
+            data: points,
+            borderWidth: 2,
+            pointRadius: 0,
+            fill: true,
+            tension: 0,
+            segment: {
+              borderColor: (segCtx) => zoneColor(segCtx),
+              backgroundColor: (segCtx) => zoneColor(segCtx) + "40",
+            },
+          },
+          {
+            // flat reference line at 100% FTP
+            data: [{ x: 0, y: result.ftp }, { x: t / 60, y: result.ftp }],
+            borderColor: "#888",
+            borderDash: [4, 4],
+            borderWidth: 1,
+            pointRadius: 0,
+            fill: false,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { type: "linear", title: { display: true, text: "Minutes" } },
+          y: { title: { display: true, text: "Watts" }, beginAtZero: true },
+        },
+      },
+    });
   }
 
   async function generateWorkout() {
@@ -271,9 +427,18 @@
     }
   }
 
+  function updateErgToggleAvailability() {
+    const toggle = $("erg-toggle");
+    const caption = $("erg-toggle-caption");
+    const hasWorkout = !!state.workout;
+    toggle.disabled = !hasWorkout;
+    caption.textContent = hasWorkout ? "" : "(requires a loaded workout)";
+  }
+
   function showPairingView() {
     $("builder-view").hidden = true;
     $("pairing-view").hidden = false;
+    updateErgToggleAvailability();
   }
 
   async function downloadWorkout(kind) {
@@ -301,6 +466,168 @@
     }
   }
 
+  // ---- Tabs (generate / custom / library) -----------------------------------
+
+  function switchMode(mode) {
+    ["generate", "custom", "library"].forEach((m) => {
+      $(`${m}-panel`).hidden = m !== mode;
+    });
+    $("workout-tabs").querySelectorAll("a[data-mode]").forEach((a) => {
+      a.setAttribute("aria-selected", a.dataset.mode === mode ? "true" : "false");
+    });
+    if (mode === "custom" && $("custom-steps").children.length === 0) {
+      addCustomStepRow();
+    }
+    if (mode === "library") {
+      loadLibrary();
+    }
+  }
+
+  // ---- Custom workout builder -------------------------------------------
+
+  function addCustomStepRow() {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td><input type="text" class="step-label" placeholder="Step"></td>
+      <td><input type="number" class="step-duration" min="0.1" step="0.5" value="5"></td>
+      <td><input type="number" class="step-pct" min="10" max="300" step="1" value="100"></td>
+      <td><button type="button" class="secondary outline remove-step-btn">&times;</button></td>
+    `;
+    tr.querySelector(".remove-step-btn").addEventListener("click", () => tr.remove());
+    $("custom-steps").appendChild(tr);
+  }
+
+  async function previewCustomWorkout() {
+    const rows = Array.from($("custom-steps").querySelectorAll("tr"));
+    const steps = rows.map((tr) => ({
+      label: tr.querySelector(".step-label").value,
+      duration_s: parseFloat(tr.querySelector(".step-duration").value || "0") * 60,
+      pct_ftp: parseFloat(tr.querySelector(".step-pct").value || "0"),
+    }));
+    const goalLabel = $("custom-focus").value;
+
+    try {
+      const resp = await fetch("/training/custom/finalize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ steps, goal_label: goalLabel }),
+      });
+      const result = await resp.json();
+      if (!result.ok) {
+        renderWorkoutError(result.message || "Couldn't build that workout.");
+        return;
+      }
+      renderWorkoutPreview(result);
+    } catch (err) {
+      console.error("Custom workout preview failed", err);
+      renderWorkoutError("Something went wrong building the workout.");
+    }
+  }
+
+  // ---- Save workout ----------------------------------------------------
+
+  async function saveWorkout() {
+    if (!state.workout) return;
+    const name = prompt("Name this workout:");
+    if (!name) return;
+    const btn = $("save-workout-btn");
+    try {
+      const resp = await fetch("/training/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, workout: state.workout }),
+      });
+      const result = await resp.json();
+      if (!result.ok) {
+        renderWorkoutError(result.message || "Couldn't save that workout.");
+        return;
+      }
+      const original = btn.textContent;
+      btn.textContent = "Saved!";
+      setTimeout(() => { btn.textContent = original; }, 1500);
+    } catch (err) {
+      console.error("Save workout failed", err);
+      renderWorkoutError("Something went wrong saving the workout.");
+    }
+  }
+
+  // ---- Saved workout library ---------------------------------------------
+
+  async function loadLibrary() {
+    try {
+      const resp = await fetch("/training/saved");
+      const result = await resp.json();
+      state.savedWorkouts = result.ok ? result.workouts : [];
+    } catch (err) {
+      console.error("Loading saved workouts failed", err);
+      state.savedWorkouts = [];
+    }
+    renderLibrary();
+  }
+
+  function sortLibrary(col) {
+    if (state.librarySort.col === col) {
+      state.librarySort.dir = state.librarySort.dir === "asc" ? "desc" : "asc";
+    } else {
+      state.librarySort = { col, dir: "asc" };
+    }
+    renderLibrary();
+  }
+
+  function renderLibrary() {
+    const { col, dir } = state.librarySort;
+    const sorted = [...state.savedWorkouts].sort((a, b) => {
+      const av = a[col], bv = b[col];
+      if (av === bv) return 0;
+      if (av === null || av === undefined) return 1;
+      if (bv === null || bv === undefined) return -1;
+      const cmp = typeof av === "string" ? av.localeCompare(bv) : av - bv;
+      return dir === "asc" ? cmp : -cmp;
+    });
+
+    $("library-panel").querySelectorAll("th[data-col]").forEach((th) => {
+      th.classList.remove("sort-asc", "sort-desc");
+      if (th.dataset.col === col) th.classList.add(dir === "asc" ? "sort-asc" : "sort-desc");
+    });
+
+    const tbody = $("library-rows");
+    tbody.innerHTML = "";
+    sorted.forEach((w) => {
+      const tr = document.createElement("tr");
+      const ifText = w.planned_if !== null && w.planned_if !== undefined ? w.planned_if.toFixed(2) : "--";
+      const tssText = w.planned_tss !== null && w.planned_tss !== undefined ? w.planned_tss : "--";
+      tr.innerHTML = `
+        <td>${w.name}</td>
+        <td>${w.goal_label || "--"}</td>
+        <td>${w.duration_min} min</td>
+        <td>${ifText}</td>
+        <td>${tssText}</td>
+        <td>
+          <button type="button" class="outline load-workout-btn">Load</button>
+          <button type="button" class="secondary outline delete-workout-btn">Delete</button>
+        </td>
+      `;
+      tr.querySelector(".load-workout-btn").addEventListener("click", () => renderWorkoutPreview(w));
+      tr.querySelector(".delete-workout-btn").addEventListener("click", () => deleteSavedWorkout(w.id));
+      tbody.appendChild(tr);
+    });
+
+    $("library-empty").hidden = sorted.length > 0;
+  }
+
+  async function deleteSavedWorkout(id) {
+    if (!confirm("Delete this saved workout?")) return;
+    try {
+      const resp = await fetch(`/training/saved/${id}/delete`, { method: "POST" });
+      const result = await resp.json();
+      if (!result.ok) return;
+      state.savedWorkouts = state.savedWorkouts.filter((w) => w.id !== id);
+      renderLibrary();
+    } catch (err) {
+      console.error("Delete workout failed", err);
+    }
+  }
+
   // ---- Recording / chart ---------------------------------------------------
 
   function fmt(value, digits) {
@@ -314,6 +641,36 @@
     $("chip-speed").textContent = fmt(state.latest.speed, 1);
   }
 
+  // ---- Workout playback (target power / current step during the ride) ----
+
+  function computePlayback(elapsed) {
+    if (!state.workout) return null;
+    let t = 0;
+    for (const step of state.workout.steps) {
+      const stepEnd = t + step.duration_s;
+      if (elapsed < stepEnd) {
+        return { step, remainingS: Math.ceil(stepEnd - elapsed) };
+      }
+      t = stepEnd;
+    }
+    return null; // workout complete
+  }
+
+  function updatePlaybackChips() {
+    if (state.workout && !state.playback) {
+      $("chip-target").textContent = "--";
+      $("chip-step").textContent = "Workout complete";
+      return;
+    }
+    if (!state.playback) {
+      $("chip-target").textContent = "--";
+      $("chip-step").textContent = "--";
+      return;
+    }
+    $("chip-target").textContent = state.playback.step.watts;
+    $("chip-step").textContent = `${state.playback.step.label} (${state.playback.remainingS}s left)`;
+  }
+
   function tick() {
     const elapsed = (Date.now() - state.startTime) / 1000;
     state.samples.push({
@@ -325,6 +682,15 @@
     });
     updateStatChips();
 
+    state.playback = computePlayback(elapsed);
+    updatePlaybackChips();
+    const targetWatts = state.playback ? state.playback.step.watts : null;
+    const currentStepIndex = state.playback ? state.workout.steps.indexOf(state.playback.step) : null;
+    if (currentStepIndex !== null && currentStepIndex !== state.lastStepIndex) {
+      state.lastStepIndex = currentStepIndex;
+      setErgTarget(targetWatts);
+    }
+
     const chart = state.chart;
     const label = elapsed.toFixed(0) + "s";
     chart.data.labels.push(label);
@@ -332,6 +698,7 @@
     chart.data.datasets[1].data.push(state.latest.hr);
     chart.data.datasets[2].data.push(state.latest.cadence);
     chart.data.datasets[3].data.push(state.latest.speed);
+    chart.data.datasets[4].data.push(targetWatts);
 
     const maxPoints = 300; // 5 minutes at 1Hz
     if (chart.data.labels.length > maxPoints) {
@@ -352,6 +719,7 @@
           { label: "Heart rate (bpm)", data: [], borderColor: "#d32f2f", backgroundColor: "transparent", yAxisID: "y1", tension: 0.2, pointRadius: 0 },
           { label: "Cadence (rpm)", data: [], borderColor: "#2e8b47", backgroundColor: "transparent", yAxisID: "y1", tension: 0.2, pointRadius: 0 },
           { label: "Speed (km/h)", data: [], borderColor: "#3b6fd6", backgroundColor: "transparent", yAxisID: "y1", tension: 0.2, pointRadius: 0 },
+          { label: "Target (W)", data: [], borderColor: "#888", borderDash: [4, 4], backgroundColor: "transparent", yAxisID: "y", tension: 0, pointRadius: 0 },
         ],
       },
       options: {
@@ -367,12 +735,20 @@
     });
   }
 
-  function startSession() {
+  async function startSession() {
     $("pairing-view").hidden = true;
     $("live-view").hidden = false;
     state.startTime = Date.now();
     state.samples = [];
+    state.playback = null;
+    state.lastStepIndex = null;
     initChart();
+
+    const wantsErg = $("erg-toggle").checked && !$("erg-toggle").disabled;
+    if (wantsErg && state.workout && state.trainer.controlChar) {
+      await enableErgMode();
+    }
+
     state.updateTimer = setInterval(tick, 1000);
   }
 
@@ -388,9 +764,12 @@
     setStatus("csc", "disconnected", "Disconnected");
   }
 
-  function stopSession() {
+  async function stopSession() {
     clearInterval(state.updateTimer);
     state.updateTimer = null;
+    state.playback = null;
+    state.lastStepIndex = null;
+    await releaseErgControl(); // must happen before disconnecting the GATT server
     disconnectAll();
     if (state.chart) { state.chart.destroy(); state.chart = null; }
     $("live-view").hidden = true;
@@ -417,6 +796,16 @@
     $("start-workout-btn").addEventListener("click", showPairingView);
     $("download-fit-btn").addEventListener("click", () => downloadWorkout("fit"));
     $("download-zwo-btn").addEventListener("click", () => downloadWorkout("zwo"));
+    $("save-workout-btn").addEventListener("click", saveWorkout);
+
+    $("workout-tabs").querySelectorAll("a[data-mode]").forEach((a) => {
+      a.addEventListener("click", (e) => { e.preventDefault(); switchMode(a.dataset.mode); });
+    });
+    $("add-step-btn").addEventListener("click", () => addCustomStepRow());
+    $("preview-custom-btn").addEventListener("click", previewCustomWorkout);
+    $("library-panel").querySelectorAll("th[data-col]").forEach((th) => {
+      th.addEventListener("click", () => sortLibrary(th.dataset.col));
+    });
 
     if (bluetoothSupported) {
       $("connect-trainer-btn").addEventListener("click", connectTrainer);

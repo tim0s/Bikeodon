@@ -6,10 +6,51 @@ knob (0.0 = easiest, 1.0 = hardest), produces a warmup / main-set / cooldown
 step list expressed as (duration_s, pct_ftp). Reuses training_load's NP/TSS
 math to estimate what the planned session would score.
 """
+from database import POWER_ZONE_PRESETS
 from training_load import compute_np, compute_tss
 
 WARMUP_MIN_S, WARMUP_MAX_S = 300, 900     # 5-15 min
 COOLDOWN_MIN_S, COOLDOWN_MAX_S = 180, 480  # 3-8 min
+
+# Fallback when the caller has no zones configured yet (matches database.py's
+# own _DEFAULT_POWER_ZONES) — same shape as database.get_zones()'s return value.
+_DEFAULT_POWER_ZONES = [
+    {"name": name, "max_pct": max_pct, "color": color}
+    for _, name, max_pct, color in POWER_ZONE_PRESETS["7zone"]
+]
+
+
+def _zone_for_pct(pct_ftp: float, power_zones: list) -> tuple:
+    for zone in power_zones:
+        if pct_ftp <= zone["max_pct"]:
+            return zone["name"], zone["color"]
+    last = power_zones[-1]
+    return last["name"], last["color"]
+
+
+def finalize_steps(steps: list, ftp: float, power_zones: list = None) -> tuple:
+    """Round durations, compute watts + zone tagging, and derive planned NP/IF/TSS
+    for a raw step list [{label, duration_s, pct_ftp}, ...]. Shared by the algorithmic
+    generator and the custom-workout builder so both produce identical step shapes
+    and use the same load-estimate math (training_load.compute_np/compute_tss).
+
+    Returns (steps, load_summary) where load_summary has planned_np/planned_if/planned_tss."""
+    power_zones = power_zones or _DEFAULT_POWER_ZONES
+    for step in steps:
+        step["duration_s"] = round(step["duration_s"])
+        step["pct_ftp"] = round(step["pct_ftp"], 1)
+        step["watts"] = round(step["pct_ftp"] / 100 * ftp)
+        step["zone_name"], step["zone_color"] = _zone_for_pct(step["pct_ftp"], power_zones)
+
+    watts_series = [s["watts"] for s in steps for _ in range(s["duration_s"])]
+    planned_np = compute_np(watts_series)
+    planned_tss = compute_tss(planned_np, len(watts_series), ftp) if planned_np else None
+
+    return steps, {
+        "planned_np": round(planned_np) if planned_np else None,
+        "planned_if": round(planned_np / ftp, 2) if planned_np else None,
+        "planned_tss": round(planned_tss) if planned_tss else None,
+    }
 
 # pct_lo/pct_hi: %FTP band picked via hardness (lerp).
 # For "intervals" goals, rest_ratio_easy/hard scale rest_dur = work_dur * ratio,
@@ -83,11 +124,16 @@ def _min_feasible_duration_min(goal_cfg, hardness):
 
 
 def generate_workout(goal: str, duration_min: int, hardness: float, ftp: float,
+                      power_zones: list = None,
                       _skip_min_duration_check: bool = False) -> dict:
+    """power_zones: [{"name", "max_pct", "color"}, ...] ordered ascending by max_pct —
+    same shape as database.get_zones(db_path, uid, "power"). Falls back to the standard
+    Coggan 7-zone bands if the caller has none configured yet."""
     if goal not in GOAL_LIBRARY:
         return {"ok": False, "error": "unknown_goal", "message": f"Unknown goal '{goal}'."}
     if not ftp or ftp <= 0:
         return {"ok": False, "error": "no_ftp", "message": "Set your FTP in Settings before generating a workout."}
+    power_zones = power_zones or _DEFAULT_POWER_ZONES
 
     hardness = max(0.0, min(1.0, hardness))
     goal_cfg = dict(GOAL_LIBRARY[goal])
@@ -154,21 +200,58 @@ def generate_workout(goal: str, duration_min: int, hardness: float, ftp: float,
 
     steps.append({"label": "Cooldown", "duration_s": cooldown_s, "pct_ftp": 50})
 
-    for step in steps:
-        step["duration_s"] = round(step["duration_s"])
-        step["pct_ftp"] = round(step["pct_ftp"], 1)
-        step["watts"] = round(step["pct_ftp"] / 100 * ftp)
-
-    watts_series = [s["watts"] for s in steps for _ in range(s["duration_s"])]
-    planned_np = compute_np(watts_series)
-    planned_tss = compute_tss(planned_np, len(watts_series), ftp) if planned_np else None
+    steps, load_summary = finalize_steps(steps, ftp, power_zones)
 
     return {
         "ok": True,
         "goal": goal, "goal_label": goal_cfg["label"],
         "ftp": ftp, "duration_min": duration_min, "hardness": hardness,
         "steps": steps,
-        "planned_np": round(planned_np) if planned_np else None,
-        "planned_if": round(planned_np / ftp, 2) if planned_np else None,
-        "planned_tss": round(planned_tss) if planned_tss else None,
+        **load_summary,
+    }
+
+
+_STEP_MIN_DURATION_S, _STEP_MAX_DURATION_S = 5, 6 * 3600   # 5s - 6h per step
+_STEP_MIN_PCT_FTP, _STEP_MAX_PCT_FTP = 10, 300
+_WORKOUT_MAX_DURATION_S = 8 * 3600                          # 8h total, generous ceiling
+
+
+def build_custom_workout(raw_steps: list, ftp: float, power_zones: list = None,
+                          goal_label: str = "Custom") -> dict:
+    """Validate and finalize a user-authored step list into the same result shape
+    as generate_workout(), so the rest of the app (preview, export, save) doesn't
+    need to know whether a workout was generated or hand-built."""
+    if not ftp or ftp <= 0:
+        return {"ok": False, "error": "no_ftp", "message": "Set your FTP in Settings before building a workout."}
+    if not raw_steps:
+        return {"ok": False, "error": "bad_input", "message": "Add at least one step."}
+
+    steps = []
+    for i, raw in enumerate(raw_steps):
+        try:
+            duration_s = float(raw.get("duration_s"))
+            pct_ftp = float(raw.get("pct_ftp"))
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "bad_input", "message": f"Step {i + 1} has an invalid duration or %FTP."}
+        if not (_STEP_MIN_DURATION_S <= duration_s <= _STEP_MAX_DURATION_S):
+            return {"ok": False, "error": "bad_input",
+                    "message": f"Step {i + 1}'s duration must be between 5 seconds and 6 hours."}
+        if not (_STEP_MIN_PCT_FTP <= pct_ftp <= _STEP_MAX_PCT_FTP):
+            return {"ok": False, "error": "bad_input",
+                    "message": f"Step {i + 1}'s %FTP must be between {_STEP_MIN_PCT_FTP} and {_STEP_MAX_PCT_FTP}."}
+        label = (raw.get("label") or "").strip() or f"Step {i + 1}"
+        steps.append({"label": label, "duration_s": duration_s, "pct_ftp": pct_ftp})
+
+    total_s = sum(s["duration_s"] for s in steps)
+    if total_s > _WORKOUT_MAX_DURATION_S:
+        return {"ok": False, "error": "bad_input", "message": "Total workout duration can't exceed 8 hours."}
+
+    steps, load_summary = finalize_steps(steps, ftp, power_zones)
+
+    return {
+        "ok": True,
+        "goal": "custom", "goal_label": (goal_label or "Custom").strip() or "Custom",
+        "ftp": ftp, "duration_min": round(total_s / 60), "hardness": None,
+        "steps": steps,
+        **load_summary,
     }

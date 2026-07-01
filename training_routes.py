@@ -5,8 +5,11 @@ from flask import render_template, request, send_file
 from flask_login import current_user, login_required
 
 from config import DB_PATH
-from database import get_athlete_param
-from workout_generator import generate_workout
+from database import (
+    get_athlete_param, get_zones,
+    save_workout, list_saved_workouts, delete_saved_workout,
+)
+from workout_generator import generate_workout, build_custom_workout
 from fit_writer import build_fit_workout
 from zwo_writer import build_zwo_workout
 
@@ -20,6 +23,12 @@ def _export_filename(data, ext):
     return f"bikeodon-{slug}.{ext}"
 
 
+def _resolve_ftp_and_zones(uid):
+    ftp = get_athlete_param(DB_PATH, uid, "ftp") or get_athlete_param(DB_PATH, uid, "cp_watts")
+    power_zones = get_zones(DB_PATH, uid, "power") or None
+    return ftp, power_zones
+
+
 def register_routes(app):
 
     @app.route("/training")
@@ -31,7 +40,7 @@ def register_routes(app):
     @login_required
     def generate_training_workout():
         uid = int(current_user.id)
-        ftp = get_athlete_param(DB_PATH, uid, "ftp") or get_athlete_param(DB_PATH, uid, "cp_watts")
+        ftp, power_zones = _resolve_ftp_and_zones(uid)
         if not ftp:
             return {"ok": False, "error": "no_ftp",
                     "message": "Set your FTP in Settings before generating a workout."}, 200
@@ -41,8 +50,47 @@ def register_routes(app):
             hardness = float(data.get("hardness", 0.5))
         except (TypeError, ValueError):
             return {"ok": False, "error": "bad_input", "message": "Invalid duration or hardness."}, 200
-        result = generate_workout(data.get("goal"), duration_min, hardness, ftp)
+        result = generate_workout(data.get("goal"), duration_min, hardness, ftp, power_zones)
         return result, 200
+
+    @app.route("/training/custom/finalize", methods=["POST"])
+    @login_required
+    def finalize_custom_training_workout():
+        uid = int(current_user.id)
+        ftp, power_zones = _resolve_ftp_and_zones(uid)
+        if not ftp:
+            return {"ok": False, "error": "no_ftp",
+                    "message": "Set your FTP in Settings before building a workout."}, 200
+        data = request.get_json(force=True) or {}
+        result = build_custom_workout(data.get("steps"), ftp, power_zones, data.get("goal_label"))
+        return result, 200
+
+    @app.route("/training/save", methods=["POST"])
+    @login_required
+    def save_training_workout():
+        uid = int(current_user.id)
+        data = request.get_json(force=True) or {}
+        name = (data.get("name") or "").strip()
+        workout = data.get("workout")
+        if not name:
+            return {"ok": False, "error": "bad_input", "message": "Name is required."}, 200
+        if not workout or not workout.get("steps"):
+            return {"ok": False, "error": "bad_input", "message": "No workout to save."}, 200
+        workout_id = save_workout(DB_PATH, uid, name, workout)
+        return {"ok": True, "id": workout_id}, 200
+
+    @app.route("/training/saved", methods=["GET"])
+    @login_required
+    def list_saved_training_workouts():
+        uid = int(current_user.id)
+        return {"ok": True, "workouts": list_saved_workouts(DB_PATH, uid)}, 200
+
+    @app.route("/training/saved/<int:workout_id>/delete", methods=["POST"])
+    @login_required
+    def delete_saved_training_workout(workout_id):
+        uid = int(current_user.id)
+        deleted = delete_saved_workout(DB_PATH, uid, workout_id)
+        return {"ok": deleted}, 200
 
     @app.route("/training/export.fit", methods=["POST"])
     @login_required

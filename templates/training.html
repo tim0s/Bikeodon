@@ -15,7 +15,13 @@
 </div>
 
 <div id="builder-view">
-  <article>
+  <div role="tablist" class="tab-bar" id="workout-tabs">
+    <a href="#" role="tab" data-mode="generate" aria-selected="true">Generate</a>
+    <a href="#" role="tab" data-mode="custom">Build your own</a>
+    <a href="#" role="tab" data-mode="library">Load saved</a>
+  </div>
+
+  <article id="generate-panel">
     <header><strong>Build a workout</strong></header>
 
     <label for="goal-select">Training goal</label>
@@ -40,6 +46,41 @@
     </footer>
   </article>
 
+  <article id="custom-panel" hidden>
+    <header><strong>Build your own workout</strong></header>
+
+    <label for="custom-focus">Focus (optional)</label>
+    <input id="custom-focus" type="text" placeholder="Custom">
+
+    <table>
+      <thead><tr><th>Label</th><th>Duration (min)</th><th>%FTP</th><th></th></tr></thead>
+      <tbody id="custom-steps"></tbody>
+    </table>
+
+    <footer>
+      <button id="add-step-btn" class="outline" type="button">+ Add step</button>
+      <button id="preview-custom-btn" type="button">Preview</button>
+    </footer>
+  </article>
+
+  <article id="library-panel" hidden>
+    <header><strong>Saved workouts</strong></header>
+    <table>
+      <thead>
+        <tr>
+          <th data-col="name">Name <span class="sort-arrow">&#8597;</span></th>
+          <th data-col="goal_label">Focus <span class="sort-arrow">&#8597;</span></th>
+          <th data-col="duration_min">Duration <span class="sort-arrow">&#8597;</span></th>
+          <th data-col="planned_if">IF <span class="sort-arrow">&#8597;</span></th>
+          <th data-col="planned_tss">TSS <span class="sort-arrow">&#8597;</span></th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="library-rows"></tbody>
+    </table>
+    <p id="library-empty" class="muted" hidden>No saved workouts yet.</p>
+  </article>
+
   <article id="workout-error" class="flash flash-error" hidden></article>
 
   <article id="workout-preview" hidden>
@@ -62,6 +103,11 @@
         <span class="stat-value" id="preview-tss">--</span>
       </div>
     </div>
+
+    <div style="position:relative;height:220px">
+      <canvas id="workoutProfileChart"></canvas>
+    </div>
+
     <table>
       <thead><tr><th>Step</th><th>Duration</th><th>%FTP</th><th>Watts</th></tr></thead>
       <tbody id="preview-steps"></tbody>
@@ -88,6 +134,7 @@
     </details>
 
     <footer>
+      <button id="save-workout-btn" class="outline" type="button">Save workout</button>
       <button id="download-fit-btn" class="outline" type="button">Download .fit</button>
       <button id="download-zwo-btn" class="outline" type="button">Download .zwo</button>
       <button id="start-workout-btn" type="button">Start this workout</button>
@@ -127,6 +174,11 @@
     </div>
 
     <footer>
+      <label id="erg-toggle-label">
+        <input type="checkbox" id="erg-toggle" checked>
+        Use ERG mode when available
+        <small id="erg-toggle-caption" class="muted"></small>
+      </label>
       <button id="start-btn" type="button" disabled>OK, start training</button>
     </footer>
   </article>
@@ -137,6 +189,14 @@
     <div class="stat-chip">
       <span class="stat-label">Power</span>
       <span class="stat-value"><span id="chip-power">--</span> W</span>
+    </div>
+    <div class="stat-chip">
+      <span class="stat-label">Target</span>
+      <span class="stat-value"><span id="chip-target">--</span> W</span>
+    </div>
+    <div class="stat-chip">
+      <span class="stat-label">Step</span>
+      <span class="stat-value" id="chip-step">--</span>
     </div>
     <div class="stat-chip">
       <span class="stat-label">Cadence</span>

@@ -363,6 +363,24 @@ def init_db(db_path):
         )
     """)
 
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS saved_workouts (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id         INTEGER NOT NULL REFERENCES users(id),
+            name            TEXT NOT NULL,
+            goal            TEXT,
+            goal_label      TEXT,
+            duration_min    INTEGER NOT NULL,
+            ftp_at_creation REAL NOT NULL,
+            hardness        REAL,
+            planned_np      REAL,
+            planned_if      REAL,
+            planned_tss     REAL,
+            steps_json      TEXT NOT NULL,
+            created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
     # Add valid_from + source to zones if missing (history support)
     for col, typedef in [
         ("valid_from", "TEXT NOT NULL DEFAULT '1970-01-01'"),
@@ -393,6 +411,8 @@ def init_db(db_path):
         "  ON athlete_params(user_id, parameter, date DESC)",
         "CREATE INDEX IF NOT EXISTS idx_power_bests_lookup"
         "  ON power_bests(user_id, duration_label, date DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_saved_workouts_user"
+        "  ON saved_workouts(user_id, created_at DESC)",
     ]:
         conn.execute(ddl)
 
@@ -2004,5 +2024,66 @@ def clear_athlete_params(db_path, user_id: int) -> None:
         conn.execute("DELETE FROM athlete_params WHERE user_id=?", (user_id,))
         conn.execute("DELETE FROM power_bests WHERE user_id=?", (user_id,))
         conn.commit()
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Saved workouts
+# ---------------------------------------------------------------------------
+
+def save_workout(db_path, user_id: int, name: str, workout: dict) -> int:
+    """Persist a generated/custom workout (shape matches workout_generator's
+    result dict). Returns the new row id."""
+    conn = _conn(db_path)
+    try:
+        cur = conn.execute(
+            "INSERT INTO saved_workouts"
+            " (user_id, name, goal, goal_label, duration_min, ftp_at_creation,"
+            "  hardness, planned_np, planned_if, planned_tss, steps_json)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                user_id, name, workout.get("goal"), workout.get("goal_label"),
+                workout["duration_min"], workout["ftp"], workout.get("hardness"),
+                workout.get("planned_np"), workout.get("planned_if"), workout.get("planned_tss"),
+                json.dumps(workout["steps"]),
+            ),
+        )
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
+
+
+def list_saved_workouts(db_path, user_id: int) -> list[dict]:
+    """All of the user's saved workouts, newest first, steps_json expanded to steps."""
+    conn = _conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT * FROM saved_workouts WHERE user_id=? ORDER BY created_at DESC, id DESC",
+            (user_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+    result = []
+    for r in rows:
+        d = dict(r)
+        d["steps"] = json.loads(d.pop("steps_json"))
+        d["ftp"] = d.pop("ftp_at_creation")
+        d["ok"] = True
+        result.append(d)
+    return result
+
+
+def delete_saved_workout(db_path, user_id: int, workout_id: int) -> bool:
+    """Delete a saved workout, scoped to its owner. Returns True if a row was removed."""
+    conn = _conn(db_path)
+    try:
+        cur = conn.execute(
+            "DELETE FROM saved_workouts WHERE id=? AND user_id=?",
+            (workout_id, user_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
     finally:
         conn.close()
