@@ -324,3 +324,74 @@ class TestSavedWorkoutsCrud:
 
         still_there = client.get("/training/saved").get_json()
         assert any(w["id"] == workout_id for w in still_there["workouts"])
+
+
+def _samples(n=60, power=200, hr=140, speed=30.0):
+    return [{"t": i, "power": power, "cadence": 85, "hr": hr, "speed": speed} for i in range(n)]
+
+
+class TestSaveActivityEndpoint:
+
+    def test_unauthenticated_redirects(self, app):
+        r = app.test_client().post("/training/save_activity")
+        assert r.status_code in (302, 401)
+
+    def test_too_few_samples_rejected(self, client):
+        r = client.post(
+            "/training/save_activity",
+            data=json.dumps({"name": "Short", "samples": _samples(n=3), "started_at": "2026-01-01T00:00:00.000Z"}),
+            content_type="application/json",
+        )
+        data = r.get_json()
+        assert data["ok"] is False
+        assert data["error"] == "bad_input"
+
+    def test_missing_started_at_rejected(self, client):
+        r = client.post(
+            "/training/save_activity",
+            data=json.dumps({"name": "No date", "samples": _samples()}),
+            content_type="application/json",
+        )
+        assert r.get_json()["ok"] is False
+
+    def test_valid_session_creates_a_fetchable_activity(self, client):
+        r = client.post(
+            "/training/save_activity",
+            data=json.dumps({
+                "name": "Route Test Ride",
+                "samples": _samples(n=60),
+                "started_at": "2026-01-15T08:00:00.000Z",
+            }),
+            content_type="application/json",
+        )
+        data = r.get_json()
+        assert r.status_code == 200
+        assert data["ok"] is True
+        activity_id = data["activity_id"]
+
+        page = client.get(f"/activity/{activity_id}")
+        assert page.status_code == 200
+        assert b"Route Test Ride" in page.data
+
+    def test_created_activity_has_source_training_and_no_gps(self, client, db_path):
+        from database import get_activity
+
+        r = client.post(
+            "/training/save_activity",
+            data=json.dumps({
+                "name": "Indoor Ride",
+                "samples": _samples(n=30),
+                "started_at": "2026-01-15T09:00:00.000Z",
+            }),
+            content_type="application/json",
+        )
+        activity_id = r.get_json()["activity_id"]
+
+        from database import _conn
+        conn = _conn(db_path)
+        row = conn.execute("SELECT * FROM activities WHERE id=?", (activity_id,)).fetchone()
+        conn.close()
+        assert row["source"] == "training"
+        assert row["sport_type"] == "VirtualRide"
+        assert row["source_file"] is not None
+        assert row["average_watts"] == 200

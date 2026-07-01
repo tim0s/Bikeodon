@@ -182,11 +182,14 @@ def generate_fit(activity: dict, streams: dict) -> bytes:
     max_hr  = int(activity.get("max_heartrate")     or 0) or None
     asc     = int(activity.get("total_elevation_gain") or 0) or None
 
+    # Field numbers per the FIT session message profile: 14=avg_speed,
+    # 15=max_speed, 16=avg_heart_rate, 17=max_heart_rate, 20=avg_power,
+    # 21=max_power, 22=total_ascent.
     ses_fields = [
         (253, _UINT32), (0, _ENUM), (1, _ENUM), (2, _UINT32), (5, _ENUM),
         (7, _UINT32), (8, _UINT32), (9, _UINT32),
-        (20, _UINT16), (21, _UINT16), (22, _UINT16), (23, _UINT16),
-        (26, _UINT16), (44, _UINT8), (45, _UINT8),
+        (14, _UINT16), (15, _UINT16), (20, _UINT16), (21, _UINT16),
+        (22, _UINT16), (16, _UINT8), (17, _UINT8),
     ]
     ses_vals = [
         end_fit, 8, 1, start_fit, sport,

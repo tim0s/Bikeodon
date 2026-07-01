@@ -1,17 +1,22 @@
+import os
 import re
 from io import BytesIO
 
 from flask import render_template, request, send_file
 from flask_login import current_user, login_required
 
-from config import DB_PATH
+from config import DB_PATH, OUTPUT_DIR, _base_cfg
 from database import (
-    get_athlete_param, get_zones,
+    get_athlete_param, get_zones, load_user_config,
     save_workout, list_saved_workouts, delete_saved_workout,
+    save_activity_file, upsert_activity,
 )
 from workout_generator import generate_workout, build_custom_workout
 from fit_writer import build_fit_workout
 from zwo_writer import build_zwo_workout
+from fit_encoder import generate_fit
+from training_activity import build_activity_from_samples
+from tasks import _render_and_track, request_backfill
 
 
 def _export_filename(data, ext):
@@ -91,6 +96,38 @@ def register_routes(app):
         uid = int(current_user.id)
         deleted = delete_saved_workout(DB_PATH, uid, workout_id)
         return {"ok": deleted}, 200
+
+    @app.route("/training/save_activity", methods=["POST"])
+    @login_required
+    def save_training_activity():
+        uid = int(current_user.id)
+        data = request.get_json(force=True) or {}
+        name = data.get("name")
+        samples = data.get("samples")
+        started_at = data.get("started_at")
+        if not samples or len(samples) < 10 or not started_at:
+            return {"ok": False, "error": "bad_input",
+                    "message": "Not enough recorded data to save."}, 200
+
+        act, _stream, fit_streams = build_activity_from_samples(samples, name, started_at, uid)
+
+        # _render_and_track()/process_activity() derive their stream by re-parsing
+        # source_file from disk (tasks.py:287) rather than accepting one directly,
+        # so this FIT file isn't optional — without it, metrics silently never compute.
+        fit_bytes = generate_fit(act, fit_streams)
+        files_dir = os.path.join(OUTPUT_DIR, "activity_files")
+        act["source_file"], act["source_file_sha256"] = save_activity_file(
+            files_dir, act["id"], uid, fit_bytes, f"{act['id']}.fit",
+        )
+        act["source_file_type"] = "generated"
+
+        upsert_activity(DB_PATH, act, user_id=uid, source="training")
+
+        cfg = load_user_config(DB_PATH, uid, _base_cfg)
+        _render_and_track(act["id"], uid, cfg, OUTPUT_DIR)
+        request_backfill(uid)
+
+        return {"ok": True, "activity_id": act["id"]}, 200
 
     @app.route("/training/export.fit", methods=["POST"])
     @login_required

@@ -764,6 +764,39 @@
     setStatus("csc", "disconnected", "Disconnected");
   }
 
+  function defaultActivityName() {
+    if (state.workout) {
+      return `${state.workout.goal_label} – ${state.workout.duration_min} min`;
+    }
+    return `Free Ride – ${new Date().toLocaleDateString()}`;
+  }
+
+  async function saveTrainingActivity() {
+    if (state.samples.length < 10) return; // not enough data to be worth saving
+    const name = prompt("Save this session as an activity?", defaultActivityName());
+    if (!name) return;
+    try {
+      const resp = await fetch("/training/save_activity", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name,
+          samples: state.samples,
+          started_at: new Date(state.startTime).toISOString(),
+        }),
+      });
+      const result = await resp.json();
+      if (!result.ok) {
+        alert(result.message || "Couldn't save that session as an activity.");
+        return;
+      }
+      window.location.href = `/activity/${result.activity_id}`;
+    } catch (err) {
+      console.error("Save activity failed", err);
+      alert("Something went wrong saving the session.");
+    }
+  }
+
   async function stopSession() {
     clearInterval(state.updateTimer);
     state.updateTimer = null;
@@ -776,6 +809,7 @@
     $("builder-view").hidden = false;
     $("pairing-view").hidden = true;
     refreshStartButton();
+    await saveTrainingActivity();
   }
 
   function init() {
