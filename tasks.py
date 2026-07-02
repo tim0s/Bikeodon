@@ -15,7 +15,8 @@ from datetime import datetime, timezone
 from config import DB_PATH, OUTPUT_DIR, _base_cfg, STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET
 
 from database import (
-    _conn, get_activities_without_metrics, get_activity, get_all_users, get_athlete_param,
+    _conn, attach_source_file, find_overlapping_activity,
+    get_activities_without_metrics, get_activity, get_all_users, get_athlete_param,
     get_mmp_as_of, get_power_best, get_setting, get_unrendered,
     load_user_config, mark_rendered, mark_posted,
     save_activity_file, set_activity_error, set_athlete_param, set_power_best, set_scheduled,
@@ -134,6 +135,14 @@ def _strava_sync_user(uid: int) -> int:
     If last_full_sync_at is set for the user, only checks page 1 (recent
     activities). Otherwise pages through all history. Sets last_full_sync_at
     when a complete scan finds nothing new (caught up).
+
+    An activity whose time window significantly overlaps an existing one
+    (e.g. a Bikeodon-recorded training session and the same ride later
+    uploaded to Strava from a bike computer) is merged rather than added as
+    a second row: the Strava-fetched FIT becomes the existing activity's
+    source_file (richer stream data), but its id/name/summary are kept —
+    same behavior the /upload route already has via find_overlapping_activity(),
+    just not previously wired into the sync path.
     """
     client = _make_strava_client(uid)
     if not client:
@@ -142,10 +151,11 @@ def _strava_sync_user(uid: int) -> int:
     full_scan = not get_setting(DB_PATH, uid, "strava", "last_full_sync_at")
     files_dir = os.path.join(OUTPUT_DIR, "activity_files")
     new_ids   = []
+    processed = 0
     page      = 1
     exhausted = False
 
-    while len(new_ids) < _STRAVA_SYNC_PER_USER:
+    while processed < _STRAVA_SYNC_PER_USER:
         try:
             ids = client.get_activity_ids(n=20, page=page)
         except Exception as e:
@@ -156,7 +166,7 @@ def _strava_sync_user(uid: int) -> int:
             break
 
         for activity_id in ids:
-            if len(new_ids) >= _STRAVA_SYNC_PER_USER:
+            if processed >= _STRAVA_SYNC_PER_USER:
                 break
             if get_activity(DB_PATH, activity_id, user_id=uid):
                 continue
@@ -164,18 +174,37 @@ def _strava_sync_user(uid: int) -> int:
                 continue
             try:
                 data, streams = client.get_activity(activity_id)
+                fit_bytes = None
                 try:
                     fit_bytes = generate_fit(data, streams)
+                except Exception as fe:
+                    print(f"[strava-sync] FIT generation failed for {activity_id}: {fe}")
+
+                overlap_row = find_overlapping_activity(
+                    DB_PATH, uid, data.get("start_date"),
+                    data.get("elapsed_time") or data.get("moving_time"),
+                )
+                if overlap_row and fit_bytes:
+                    path, sha256 = save_activity_file(
+                        files_dir, overlap_row["id"], uid, fit_bytes, f"{activity_id}.fit"
+                    )
+                    attach_source_file(DB_PATH, overlap_row["id"], uid, path, sha256)
+                    request_render(overlap_row["id"], uid)
+                    processed += 1
+                    print(f"[strava-sync] merged into existing activity "
+                          f"{overlap_row['id']} '{overlap_row['name']}' (user {uid})")
+                    continue
+
+                if fit_bytes:
                     path, sha256 = save_activity_file(
                         files_dir, activity_id, uid, fit_bytes, f"{activity_id}.fit"
                     )
                     data["source_file"]        = path
                     data["source_file_sha256"] = sha256
                     data["source_file_type"]   = "generated"
-                except Exception as fe:
-                    print(f"[strava-sync] FIT generation failed for {activity_id}: {fe}")
                 upsert_activity(DB_PATH, data, user_id=uid)
                 new_ids.append(activity_id)
+                processed += 1
                 print(f"[strava-sync] + {data['name']} (user {uid})")
             except Exception as e:
                 print(f"[strava-sync] Failed {activity_id}: {e}")
@@ -184,13 +213,13 @@ def _strava_sync_user(uid: int) -> int:
             break
         page += 1
 
-    if exhausted and not new_ids:
+    if exhausted and processed == 0:
         set_setting(DB_PATH, uid, "strava", "last_full_sync_at",
                     datetime.now(timezone.utc).isoformat())
 
     for activity_id in new_ids:
         request_render(activity_id, uid)
-    if new_ids:
+    if processed:
         request_backfill(uid)
 
     return len(new_ids)
