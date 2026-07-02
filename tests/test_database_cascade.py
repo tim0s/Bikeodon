@@ -418,3 +418,62 @@ class TestDeleteActivityTombstone:
         delete_activity(db_path, aid, uid)
         delete_activity(db_path, aid, uid)  # already gone — no-op, must not raise
         assert was_deleted(db_path, uid, aid) is True
+
+
+# ---------------------------------------------------------------------------
+# TestAttachSourceFile
+#
+# Regression coverage: merging a Strava-synced activity into an existing one
+# (tasks._strava_sync_user) used to drop the Strava link entirely, since
+# attach_source_file() only ever touched source_file/sha256/type. It now
+# accepts an optional strava_url, set via COALESCE so the plain-upload merge
+# call site in app.py (which never has a Strava URL to contribute) keeps
+# behaving exactly as before.
+# ---------------------------------------------------------------------------
+
+class TestAttachSourceFile:
+
+    def test_sets_source_file_fields(self, db_path, uid):
+        from database import attach_source_file, get_activity
+        aid = 70030
+        _insert_activity(db_path, uid, aid)
+        attach_source_file(db_path, aid, uid, "/tmp/some.fit", "abc123")
+        row = get_activity(db_path, aid, user_id=uid)
+        assert row["source_file"] == "/tmp/some.fit"
+        assert row["source_file_sha256"] == "abc123"
+        assert row["source_file_type"] == "upload"
+
+    def test_strava_url_unset_by_default(self, db_path, uid):
+        """The plain-upload merge path (app.py) never passes strava_url — must
+        not clobber it with NULL if the activity somehow already had one."""
+        from database import attach_source_file, get_activity, upsert_activity
+        aid = 70031
+        upsert_activity(db_path, {
+            "id": aid, "name": "Has A Strava Link", "sport_type": "Ride",
+            "start_date": "2026-01-15T10:00:00Z",
+            "source_url": "https://www.strava.com/activities/70031",
+        }, user_id=uid, source="strava")
+        attach_source_file(db_path, aid, uid, "/tmp/some.fit", "abc123")
+        row = get_activity(db_path, aid, user_id=uid)
+        assert row["strava_url"] == "https://www.strava.com/activities/70031"
+
+    def test_strava_url_set_when_provided(self, db_path, uid):
+        from database import attach_source_file, get_activity
+        aid = 70032
+        _insert_activity(db_path, uid, aid)
+        attach_source_file(db_path, aid, uid, "/tmp/some.fit", "abc123",
+                           strava_url="https://www.strava.com/activities/999")
+        row = get_activity(db_path, aid, user_id=uid)
+        assert row["strava_url"] == "https://www.strava.com/activities/999"
+
+    def test_clears_rendered_flags(self, db_path, uid):
+        from database import attach_source_file, get_activity, mark_rendered
+        aid = 70033
+        _insert_activity(db_path, uid, aid)
+        mark_rendered(db_path, aid, uid, map=True, charts=True)
+        row = get_activity(db_path, aid, user_id=uid)
+        assert row["map_rendered_at"] is not None
+        attach_source_file(db_path, aid, uid, "/tmp/some.fit", "abc123")
+        row = get_activity(db_path, aid, user_id=uid)
+        assert row["map_rendered_at"] is None
+        assert row["charts_rendered_at"] is None

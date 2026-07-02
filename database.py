@@ -1329,17 +1329,24 @@ def find_overlapping_activity(db_path, user_id: int, start_date_iso: str | None,
 
 
 def attach_source_file(db_path, activity_id: int, user_id: int,
-                       source_file: str, source_file_sha256: str):
-    """Attach an uploaded file to an existing activity and clear rendered flags so
-    maps and charts are regenerated from the new file on next render."""
+                       source_file: str, source_file_sha256: str,
+                       strava_url: str | None = None):
+    """Attach an uploaded/synced file to an existing activity and clear rendered
+    flags so maps and charts are regenerated from the new file on next render.
+
+    strava_url: pass this when the attached file came from a Strava-sync merge
+    (tasks._strava_sync_user) so the existing activity gains a working "View on
+    Strava" link; left unset (COALESCE keeps whatever was already there) for the
+    plain-upload merge case in app.py, which has no Strava URL to contribute."""
     conn = _conn(db_path)
     try:
         conn.execute(
             "UPDATE activities"
             " SET source_file=?, source_file_sha256=?, source_file_type='upload',"
+            "     strava_url=COALESCE(?, strava_url),"
             "     map_rendered_at=NULL, charts_rendered_at=NULL"
             " WHERE id=? AND user_id=?",
-            (source_file, source_file_sha256, activity_id, user_id),
+            (source_file, source_file_sha256, strava_url, activity_id, user_id),
         )
         conn.commit()
     finally:

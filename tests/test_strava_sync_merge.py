@@ -73,10 +73,12 @@ def test_overlapping_strava_activity_merges_into_existing_row(db_path, uid, monk
 
     # ...and the same ride is then synced in from Strava (e.g. uploaded from
     # a bike computer afterward), starting 12s later with a similar duration.
+    strava_url = f"https://www.strava.com/activities/{strava_id}"
     strava_activity = {
         "id": strava_id, "name": "Evening Ride", "sport_type": "Ride",
         "start_date": "2026-07-01T16:04:09Z",
         "distance": 15000.0, "moving_time": 2745, "elapsed_time": 2745,
+        "source_url": strava_url,
     }
     fake_client = _FakeStravaClient([strava_id], {strava_id: (strava_activity, {"time": {"data": [0, 1]}})})
     tasks = _patch_common(monkeypatch, db_path, fake_client)
@@ -90,9 +92,11 @@ def test_overlapping_strava_activity_merges_into_existing_row(db_path, uid, monk
     assert merged is not None
     assert merged["name"] == "Sweet Spot"
     assert merged["source"] == "training"
-    # ...but now has the richer Strava-derived file attached.
+    # ...but now has the richer Strava-derived file attached...
     assert merged["source_file"] == "/dev/null"
     assert merged["source_file_sha256"] == "sha"
+    # ...and a working "View on Strava" link, since the file came from Strava.
+    assert merged["strava_url"] == strava_url
 
 
 def test_non_overlapping_strava_activity_is_still_imported_normally(db_path, uid, monkeypatch):

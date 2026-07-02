@@ -188,7 +188,8 @@ def _strava_sync_user(uid: int) -> int:
                     path, sha256 = save_activity_file(
                         files_dir, overlap_row["id"], uid, fit_bytes, f"{activity_id}.fit"
                     )
-                    attach_source_file(DB_PATH, overlap_row["id"], uid, path, sha256)
+                    attach_source_file(DB_PATH, overlap_row["id"], uid, path, sha256,
+                                       strava_url=data.get("source_url"))
                     request_render(overlap_row["id"], uid)
                     processed += 1
                     print(f"[strava-sync] merged into existing activity "
